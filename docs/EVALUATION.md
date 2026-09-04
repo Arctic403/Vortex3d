@@ -4,8 +4,6 @@
 
 `EditableMesh` is durable authored state. `EvaluatedMesh` is rebuildable generated state for modifiers, derived geometry, and rendering.
 
-The evaluator is downstream of the authoring core:
-
 ```text
 Document / MeshBlock
         |
@@ -29,28 +27,13 @@ Nothing in `vortex_core` depends on the evaluator or renderer.
 
 ## Current evaluated representation
 
-Evaluation starts with a deterministic one-to-one conversion from a validated `EditableMesh`.
+Evaluation starts with a deterministic one-to-one conversion from a validated `EditableMesh` and preserves source `MeshId`, source mesh revision, source Vertex/Edge/Face/Corner IDs, generic attribute layers, authored n-gon boundaries, face cycles, and radial edge topology.
 
-It preserves:
-
-- source `MeshId`,
-- source mesh revision,
-- source `VertexId` per evaluated vertex,
-- source `EdgeId` per evaluated edge,
-- source `FaceId` per evaluated face,
-- source `CornerId` per evaluated corner,
-- all current generic attribute layers,
-- authored n-gon boundaries,
-- face next/previous topology,
-- radial edge topology.
-
-The generated topology is independent from authored container addresses and hash nodes.
+Generated topology is independent from authored container addresses and hash nodes.
 
 ## Stable identity versus packed generated indices
 
-Persistent public identity remains 64-bit and belongs to authored data.
-
-Evaluated connectivity uses checked `std::uint32_t` packed indices:
+Persistent public identity remains 64-bit and belongs to authored data. Evaluated connectivity uses checked `std::uint32_t` packed indices.
 
 ```text
 stable source ID
@@ -60,8 +43,6 @@ Evaluated record
       |
       +--> 32-bit packed generated connectivity
 ```
-
-This is intentional.
 
 - Packed indices are never serialized as persistent identity.
 - Re-evaluation may repack generated geometry freely.
@@ -78,95 +59,79 @@ Modifiers receive controlled internal mutation access through the evaluation lay
 
 An older evaluated snapshot remains valid as its own value until discarded; later authored edits or modifier evaluations do not silently mutate it.
 
-## Modifier stack v0.1
+## Modifier stack
 
-`MeshModifier` is the non-destructive modifier contract.
+`MeshModifier` is the non-destructive modifier contract. Each modifier provides a stable type, human-readable name, deterministic configuration token, `apply(EvaluatedMesh&)`, and focused structured failure information.
 
-Each modifier provides:
-
-- a stable modifier type,
-- a human-readable name,
-- a deterministic configuration/revision token,
-- an `apply(EvaluatedMesh&)` operation,
-- focused structured failure information.
-
-Modifier configurations are immutable values after construction in the current design. Editing modifier settings means constructing/replacing the configuration, which naturally changes its revision token.
-
-Modifiers execute strictly in stack order. Order is semantically meaningful and is included in evaluation identity.
+Modifier configurations are immutable values after construction in the current design. Modifiers execute strictly in stack order, and order is included in evaluation identity.
 
 ### Transform modifier
 
-`TransformModifier` supports:
+`TransformModifier` supports translation, XYZ Euler rotation in radians, and non-uniform scale. Authored positions remain unchanged.
 
-- translation,
-- XYZ Euler rotation in radians,
-- non-uniform scale.
-
-The operation transforms evaluated vertex positions only. Authored positions are unchanged.
-
-Normals, when present on Vertex or Corner domains, are transformed using inverse scale followed by the same rotation and normalization. Zero/near-zero scale components and non-finite transform values are rejected instead of producing undefined geometry.
-
-Transform order is:
+Normals, when present on Vertex or Corner domains, use inverse scale followed by the same rotation and normalization. Zero/near-zero scale components and non-finite transform values are rejected.
 
 ```text
 position -> scale -> rotate X -> rotate Y -> rotate Z -> translate
 ```
 
-This convention is part of the deterministic modifier contract and should not change casually.
+### Mirror modifier v0.2
 
-### Mirror modifier v0.1
+`MirrorModifier` is the first topology-generating modifier. It supports X/Y/Z axes, an explicit plane offset, source-ID preserving generated topology, reflected positions/normals, reversed mirrored winding, and optional deterministic seam welding.
 
-`MirrorModifier` is the first topology-generating modifier.
+Mirror operates on the **current evaluated input**, so it can stack after Transform or another Mirror without touching authored topology.
 
-It supports:
+#### No-weld mode
 
-- X, Y, or Z mirror axis,
-- an explicit mirror-plane offset,
-- deterministic duplication of the current evaluated vertices, edges, faces, and corners,
-- reflected vertex positions,
-- reflected Vertex/Corner normals when present,
-- preserved generic attributes,
-- stable source-ID mappings for every mirrored generated element.
+Welding is disabled by default. No-weld behavior remains compatible with Mirror v0.1: vertices, edges, faces, and corners are duplicated, including vertices exactly on the plane.
 
-Mirroring is performed on the **current evaluated input**, so Transform -> Mirror, Mirror -> Transform, and stacked Mirror configurations remain deterministic stack operations without touching authored topology.
+#### Weld configuration
 
-Reflection reverses orientation. The mirrored half therefore reverses each face boundary cycle. A mirrored corner uses the mirrored copy of the source **previous corner's edge** so the corner's edge still connects that corner vertex to its new `next` vertex. Mirrored radial edge cycles are rebuilt deterministically from the generated edge uses rather than copying source radial pointers blindly.
+Welding is controlled by:
 
-Generated duplicates retain the same stable source IDs as the source elements they derive from. This is a many-generated-to-one-source mapping; generated packed indices distinguish individual evaluated instances.
+```cpp
+MirrorWeldSettings {
+    bool enabled;
+    float tolerance;
+};
+```
 
-#### No welding in v0.1
+There is no hidden epsilon. A vertex welds when:
 
-Vertices exactly on the mirror plane are still duplicated.
+```text
+abs(axis_coordinate - plane_offset) <= tolerance
+```
 
-This is intentional. Mirror-plane welding requires explicit decisions for:
+Tolerance must be finite and non-negative. Exact-only welding is represented by `tolerance == 0`.
 
-- merge tolerance,
-- which generated vertex survives,
-- edge/corner collapse behavior,
-- UV and other corner-domain data,
-- source mapping after merges,
-- non-manifold results.
+#### Deterministic seam rules
 
-Those rules will be introduced as a separate tested patch instead of hiding an arbitrary epsilon inside the initial Mirror implementation.
+When welding is enabled:
+
+1. The source evaluated vertex is the deterministic survivor.
+2. A surviving seam vertex is projected exactly onto the configured plane in **evaluated output only**.
+3. The mirrored duplicate of that vertex is not created.
+4. A source edge whose two endpoints both weld reuses the source evaluated edge instead of creating a duplicate seam edge.
+5. A face whose entire boundary welds to the plane is not duplicated back onto itself.
+6. Other mirrored faces retain reversed winding.
+7. Mirrored Corner attributes are copied according to the reversed source-corner order, preserving face-varying data such as UVs.
+8. Mirrored Vertex/Corner normal data is reflected when present.
+9. Radial rings are rebuilt globally after seam reuse. A seam edge may therefore become a normal two-face ring or a supported non-manifold ring with 3+ uses.
+10. Stable authored IDs are never changed. Generated mirrored elements retain the source IDs they derive from; welded seam elements simply reuse the surviving evaluated element.
+
+Welding is **not** broad spatial deduplication. It only decides whether each source vertex and its own mirrored counterpart collapse at the configured mirror plane. Symmetric but unrelated geometry away from the seam is not merged.
 
 ## Error model
 
-Evaluation reports focused structured errors:
+Evaluation reports focused structured errors such as missing/invalid authored geometry, generated index overflow, missing topology references, null modifiers, and modifier failure.
 
-- `MissingAuthoredMesh`,
-- `InvalidSourceMesh`,
-- `ElementCountOverflow`,
-- `MissingTopologyReference`,
-- `NullModifier`,
-- `ModifierFailed`.
+Modifier failures additionally report `ModifierApplyError` and the failing stack index. Mirror-specific failures distinguish invalid axis/plane configuration, invalid weld settings, generated-topology overflow, invalid generated topology, missing position data, and attribute-copy failure.
 
-Modifier failures additionally report `ModifierApplyError` and the failing stack index. Current modifier errors include invalid transforms, invalid mirror configuration, generated-topology overflow, missing position data, and attribute-copy failure.
-
-This remains intentionally small. The evaluator does not introduce an exception-heavy result framework.
+The evaluator intentionally avoids an exception-heavy result architecture.
 
 ## Revision and cache contract
 
-Every evaluated snapshot exposes an `EvaluationCacheKey` containing:
+Every evaluated snapshot exposes:
 
 ```text
 source MeshId
@@ -174,56 +139,46 @@ source MeshId
 + ordered modifier-stack revision
 ```
 
-The modifier-stack revision is a deterministic hash of each modifier's stable type and configuration token in stack order.
+The modifier-stack revision hashes stable modifier type and configuration in stack order. Mirror axis, plane offset, weld enabled state, and weld tolerance all participate in the modifier configuration token.
 
 Consequences:
 
 - same authored revision + same ordered modifiers => same key,
-- changing authored geometry => different key,
-- changing modifier settings => different key,
-- reordering modifiers => different key.
+- authored changes => different key,
+- modifier setting changes => different key,
+- weld setting/tolerance changes => different key,
+- modifier reordering => different key.
 
-`EvaluationCacheKeyHash` exists so a future cache can use the key directly. **No retained evaluation cache is introduced yet.** Cache lifetime and memory budgets will be designed separately so 32-bit Android does not accumulate unbounded generated meshes.
-
-Cache ownership belongs to the evaluation/render side, never to persistent authored topology.
+`EvaluationCacheKeyHash` exists for a future cache. **No retained evaluation cache exists yet.** Cache lifetime and byte budgets will be designed separately for 32-bit Android.
 
 ## Modifier roadmap
 
-Current order:
-
 1. Transform **implemented**
-2. Mirror **implemented without welding**
-3. Mirror weld/merge rules
+2. Mirror no-weld **implemented**
+3. Mirror weld/merge v0.2 **implemented**
 4. Triangulate
 5. Recalculate Normals
 6. Bevel
 7. Subdivision
 
-Topology-generating modifiers must preserve meaningful source mappings and must never write generated topology back into the authored mesh.
+Topology-generating modifiers must preserve meaningful source mappings and must never write generated topology back into authored meshes.
 
 Do not add parallel evaluation until deterministic dependency and invalidation behavior is proven single-threaded.
 
 ## Testing gate
 
-Evaluation tests now prove:
+Evaluation coverage now proves authored/evaluated separation, source mappings, packed generated topology, Transform behavior, modifier ordering/cache identity, Mirror no-weld topology, and Mirror weld behavior including:
 
-- quad/n-gon boundary preservation,
-- source-ID mappings,
-- copied generic attributes,
-- generated connectivity references valid packed indices,
-- source revision propagation,
-- prior evaluated snapshots remain unchanged after authored mutation,
-- command/undo-driven re-evaluation,
-- Transform source immutability, position, and normal behavior,
-- modifier order/settings change the cache key,
-- authored revision changes the cache key without changing modifier-stack revision,
-- null/invalid modifiers fail with structured diagnostics,
-- Mirror doubles generated topology without welding,
-- mirror-plane offsets and axes affect evaluation identity,
-- mirrored source IDs remain mapped to authored identities,
-- mirrored face winding and face-edge continuity remain valid,
-- mirrored radial cycles remain internally consistent,
-- reflected corner normals are preserved correctly,
-- invalid Mirror configurations fail structurally.
+- configurable tolerance,
+- exact-only tolerance,
+- source evaluated vertex survival,
+- projection to the mirror plane without authored mutation,
+- seam-edge reuse,
+- fully planar face suppression,
+- reversed mirrored Corner/UV mapping,
+- reflected normals,
+- manifold two-use seam radials,
+- supported four-use non-manifold seam radials,
+- invalid tolerance diagnostics.
 
 The evaluator target is compiled by GCC, Clang, Android ARMv7, and Android ARM64 and is exercised under ASan/UBSan and clang-tidy through normal CI.
