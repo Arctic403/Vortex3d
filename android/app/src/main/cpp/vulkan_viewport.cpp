@@ -64,8 +64,10 @@ bool VulkanViewport::resize() {
     if (surface_ == VK_NULL_HANDLE || window_ == nullptr || device_ == VK_NULL_HANDLE) {
         return false;
     }
-    const auto width = static_cast<std::uint32_t>(std::max(0, ANativeWindow_getWidth(window_)));
-    const auto height = static_cast<std::uint32_t>(std::max(0, ANativeWindow_getHeight(window_)));
+    const std::int32_t nativeWidth = ANativeWindow_getWidth(window_);
+    const std::int32_t nativeHeight = ANativeWindow_getHeight(window_);
+    const auto width = nativeWidth > 0 ? static_cast<std::uint32_t>(nativeWidth) : 0U;
+    const auto height = nativeHeight > 0 ? static_cast<std::uint32_t>(nativeHeight) : 0U;
     if (swapchain_ != VK_NULL_HANDLE && width == swapchainExtent_.width && height == swapchainExtent_.height) {
         return true;
     }
@@ -110,7 +112,8 @@ bool VulkanViewport::render() {
     }
 
     const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.waitSemaphoreCount = 1U;
     submitInfo.pWaitSemaphores = &imageAvailable_;
     submitInfo.pWaitDstStageMask = &waitStage;
@@ -124,7 +127,9 @@ bool VulkanViewport::render() {
         return failVk("vkQueueSubmit", result);
     }
 
-    VkPresentInfoKHR presentInfo{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+    VkPresentInfoKHR presentInfo{};
+
+    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     presentInfo.waitSemaphoreCount = 1U;
     presentInfo.pWaitSemaphores = &renderFinished_;
     presentInfo.swapchainCount = 1U;

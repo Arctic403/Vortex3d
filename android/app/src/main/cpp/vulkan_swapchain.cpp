@@ -47,7 +47,11 @@ bool VulkanViewport::recreateSwapchain() {
         return failVk("vkDeviceWaitIdle", result);
     }
     destroySwapchain();
-    return createSwapchain();
+    if (!createSwapchain()) {
+        destroySwapchain();
+        return false;
+    }
+    return true;
 }
 
 bool VulkanViewport::createSwapchain() {
@@ -77,8 +81,10 @@ bool VulkanViewport::createSwapchain() {
 
     VkExtent2D extent = capabilities.currentExtent;
     if (extent.width == std::numeric_limits<std::uint32_t>::max()) {
-        const auto width = static_cast<std::uint32_t>(std::max(0, ANativeWindow_getWidth(window_)));
-        const auto height = static_cast<std::uint32_t>(std::max(0, ANativeWindow_getHeight(window_)));
+        const std::int32_t nativeWidth = ANativeWindow_getWidth(window_);
+        const std::int32_t nativeHeight = ANativeWindow_getHeight(window_);
+        const auto width = nativeWidth > 0 ? static_cast<std::uint32_t>(nativeWidth) : 0U;
+        const auto height = nativeHeight > 0 ? static_cast<std::uint32_t>(nativeHeight) : 0U;
         if (width == 0U || height == 0U) {
             return fail("Android viewport has zero extent");
         }
@@ -92,7 +98,8 @@ bool VulkanViewport::createSwapchain() {
     }
 
     const std::array<std::uint32_t, 2> queueFamilies{graphicsQueueFamily_, presentQueueFamily_};
-    VkSwapchainCreateInfoKHR createInfo{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
+    VkSwapchainCreateInfoKHR createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     createInfo.surface = surface_;
     createInfo.minImageCount = imageCount;
     createInfo.imageFormat = surfaceFormat.format;
@@ -133,7 +140,8 @@ bool VulkanViewport::createSwapchain() {
 
     swapchainImageViews_.reserve(swapchainImages_.size());
     for (const VkImage image : swapchainImages_) {
-        VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         viewInfo.image = image;
         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
         viewInfo.format = swapchainFormat_;
@@ -170,7 +178,8 @@ bool VulkanViewport::createSwapchain() {
     dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    VkRenderPassCreateInfo passInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    VkRenderPassCreateInfo passInfo{};
+    passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     passInfo.attachmentCount = 1U;
     passInfo.pAttachments = &colorAttachment;
     passInfo.subpassCount = 1U;
@@ -184,7 +193,8 @@ bool VulkanViewport::createSwapchain() {
 
     framebuffers_.reserve(swapchainImageViews_.size());
     for (const VkImageView view : swapchainImageViews_) {
-        VkFramebufferCreateInfo framebufferInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        VkFramebufferCreateInfo framebufferInfo{};
+        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebufferInfo.renderPass = renderPass_;
         framebufferInfo.attachmentCount = 1U;
         framebufferInfo.pAttachments = &view;
@@ -203,7 +213,8 @@ bool VulkanViewport::createSwapchain() {
 
 bool VulkanViewport::recordCommandBuffers() {
     commandBuffers_.resize(framebuffers_.size(), VK_NULL_HANDLE);
-    VkCommandBufferAllocateInfo allocationInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    VkCommandBufferAllocateInfo allocationInfo{};
+    allocationInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocationInfo.commandPool = commandPool_;
     allocationInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     allocationInfo.commandBufferCount = static_cast<std::uint32_t>(commandBuffers_.size());
@@ -214,7 +225,8 @@ bool VulkanViewport::recordCommandBuffers() {
     }
 
     for (std::size_t index = 0; index < commandBuffers_.size(); ++index) {
-        VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
         result = vkBeginCommandBuffer(commandBuffers_[index], &beginInfo);
         if (result != VK_SUCCESS) {
@@ -222,7 +234,8 @@ bool VulkanViewport::recordCommandBuffers() {
         }
         VkClearValue clearValue{};
         clearValue.color = {{0.025F, 0.035F, 0.055F, 1.0F}};
-        VkRenderPassBeginInfo renderPassInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        VkRenderPassBeginInfo renderPassInfo{};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         renderPassInfo.renderPass = renderPass_;
         renderPassInfo.framebuffer = framebuffers_[index];
         renderPassInfo.renderArea.extent = swapchainExtent_;

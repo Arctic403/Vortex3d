@@ -27,7 +27,8 @@ namespace {
 } // namespace
 
 bool VulkanViewport::createInstance() {
-    VkApplicationInfo applicationInfo{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+    VkApplicationInfo applicationInfo{};
+    applicationInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     applicationInfo.pApplicationName = "Vortex3D";
     applicationInfo.applicationVersion = VK_MAKE_VERSION(0, 3, 0);
     applicationInfo.pEngineName = "Vortex3D";
@@ -38,7 +39,8 @@ bool VulkanViewport::createInstance() {
         VK_KHR_SURFACE_EXTENSION_NAME,
         VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,
     };
-    VkInstanceCreateInfo createInfo{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+    VkInstanceCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     createInfo.pApplicationInfo = &applicationInfo;
     createInfo.enabledExtensionCount = static_cast<std::uint32_t>(extensions.size());
     createInfo.ppEnabledExtensionNames = extensions.data();
@@ -52,7 +54,8 @@ bool VulkanViewport::createInstance() {
 }
 
 bool VulkanViewport::createSurface() {
-    VkAndroidSurfaceCreateInfoKHR createInfo{VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR};
+    VkAndroidSurfaceCreateInfoKHR createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
     createInfo.window = window_;
     const VkResult result = vkCreateAndroidSurfaceKHR(instance_, &createInfo, nullptr, &surface_);
     if (result != VK_SUCCESS) {
@@ -128,13 +131,15 @@ bool VulkanViewport::createDeviceForSurface() {
 
     constexpr float queuePriority = 1.0F;
     std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
-    VkDeviceQueueCreateInfo graphicsQueueInfo{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+    VkDeviceQueueCreateInfo graphicsQueueInfo{};
+    graphicsQueueInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     graphicsQueueInfo.queueFamilyIndex = graphicsQueueFamily_;
     graphicsQueueInfo.queueCount = 1U;
     graphicsQueueInfo.pQueuePriorities = &queuePriority;
     queueCreateInfos.push_back(graphicsQueueInfo);
     if (presentQueueFamily_ != graphicsQueueFamily_) {
-        VkDeviceQueueCreateInfo presentQueueInfo{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+        VkDeviceQueueCreateInfo presentQueueInfo{};
+        presentQueueInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
         presentQueueInfo.queueFamilyIndex = presentQueueFamily_;
         presentQueueInfo.queueCount = 1U;
         presentQueueInfo.pQueuePriorities = &queuePriority;
@@ -142,7 +147,8 @@ bool VulkanViewport::createDeviceForSurface() {
     }
 
     constexpr std::array<const char*, 1> extensions{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
-    VkDeviceCreateInfo createInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+    VkDeviceCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     createInfo.queueCreateInfoCount = static_cast<std::uint32_t>(queueCreateInfos.size());
     createInfo.pQueueCreateInfos = queueCreateInfos.data();
     createInfo.enabledExtensionCount = static_cast<std::uint32_t>(extensions.size());
@@ -169,14 +175,16 @@ bool VulkanViewport::verifyPresentSupport() {
 }
 
 bool VulkanViewport::createCommandPool() {
-    VkCommandPoolCreateInfo createInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    VkCommandPoolCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     createInfo.queueFamilyIndex = graphicsQueueFamily_;
     const VkResult result = vkCreateCommandPool(device_, &createInfo, nullptr, &commandPool_);
     return result == VK_SUCCESS || failVk("vkCreateCommandPool", result);
 }
 
 bool VulkanViewport::createSyncObjects() {
-    VkSemaphoreCreateInfo semaphoreInfo{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+    VkSemaphoreCreateInfo semaphoreInfo{};
+    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     VkResult result = vkCreateSemaphore(device_, &semaphoreInfo, nullptr, &imageAvailable_);
     if (result != VK_SUCCESS) {
         return failVk("vkCreateSemaphore(imageAvailable)", result);
@@ -185,7 +193,8 @@ bool VulkanViewport::createSyncObjects() {
     if (result != VK_SUCCESS) {
         return failVk("vkCreateSemaphore(renderFinished)", result);
     }
-    VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
     result = vkCreateFence(device_, &fenceInfo, nullptr, &frameFence_);
     return result == VK_SUCCESS || failVk("vkCreateFence", result);
