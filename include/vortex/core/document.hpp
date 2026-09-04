@@ -29,10 +29,16 @@ public:
     MeshBlock(const MeshBlock&) = delete;
     MeshBlock& operator=(const MeshBlock&) = delete;
 
+    [[nodiscard]] const EditableMesh* authoredMesh() const noexcept { return authoredMesh_.get(); }
+
     MeshId id;
     std::string name;
-    std::unique_ptr<EditableMesh> authoredMesh;
     std::uint64_t revision = 1;
+
+private:
+    friend class Document;
+
+    std::unique_ptr<EditableMesh> authoredMesh_;
 };
 
 enum class DataKind : std::uint8_t {
