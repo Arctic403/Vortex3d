@@ -3,12 +3,19 @@
 #include <android/native_window.h>
 #include <vulkan/vulkan.h>
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace vortex::android {
+
+struct ViewportVertex {
+    std::array<float, 3> position{};
+    std::array<float, 3> color{};
+};
+static_assert(sizeof(ViewportVertex) == sizeof(float) * 6U);
 
 class VulkanViewport final {
 public:
@@ -35,9 +42,24 @@ private:
     [[nodiscard]] bool createSyncObjects();
     [[nodiscard]] bool recreateSwapchain();
     [[nodiscard]] bool createSwapchain();
+    [[nodiscard]] bool createDepthResources();
+    [[nodiscard]] bool createGeometryResources();
+    [[nodiscard]] bool createGraphicsPipeline();
     [[nodiscard]] bool recordCommandBuffers();
 
+    [[nodiscard]] bool createBuffer(
+        VkDeviceSize size,
+        VkBufferUsageFlags usage,
+        VkMemoryPropertyFlags properties,
+        VkBuffer& buffer,
+        VkDeviceMemory& memory);
+    [[nodiscard]] std::uint32_t findMemoryType(
+        std::uint32_t typeBits,
+        VkMemoryPropertyFlags properties) const;
+    [[nodiscard]] VkFormat findDepthFormat() const;
+
     void destroySwapchain() noexcept;
+    void destroyGeometry() noexcept;
     void destroySurface() noexcept;
     void shutdown() noexcept;
 
@@ -61,6 +83,21 @@ private:
     std::vector<VkImageView> swapchainImageViews_;
     VkRenderPass renderPass_ = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> framebuffers_;
+
+    VkImage depthImage_ = VK_NULL_HANDLE;
+    VkDeviceMemory depthMemory_ = VK_NULL_HANDLE;
+    VkImageView depthView_ = VK_NULL_HANDLE;
+    VkFormat depthFormat_ = VK_FORMAT_UNDEFINED;
+
+    VkBuffer vertexBuffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory vertexMemory_ = VK_NULL_HANDLE;
+    VkBuffer indexBuffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory indexMemory_ = VK_NULL_HANDLE;
+    std::uint32_t indexCount_ = 0U;
+
+    VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
+    VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
+
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> commandBuffers_;
     VkSemaphore imageAvailable_ = VK_NULL_HANDLE;
