@@ -66,8 +66,9 @@ This is intentional.
 - Packed indices are never serialized as persistent identity.
 - Re-evaluation may repack generated geometry freely.
 - Picking/diagnostics can map generated elements back to stable source IDs.
+- One source ID may map to multiple generated elements after topology-generating modifiers.
 - 32-bit connectivity reduces generated topology memory and is friendly to the required ARMv7 target.
-- Evaluation fails with `MeshEvaluationError::ElementCountOverflow` rather than silently truncating an index.
+- Evaluation/modifiers fail explicitly rather than silently truncating generated indices.
 
 ## Read-only external contract
 
@@ -79,7 +80,7 @@ An older evaluated snapshot remains valid as its own value until discarded; late
 
 ## Modifier stack v0.1
 
-`MeshModifier` is the first non-destructive modifier contract.
+`MeshModifier` is the non-destructive modifier contract.
 
 Each modifier provides:
 
@@ -95,9 +96,7 @@ Modifiers execute strictly in stack order. Order is semantically meaningful and 
 
 ### Transform modifier
 
-`TransformModifier` is the first implemented modifier.
-
-It supports:
+`TransformModifier` supports:
 
 - translation,
 - XYZ Euler rotation in radians,
@@ -113,7 +112,42 @@ Transform order is:
 position -> scale -> rotate X -> rotate Y -> rotate Z -> translate
 ```
 
-This convention is now part of the deterministic modifier contract and should not change casually.
+This convention is part of the deterministic modifier contract and should not change casually.
+
+### Mirror modifier v0.1
+
+`MirrorModifier` is the first topology-generating modifier.
+
+It supports:
+
+- X, Y, or Z mirror axis,
+- an explicit mirror-plane offset,
+- deterministic duplication of the current evaluated vertices, edges, faces, and corners,
+- reflected vertex positions,
+- reflected Vertex/Corner normals when present,
+- preserved generic attributes,
+- stable source-ID mappings for every mirrored generated element.
+
+Mirroring is performed on the **current evaluated input**, so Transform -> Mirror, Mirror -> Transform, and stacked Mirror configurations remain deterministic stack operations without touching authored topology.
+
+Reflection reverses orientation. The mirrored half therefore reverses each face boundary cycle. A mirrored corner uses the mirrored copy of the source **previous corner's edge** so the corner's edge still connects that corner vertex to its new `next` vertex. Mirrored radial edge cycles are rebuilt deterministically from the generated edge uses rather than copying source radial pointers blindly.
+
+Generated duplicates retain the same stable source IDs as the source elements they derive from. This is a many-generated-to-one-source mapping; generated packed indices distinguish individual evaluated instances.
+
+#### No welding in v0.1
+
+Vertices exactly on the mirror plane are still duplicated.
+
+This is intentional. Mirror-plane welding requires explicit decisions for:
+
+- merge tolerance,
+- which generated vertex survives,
+- edge/corner collapse behavior,
+- UV and other corner-domain data,
+- source mapping after merges,
+- non-manifold results.
+
+Those rules will be introduced as a separate tested patch instead of hiding an arbitrary epsilon inside the initial Mirror implementation.
 
 ## Error model
 
@@ -126,7 +160,7 @@ Evaluation reports focused structured errors:
 - `NullModifier`,
 - `ModifierFailed`.
 
-Modifier failures additionally report `ModifierApplyError` and the failing stack index.
+Modifier failures additionally report `ModifierApplyError` and the failing stack index. Current modifier errors include invalid transforms, invalid mirror configuration, generated-topology overflow, missing position data, and attribute-copy failure.
 
 This remains intentionally small. The evaluator does not introduce an exception-heavy result framework.
 
@@ -158,11 +192,12 @@ Cache ownership belongs to the evaluation/render side, never to persistent autho
 Current order:
 
 1. Transform **implemented**
-2. Mirror
-3. Triangulate
-4. Recalculate Normals
-5. Bevel
-6. Subdivision
+2. Mirror **implemented without welding**
+3. Mirror weld/merge rules
+4. Triangulate
+5. Recalculate Normals
+6. Bevel
+7. Subdivision
 
 Topology-generating modifiers must preserve meaningful source mappings and must never write generated topology back into the authored mesh.
 
@@ -179,11 +214,16 @@ Evaluation tests now prove:
 - source revision propagation,
 - prior evaluated snapshots remain unchanged after authored mutation,
 - command/undo-driven re-evaluation,
-- Transform does not mutate authored data,
-- Transform position and normal behavior,
-- modifier order changes output,
+- Transform source immutability, position, and normal behavior,
 - modifier order/settings change the cache key,
-- authored revision changes the cache key without changing the modifier-stack revision,
-- null/invalid modifiers fail with structured diagnostics.
+- authored revision changes the cache key without changing modifier-stack revision,
+- null/invalid modifiers fail with structured diagnostics,
+- Mirror doubles generated topology without welding,
+- mirror-plane offsets and axes affect evaluation identity,
+- mirrored source IDs remain mapped to authored identities,
+- mirrored face winding and face-edge continuity remain valid,
+- mirrored radial cycles remain internally consistent,
+- reflected corner normals are preserved correctly,
+- invalid Mirror configurations fail structurally.
 
 The evaluator target is compiled by GCC, Clang, Android ARMv7, and Android ARM64 and is exercised under ASan/UBSan and clang-tidy through normal CI.
