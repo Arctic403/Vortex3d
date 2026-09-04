@@ -254,6 +254,9 @@ bool VulkanViewport::recordCommandBuffers() {
         return failVk("vkAllocateCommandBuffers", result);
     }
 
+    const float aspect = static_cast<float>(swapchainExtent_.width) /
+                         static_cast<float>(swapchainExtent_.height);
+
     for (std::size_t index = 0; index < commandBuffers_.size(); ++index) {
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -287,6 +290,8 @@ bool VulkanViewport::recordCommandBuffers() {
         vkCmdSetScissor(commandBuffers_[index], 0U, 1U, &scissor);
 
         vkCmdBindPipeline(commandBuffers_[index], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline_);
+        vkCmdPushConstants(
+            commandBuffers_[index], pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0U, sizeof(float), &aspect);
         const VkDeviceSize vertexOffset = 0U;
         vkCmdBindVertexBuffers(commandBuffers_[index], 0U, 1U, &vertexBuffer_, &vertexOffset);
         vkCmdBindIndexBuffer(commandBuffers_[index], indexBuffer_, 0U, VK_INDEX_TYPE_UINT32);
