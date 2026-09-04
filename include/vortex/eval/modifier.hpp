@@ -11,6 +11,7 @@ namespace vortex {
 enum class MeshModifierType : std::uint8_t {
     Transform = 1,
     Mirror = 2,
+    Triangulate = 3,
 };
 
 enum class ModifierApplyError : std::uint8_t {
@@ -21,6 +22,7 @@ enum class ModifierApplyError : std::uint8_t {
     InvalidMirrorWeld,
     GeneratedTopologyOverflow,
     GeneratedTopologyInvalid,
+    TriangulationFailed,
     AttributeCopyFailed,
 };
 
@@ -105,6 +107,14 @@ private:
     MirrorAxis axis_;
     float planeOffset_ = 0.0F;
     MirrorWeldSettings weld_;
+};
+
+class TriangulateModifier final : public MeshModifier {
+public:
+    [[nodiscard]] std::string_view name() const noexcept override { return "Triangulate"; }
+    [[nodiscard]] MeshModifierType type() const noexcept override { return MeshModifierType::Triangulate; }
+    [[nodiscard]] std::uint64_t revisionToken() const noexcept override;
+    [[nodiscard]] ModifierApplyResult apply(EvaluatedMesh& mesh) const override;
 };
 
 } // namespace vortex
