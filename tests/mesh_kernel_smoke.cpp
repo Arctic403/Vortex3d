@@ -120,9 +120,11 @@ int main() {
     assert(mesh.attributes().contains("crease", vortex::AttributeDomain::Edge));
     assert(mesh.attributes().contains("material_index", vortex::AttributeDomain::Face));
     assert(mesh.attributes().contains("uv:Map", vortex::AttributeDomain::Corner));
-    assert(mesh.attributes().create<vortex::Vec3>("normal", vortex::AttributeDomain::Vertex, {}));
-    assert(mesh.attributes().contains("normal", vortex::AttributeDomain::Vertex));
-    assert(mesh.attributes().contains("normal", vortex::AttributeDomain::Corner));
+    assert(!mesh.attributes().contains("normal", vortex::AttributeDomain::Corner));
+    assert(mesh.attributes().create<vortex::Vec3>("domain_test", vortex::AttributeDomain::Vertex, {}));
+    assert(mesh.attributes().create<vortex::Vec3>("domain_test", vortex::AttributeDomain::Corner, {}));
+    assert(mesh.attributes().contains("domain_test", vortex::AttributeDomain::Vertex));
+    assert(mesh.attributes().contains("domain_test", vortex::AttributeDomain::Corner));
     assert(mesh.attributes().domainSize(vortex::AttributeDomain::Vertex) == mesh.vertexCount());
     assert(mesh.attributes().domainSize(vortex::AttributeDomain::Corner) == mesh.cornerCount());
     assert(mesh.attributes().validateSizes());
