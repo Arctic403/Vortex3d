@@ -51,6 +51,10 @@ public final class MainActivity extends Activity {
     private float twoFingerStartCentroidX;
     private float twoFingerStartCentroidY;
     private float twoFingerStartSpan;
+    private float twoFingerStartX0;
+    private float twoFingerStartY0;
+    private float twoFingerStartX1;
+    private float twoFingerStartY1;
 
     private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
         @Override
@@ -187,9 +191,6 @@ public final class MainActivity extends Activity {
                 return true;
 
             case MotionEvent.ACTION_POINTER_UP:
-                // End the two-finger mode completely. Pointer indices are about to change,
-                // so the remaining finger is re-anchored on its next MOVE rather than
-                // injecting a jump into orbit.
                 gesturePointerCount = 0;
                 twoFingerMode = TWO_FINGER_UNDECIDED;
                 lastSpan = 0.0f;
@@ -232,6 +233,10 @@ public final class MainActivity extends Activity {
         twoFingerStartCentroidX = centroidX;
         twoFingerStartCentroidY = centroidY;
         twoFingerStartSpan = span;
+        twoFingerStartX0 = x0;
+        twoFingerStartY0 = y0;
+        twoFingerStartX1 = x1;
+        twoFingerStartY1 = y1;
         twoFingerMode = TWO_FINGER_UNDECIDED;
         gesturePointerCount = 2;
     }
@@ -251,6 +256,14 @@ public final class MainActivity extends Activity {
         }
 
         if (twoFingerMode == TWO_FINGER_UNDECIDED) {
+            float move0X = x0 - twoFingerStartX0;
+            float move0Y = y0 - twoFingerStartY0;
+            float move1X = x1 - twoFingerStartX1;
+            float move1Y = y1 - twoFingerStartY1;
+            float move0 = magnitude(move0X, move0Y);
+            float move1 = magnitude(move1X, move1Y);
+            float totalFingerTravel = move0 + move1;
+
             float centroidTravel = distance(
                 twoFingerStartCentroidX,
                 twoFingerStartCentroidY,
@@ -258,25 +271,60 @@ public final class MainActivity extends Activity {
                 centroidY);
             float spanTravel = Math.abs(span - twoFingerStartSpan);
 
-            // Gesture arbitration: do not pan and zoom in the same gesture. Wait until
-            // movement exceeds touch slop, then lock to whichever signal is dominant.
-            // A small bias toward pinch prevents ordinary finger-spacing noise from
-            // stealing a deliberate pan, while still making pinch engage promptly.
-            if (centroidTravel >= touchSlop || spanTravel >= touchSlop) {
-                twoFingerMode = spanTravel > centroidTravel * 1.15f
-                    ? TWO_FINGER_ZOOM
-                    : TWO_FINGER_PAN;
+            // Symmetric pinch: the fingers must separate/approach while their combined
+            // translation remains small. This rejects the common "two fingers drifting
+            // together" case that should be interpreted as pan.
+            float combinedX = move0X + move1X;
+            float combinedY = move0Y + move1Y;
+            float combinedTravel = magnitude(combinedX, combinedY);
+            boolean symmetricPinch =
+                spanTravel >= touchSlop * 1.35f &&
+                centroidTravel <= Math.max(touchSlop, spanTravel * 0.35f) &&
+                totalFingerTravel >= touchSlop * 2.0f &&
+                combinedTravel <= totalFingerTravel * 0.40f;
 
-                // Re-anchor at the lock point so crossing the threshold cannot cause a jump.
-                lastCentroidX = centroidX;
-                lastCentroidY = centroidY;
-                lastSpan = span;
+            // Deliberate pan: both fingers translate together while spacing remains
+            // nearly constant. The difference vector is small when their motion agrees.
+            float differentialX = move0X - move1X;
+            float differentialY = move0Y - move1Y;
+            float differentialTravel = magnitude(differentialX, differentialY);
+            boolean coherentPan =
+                centroidTravel >= touchSlop &&
+                spanTravel <= Math.max(touchSlop * 0.75f, centroidTravel * 0.30f) &&
+                totalFingerTravel >= touchSlop * 2.0f &&
+                differentialTravel <= totalFingerTravel * 0.45f;
+
+            if (symmetricPinch) {
+                twoFingerMode = TWO_FINGER_ZOOM;
+            } else if (coherentPan) {
+                twoFingerMode = TWO_FINGER_PAN;
+            } else {
+                // Ambiguous two-finger motion stays undecided instead of leaking pan
+                // and zoom into one another.
                 return;
             }
-        } else if (twoFingerMode == TWO_FINGER_PAN) {
-            nativePanCamera(rendererHandle, centroidX - lastCentroidX, centroidY - lastCentroidY);
+
+            lastCentroidX = centroidX;
+            lastCentroidY = centroidY;
+            lastSpan = span;
+            return;
+        }
+
+        if (twoFingerMode == TWO_FINGER_PAN) {
+            float spanDelta = Math.abs(span - lastSpan);
+            float centroidDelta = distance(lastCentroidX, lastCentroidY, centroidX, centroidY);
+            // Keep pan strict even after lock. If spacing suddenly changes a lot, ignore
+            // the frame rather than sneaking zoom-like motion into the pan.
+            if (spanDelta <= Math.max(touchSlop * 0.60f, centroidDelta * 0.45f)) {
+                nativePanCamera(rendererHandle, centroidX - lastCentroidX, centroidY - lastCentroidY);
+            }
         } else if (twoFingerMode == TWO_FINGER_ZOOM) {
-            if (lastSpan > 1.0f && span > 1.0f) {
+            float centroidDelta = distance(lastCentroidX, lastCentroidY, centroidX, centroidY);
+            float spanDelta = Math.abs(span - lastSpan);
+            // Zoom only while the pinch remains substantially more radial than
+            // translational. This is the per-frame symmetry guard.
+            if (lastSpan > 1.0f && span > 1.0f &&
+                spanDelta >= centroidDelta * 1.5f) {
                 nativeZoomCamera(rendererHandle, span / lastSpan);
             }
         }
@@ -287,9 +335,11 @@ public final class MainActivity extends Activity {
     }
 
     private static float distance(float x0, float y0, float x1, float y1) {
-        float dx = x1 - x0;
-        float dy = y1 - y0;
-        return (float) Math.sqrt(dx * dx + dy * dy);
+        return magnitude(x1 - x0, y1 - y0);
+    }
+
+    private static float magnitude(float x, float y) {
+        return (float) Math.sqrt(x * x + y * y);
     }
 
     private void resetGestureState() {
