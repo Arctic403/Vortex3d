@@ -3,12 +3,18 @@
 #include "vortex/core/id.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 namespace vortex {
+
+class EditableMesh;
+class MeshCommand;
+class MeshHistory;
+struct MeshCommandResult;
 
 enum class DataKind : std::uint8_t {
     Document,
@@ -36,6 +42,7 @@ struct ChangeEvent final {
 struct MeshBlock final {
     MeshId id;
     std::string name;
+    std::shared_ptr<EditableMesh> authoredMesh;
     std::uint64_t revision = 1;
 };
 
@@ -73,6 +80,7 @@ public:
     [[nodiscard]] SceneId createScene(std::string name);
     [[nodiscard]] CollectionId createCollection(SceneId sceneId, std::string name, CollectionId parentId = {});
     [[nodiscard]] MeshId createMesh(std::string name);
+    [[nodiscard]] MeshId createMesh(std::string name, EditableMesh authoredMesh);
     [[nodiscard]] ObjectId createObject(std::string name, MeshId meshId = {});
 
     [[nodiscard]] bool hasScene(SceneId id) const noexcept;
@@ -84,6 +92,7 @@ public:
     [[nodiscard]] const CollectionBlock* collection(CollectionId id) const noexcept;
     [[nodiscard]] const MeshBlock* mesh(MeshId id) const noexcept;
     [[nodiscard]] const ObjectBlock* object(ObjectId id) const noexcept;
+    [[nodiscard]] const EditableMesh* authoredMesh(MeshId id) const noexcept;
 
     [[nodiscard]] bool renameScene(SceneId sceneId, std::string name);
     [[nodiscard]] bool renameCollection(CollectionId collectionId, std::string name);
@@ -93,6 +102,14 @@ public:
     [[nodiscard]] bool setObjectMesh(ObjectId objectId, MeshId meshId);
     [[nodiscard]] bool setObjectParent(ObjectId objectId, ObjectId parentId);
     [[nodiscard]] MeshId makeObjectMeshUnique(ObjectId objectId);
+
+    [[nodiscard]] bool executeMeshCommand(
+        MeshId meshId,
+        MeshHistory& history,
+        MeshCommand& command,
+        MeshCommandResult* result = nullptr);
+    [[nodiscard]] bool undoMeshCommand(MeshId meshId, MeshHistory& history);
+    [[nodiscard]] bool redoMeshCommand(MeshId meshId, MeshHistory& history);
 
     [[nodiscard]] bool linkObjectToCollection(ObjectId objectId, CollectionId collectionId);
     [[nodiscard]] bool unlinkObjectFromCollection(ObjectId objectId, CollectionId collectionId);
