@@ -3,8 +3,10 @@
 #include "vortex/eval/normals.hpp"
 #include "vortex/mesh/editable_mesh.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
