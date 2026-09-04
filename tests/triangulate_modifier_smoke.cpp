@@ -135,8 +135,8 @@ int main() {
     const MeshId meshId = document.createMesh("Concave Triangulate Fixture", std::move(authored));
     assert(meshId);
     const MeshBlock* source = document.mesh(meshId);
-    assert(source != nullptr && source->authoredMesh != nullptr);
-    assert(source->authoredMesh->face(polygon)->cornerCount == 5U);
+    assert(source != nullptr && source->authoredMesh() != nullptr);
+    assert(source->authoredMesh()->face(polygon)->cornerCount == 5U);
 
     MeshEvaluationResult baselineResult = MeshEvaluator::evaluate(*source);
     assert(baselineResult && baselineResult.mesh.has_value());
@@ -188,8 +188,8 @@ int main() {
     }
 
     // Evaluation never destroys the authored n-gon.
-    assert(source->authoredMesh->face(polygon)->cornerCount == 5U);
-    assert(source->authoredMesh->faceCount() == 1U);
+    assert(source->authoredMesh()->face(polygon)->cornerCount == 5U);
+    assert(source->authoredMesh()->faceCount() == 1U);
 
     // An already-triangular face remains one triangle and does not gain a diagonal.
     EditableMesh triangleAuthored;
@@ -218,7 +218,7 @@ int main() {
     assert(quad);
     const MeshId quadMeshId = document.createMesh("Modifier Chain Fixture", std::move(halfQuad));
     const MeshBlock* quadSource = document.mesh(quadMeshId);
-    assert(quadSource != nullptr && quadSource->authoredMesh != nullptr);
+    assert(quadSource != nullptr && quadSource->authoredMesh() != nullptr);
 
     TransformModifier transform({0.0F, 0.0F, 2.0F});
     MirrorModifier mirror(MirrorAxis::X, 0.0F, MirrorWeldSettings{true, 0.0F});
@@ -235,8 +235,8 @@ int main() {
     assert(fullResult.mesh->cornerCount() == 12U);
     assert(validateGeneratedTopology(*fullResult.mesh));
     assert(fullResult.mesh->cacheKey() != beforeTriangulate.mesh->cacheKey());
-    assert(quadSource->authoredMesh->face(quad)->cornerCount == 4U);
-    assert(quadSource->authoredMesh->position(q1)->z == 0.0F);
+    assert(quadSource->authoredMesh()->face(quad)->cornerCount == 4U);
+    assert(quadSource->authoredMesh()->position(q1)->z == 0.0F);
 
     // Geometrically degenerate polygons fail explicitly rather than emitting junk triangles.
     EditableMesh degenerate;
