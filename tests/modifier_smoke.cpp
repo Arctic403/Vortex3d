@@ -18,12 +18,7 @@ int main() {
     const VertexId c = authored.addVertex({0.0F, 0.0F, 0.0F});
     const FaceId faceId = authored.addFace({a, b, c});
     assert(faceId);
-
-    auto* cornerNormals = authored.attributes().values<Vec3>("normal", AttributeDomain::Corner);
-    assert(cornerNormals != nullptr);
-    for (Vec3& normal : *cornerNormals) {
-        normal = {0.0F, 0.0F, 1.0F};
-    }
+    assert(!authored.attributes().contains("normal", AttributeDomain::Corner));
     assert(authored.validate());
 
     Document document;
@@ -66,6 +61,7 @@ int main() {
 
     const EditableMesh* sourceMesh = document.authoredMesh(meshId);
     assert(sourceMesh != nullptr);
+    assert(!sourceMesh->attributes().contains("normal", AttributeDomain::Corner));
     const auto authoredA = sourceMesh->position(a);
     assert(authoredA.has_value());
     assert(authoredA->x == 1.0F && authoredA->y == 0.0F && authoredA->z == 0.0F);
