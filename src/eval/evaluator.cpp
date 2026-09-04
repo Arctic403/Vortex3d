@@ -2,6 +2,8 @@
 
 #include "vortex/mesh/editable_mesh.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <span>
 #include <unordered_map>
@@ -37,14 +39,67 @@ template <typename IdType>
 }
 
 [[nodiscard]] MeshEvaluationResult fail(const MeshEvaluationError error) {
-    return MeshEvaluationResult{std::nullopt, error};
+    MeshEvaluationResult result;
+    result.error = error;
+    return result;
+}
+
+[[nodiscard]] MeshEvaluationResult failModifier(
+    const MeshEvaluationError error,
+    const ModifierApplyError modifierError,
+    const std::size_t modifierIndex) {
+    MeshEvaluationResult result;
+    result.error = error;
+    result.modifierError = modifierError;
+    result.modifierIndex = modifierIndex;
+    return result;
+}
+
+void mixRevisionByte(std::uint64_t& hash, const std::uint8_t value) noexcept {
+    constexpr std::uint64_t fnvPrime = 1099511628211ULL;
+    hash ^= value;
+    hash *= fnvPrime;
+}
+
+void mixRevisionValue(std::uint64_t& hash, const std::uint64_t value) noexcept {
+    for (std::uint32_t shift = 0; shift < 64U; shift += 8U) {
+        mixRevisionByte(hash, static_cast<std::uint8_t>(value >> shift));
+    }
+}
+
+[[nodiscard]] std::optional<std::uint64_t> modifierStackRevision(
+    const std::span<const MeshModifier* const> modifiers,
+    std::size_t& nullModifierIndex) noexcept {
+    if (modifiers.empty()) {
+        return std::uint64_t{0};
+    }
+
+    std::uint64_t hash = 1469598103934665603ULL;
+    for (std::size_t index = 0; index < modifiers.size(); ++index) {
+        const MeshModifier* modifier = modifiers[index];
+        if (modifier == nullptr) {
+            nullModifierIndex = index;
+            return std::nullopt;
+        }
+        mixRevisionByte(hash, static_cast<std::uint8_t>(modifier->type()));
+        mixRevisionValue(hash, modifier->revisionToken());
+    }
+    return hash;
 }
 
 } // namespace
 
-MeshEvaluationResult MeshEvaluator::evaluate(const MeshBlock& source) {
+MeshEvaluationResult MeshEvaluator::evaluate(
+    const MeshBlock& source,
+    const std::span<const MeshModifier* const> modifiers) {
     if (!source.authoredMesh) {
         return fail(MeshEvaluationError::MissingAuthoredMesh);
+    }
+
+    std::size_t nullModifierIndex = 0;
+    const auto stackRevision = modifierStackRevision(modifiers, nullModifierIndex);
+    if (!stackRevision) {
+        return failModifier(MeshEvaluationError::NullModifier, ModifierApplyError::None, nullModifierIndex);
     }
 
     const EditableMesh& authored = *source.authoredMesh;
@@ -62,8 +117,7 @@ MeshEvaluationResult MeshEvaluator::evaluate(const MeshBlock& source) {
     const IndexMap<CornerId> cornerIndex = buildIndexMap<CornerId>(authored.cornerIds());
 
     EvaluatedMesh evaluated;
-    evaluated.sourceMeshId_ = source.id;
-    evaluated.sourceRevision_ = source.revision;
+    evaluated.cacheKey_ = EvaluationCacheKey{source.id, source.revision, *stackRevision};
     evaluated.attributes_ = authored.attributes();
 
     evaluated.vertices_.reserve(authored.vertexCount());
@@ -125,7 +179,16 @@ MeshEvaluationResult MeshEvaluator::evaluate(const MeshBlock& source) {
             id});
     }
 
-    return MeshEvaluationResult{std::move(evaluated), MeshEvaluationError::None};
+    for (std::size_t index = 0; index < modifiers.size(); ++index) {
+        const ModifierApplyResult modifierResult = modifiers[index]->apply(evaluated);
+        if (!modifierResult) {
+            return failModifier(MeshEvaluationError::ModifierFailed, modifierResult.error, index);
+        }
+    }
+
+    MeshEvaluationResult result;
+    result.mesh = std::move(evaluated);
+    return result;
 }
 
 } // namespace vortex
