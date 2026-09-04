@@ -52,7 +52,7 @@ bool VulkanViewport::attach(ANativeWindow* window) {
         return false;
     }
 
-    if (!createGeometryResources()) {
+    if (!createGeometryResources() || !createGridResources()) {
         shutdown();
         return false;
     }
@@ -160,8 +160,9 @@ std::string VulkanViewport::info() const {
     if (swapchain_ != VK_NULL_HANDLE) {
         stream << " | " << swapchainExtent_.width << 'x' << swapchainExtent_.height;
     }
-    if (graphicsPipeline_ != VK_NULL_HANDLE && depthView_ != VK_NULL_HANDLE && indexCount_ != 0U) {
-        stream << " | Stage1 mesh+depth";
+    if (graphicsPipeline_ != VK_NULL_HANDLE && gridPipeline_ != VK_NULL_HANDLE &&
+        depthView_ != VK_NULL_HANDLE && indexCount_ != 0U && gridVertexCount_ != 0U) {
+        stream << " | Stage3 camera+grid";
     }
     return stream.str();
 }
