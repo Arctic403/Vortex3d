@@ -196,7 +196,7 @@ int main() {
     assert(preservedBeforeEdit.has_value());
     assert(preservedBeforeEdit->x == beforeEditPosition->x);
 
-    revisionCache.eraseMesh(meshId);
+    revisionCache.eraseMesh(document.runtimeId(), meshId);
     assert(revisionCache.entryCount() == 0U);
     assert(revisionCache.retainedBytes() == 0U);
     assert(afterEdit.mesh->position(0).has_value());
