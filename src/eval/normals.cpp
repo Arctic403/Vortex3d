@@ -1,5 +1,6 @@
 #include "vortex/eval/normals.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -49,6 +50,49 @@ constexpr double minimumLengthSquared = 1.0e-30;
         static_cast<float>(static_cast<double>(value.y) * inverseLength),
         static_cast<float>(static_cast<double>(value.z) * inverseLength)};
     return finite(result);
+}
+
+[[nodiscard]] bool cornerAngle(
+    const std::vector<EvaluatedCorner>& corners,
+    const std::vector<Vec3>& positions,
+    const Index cornerIndex,
+    float& result) noexcept {
+    if (cornerIndex >= corners.size()) {
+        return false;
+    }
+
+    const EvaluatedCorner& corner = corners[cornerIndex];
+    if (corner.vertex >= positions.size() || corner.prev >= corners.size() || corner.next >= corners.size()) {
+        return false;
+    }
+
+    const EvaluatedCorner& previous = corners[corner.prev];
+    const EvaluatedCorner& next = corners[corner.next];
+    if (previous.vertex >= positions.size() || next.vertex >= positions.size()) {
+        return false;
+    }
+
+    const Vec3 center = positions[corner.vertex];
+    const Vec3 incoming = subtract(positions[previous.vertex], center);
+    const Vec3 outgoing = subtract(positions[next.vertex], center);
+    const double incomingLengthSquared = lengthSquared(incoming);
+    const double outgoingLengthSquared = lengthSquared(outgoing);
+    if (!(incomingLengthSquared > minimumLengthSquared) ||
+        !(outgoingLengthSquared > minimumLengthSquared) ||
+        !std::isfinite(incomingLengthSquared) || !std::isfinite(outgoingLengthSquared)) {
+        return false;
+    }
+
+    const Vec3 turn = cross(incoming, outgoing);
+    const double turnLength = std::sqrt(lengthSquared(turn));
+    const double cosineTerm = dot(incoming, outgoing);
+    const double angle = std::atan2(turnLength, cosineTerm);
+    if (!std::isfinite(angle) || angle < 0.0) {
+        return false;
+    }
+
+    result = static_cast<float>(angle);
+    return std::isfinite(result);
 }
 
 class DisjointSet final {
@@ -156,7 +200,7 @@ NormalGenerationResult DerivedNormalsGenerator::generate(EvaluatedMesh& mesh) {
 
     std::vector<Index> cornerFace(cornerCount, invalidIndex);
     std::vector<Vec3> faceNormals(faceCount);
-    std::vector<float> cornerAngles(cornerCount, 0.0F);
+    std::vector<Index> cycle;
 
     for (std::size_t faceIndex = 0; faceIndex < faceCount; ++faceIndex) {
         const EvaluatedFace& face = mesh.faces_[faceIndex];
@@ -164,8 +208,11 @@ NormalGenerationResult DerivedNormalsGenerator::generate(EvaluatedMesh& mesh) {
             return {NormalGenerationError::InvalidTopology};
         }
 
-        std::vector<Index> cycle;
-        cycle.reserve(face.cornerCount);
+        cycle.clear();
+        if (cycle.capacity() < face.cornerCount) {
+            cycle.reserve(face.cornerCount);
+        }
+
         Index cursor = face.firstCorner;
         for (std::uint32_t step = 0; step < face.cornerCount; ++step) {
             if (cursor >= cornerCount || cornerFace[cursor] != invalidIndex) {
@@ -205,33 +252,14 @@ NormalGenerationResult DerivedNormalsGenerator::generate(EvaluatedMesh& mesh) {
             return {NormalGenerationError::DegenerateFace};
         }
 
+        // Preserve the v0.1 contract that collapsed face edges are rejected even for flat faces,
+        // but do not retain one angle value per corner. Smooth faces recompute the weight only
+        // when fan accumulation actually needs it.
         for (const Index cornerIndex : cycle) {
-            const EvaluatedCorner& corner = mesh.corners_[cornerIndex];
-            const EvaluatedCorner& previous = mesh.corners_[corner.prev];
-            const EvaluatedCorner& next = mesh.corners_[corner.next];
-            if (previous.vertex >= vertexCount || next.vertex >= vertexCount) {
-                return {NormalGenerationError::InvalidTopology};
-            }
-
-            const Vec3 center = (*positions)[corner.vertex];
-            const Vec3 incoming = subtract((*positions)[previous.vertex], center);
-            const Vec3 outgoing = subtract((*positions)[next.vertex], center);
-            const double incomingLengthSquared = lengthSquared(incoming);
-            const double outgoingLengthSquared = lengthSquared(outgoing);
-            if (!(incomingLengthSquared > minimumLengthSquared) ||
-                !(outgoingLengthSquared > minimumLengthSquared) ||
-                !std::isfinite(incomingLengthSquared) || !std::isfinite(outgoingLengthSquared)) {
+            float unusedAngle = 0.0F;
+            if (!cornerAngle(mesh.corners_, *positions, cornerIndex, unusedAngle)) {
                 return {NormalGenerationError::DegenerateFace};
             }
-
-            const Vec3 turn = cross(incoming, outgoing);
-            const double turnLength = std::sqrt(lengthSquared(turn));
-            const double cosineTerm = dot(incoming, outgoing);
-            const double angle = std::atan2(turnLength, cosineTerm);
-            if (!std::isfinite(angle) || angle < 0.0) {
-                return {NormalGenerationError::DegenerateFace};
-            }
-            cornerAngles[cornerIndex] = static_cast<float>(angle);
         }
     }
 
@@ -307,33 +335,6 @@ NormalGenerationResult DerivedNormalsGenerator::generate(EvaluatedMesh& mesh) {
         smoothFans.unite(firstAtB, secondAtB);
     }
 
-    std::vector<Vec3> accumulated(cornerCount, Vec3{});
-    std::vector<Vec3> generated(cornerCount, Vec3{});
-    for (std::size_t cornerIndex = 0; cornerIndex < cornerCount; ++cornerIndex) {
-        const Index faceIndex = cornerFace[cornerIndex];
-        if (isFaceSharp(faceIndex)) {
-            generated[cornerIndex] = faceNormals[faceIndex];
-            continue;
-        }
-
-        const Index root = smoothFans.find(static_cast<Index>(cornerIndex));
-        const float weight = cornerAngles[cornerIndex];
-        accumulated[root].x += faceNormals[faceIndex].x * weight;
-        accumulated[root].y += faceNormals[faceIndex].y * weight;
-        accumulated[root].z += faceNormals[faceIndex].z * weight;
-    }
-
-    for (std::size_t cornerIndex = 0; cornerIndex < cornerCount; ++cornerIndex) {
-        const Index faceIndex = cornerFace[cornerIndex];
-        if (isFaceSharp(faceIndex)) {
-            continue;
-        }
-        const Index root = smoothFans.find(static_cast<Index>(cornerIndex));
-        if (!normalize(accumulated[root], generated[cornerIndex])) {
-            return {NormalGenerationError::DegenerateSmoothFan};
-        }
-    }
-
     if (normalLayer == nullptr) {
         if (!mesh.attributes_.create<Vec3>("normal", AttributeDomain::Corner, Vec3{})) {
             return {NormalGenerationError::AttributeWriteFailed};
@@ -343,7 +344,40 @@ NormalGenerationResult DerivedNormalsGenerator::generate(EvaluatedMesh& mesh) {
     if (normals == nullptr || normals->size() != cornerCount) {
         return {NormalGenerationError::AttributeWriteFailed};
     }
-    *normals = std::move(generated);
+
+    // Reuse the final Corner normal storage as the smooth-fan accumulation buffer. This avoids
+    // retaining separate accumulated + generated Vec3 arrays at peak memory on 32-bit targets.
+    std::fill(normals->begin(), normals->end(), Vec3{});
+    for (std::size_t cornerIndex = 0; cornerIndex < cornerCount; ++cornerIndex) {
+        const Index faceIndex = cornerFace[cornerIndex];
+        if (isFaceSharp(faceIndex)) {
+            (*normals)[cornerIndex] = faceNormals[faceIndex];
+            continue;
+        }
+
+        float weight = 0.0F;
+        if (!cornerAngle(mesh.corners_, *positions, static_cast<Index>(cornerIndex), weight)) {
+            return {NormalGenerationError::DegenerateFace};
+        }
+        const Index root = smoothFans.find(static_cast<Index>(cornerIndex));
+        (*normals)[root].x += faceNormals[faceIndex].x * weight;
+        (*normals)[root].y += faceNormals[faceIndex].y * weight;
+        (*normals)[root].z += faceNormals[faceIndex].z * weight;
+    }
+
+    for (std::size_t cornerIndex = 0; cornerIndex < cornerCount; ++cornerIndex) {
+        const Index faceIndex = cornerFace[cornerIndex];
+        if (isFaceSharp(faceIndex)) {
+            continue;
+        }
+        const Index root = smoothFans.find(static_cast<Index>(cornerIndex));
+        Vec3 normalized;
+        if (!normalize((*normals)[root], normalized)) {
+            return {NormalGenerationError::DegenerateSmoothFan};
+        }
+        (*normals)[cornerIndex] = normalized;
+    }
+
     return {};
 }
 
