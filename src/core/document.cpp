@@ -3,23 +3,83 @@
 #include "vortex/mesh/command.hpp"
 #include "vortex/mesh/editable_mesh.hpp"
 
+#include <cstdlib>
 #include <memory>
 #include <utility>
 
 namespace vortex {
+namespace {
+
+// Authoring is single-threaded today, so runtime identity allocation follows that contract.
+// Zero is reserved as invalid. Exhaustion terminates rather than silently reusing an identity.
+std::uint64_t nextRuntimeDocumentValue = 1;
+
+[[nodiscard]] RuntimeDocumentId allocateRuntimeDocumentId() noexcept {
+    if (nextRuntimeDocumentValue == 0U) {
+        std::abort();
+    }
+    const RuntimeDocumentId result{nextRuntimeDocumentValue};
+    ++nextRuntimeDocumentValue;
+    return result;
+}
+
+} // namespace
 
 MeshBlock::MeshBlock(
     const MeshId meshId,
     std::string meshName,
     std::unique_ptr<EditableMesh> mesh,
     const std::uint64_t meshRevision)
-    : id(meshId), name(std::move(meshName)), revision(meshRevision), authoredMesh_(std::move(mesh)) {}
+    : MeshBlock({}, meshId, std::move(meshName), std::move(mesh), meshRevision) {}
+
+MeshBlock::MeshBlock(
+    const RuntimeDocumentId ownerDocumentRuntimeId,
+    const MeshId meshId,
+    std::string meshName,
+    std::unique_ptr<EditableMesh> mesh,
+    const std::uint64_t meshRevision)
+    : id(meshId),
+      name(std::move(meshName)),
+      revision(meshRevision),
+      ownerDocumentRuntimeId_(ownerDocumentRuntimeId),
+      authoredMesh_(std::move(mesh)) {}
 
 MeshBlock::~MeshBlock() = default;
 MeshBlock::MeshBlock(MeshBlock&&) noexcept = default;
 MeshBlock& MeshBlock::operator=(MeshBlock&&) noexcept = default;
 
-Document::Document() : id_(DocumentId{1}), nextId_(2) {}
+Document::Document() : runtimeId_(allocateRuntimeDocumentId()), id_(DocumentId{1}), nextId_(2) {}
+
+Document::Document(Document&& other) noexcept
+    : runtimeId_(other.runtimeId_),
+      id_(other.id_),
+      nextId_(other.nextId_),
+      revision_(other.revision_),
+      scenes_(std::move(other.scenes_)),
+      collections_(std::move(other.collections_)),
+      meshes_(std::move(other.meshes_)),
+      objects_(std::move(other.objects_)),
+      changes_(std::move(other.changes_)) {
+    other.resetMovedFrom();
+}
+
+Document& Document::operator=(Document&& other) noexcept {
+    if (this == &other) {
+        return *this;
+    }
+
+    runtimeId_ = other.runtimeId_;
+    id_ = other.id_;
+    nextId_ = other.nextId_;
+    revision_ = other.revision_;
+    scenes_ = std::move(other.scenes_);
+    collections_ = std::move(other.collections_);
+    meshes_ = std::move(other.meshes_);
+    objects_ = std::move(other.objects_);
+    changes_ = std::move(other.changes_);
+    other.resetMovedFrom();
+    return *this;
+}
 
 SceneId Document::createScene(std::string name) {
     const SceneId sceneId = allocateId<SceneId>();
@@ -62,7 +122,7 @@ MeshId Document::createMesh(std::string name, EditableMesh authoredMeshValue) {
     const MeshId id = allocateId<MeshId>();
     meshes_.emplace(
         id,
-        MeshBlock{id, std::move(name), std::make_unique<EditableMesh>(std::move(authoredMeshValue)), 1});
+        MeshBlock{runtimeId_, id, std::move(name), std::make_unique<EditableMesh>(std::move(authoredMeshValue)), 1});
     markChanged(DataKind::Mesh, ChangeKind::Created, id.value());
     return id;
 }
@@ -224,7 +284,7 @@ MeshId Document::makeObjectMeshUnique(const ObjectId objectId) {
 
     const MeshId cloneId = allocateId<MeshId>();
     auto authoredClone = std::make_unique<EditableMesh>(*sourceIt->second.authoredMesh_);
-    MeshBlock clone{cloneId, sourceIt->second.name, std::move(authoredClone), 1};
+    MeshBlock clone{runtimeId_, cloneId, sourceIt->second.name, std::move(authoredClone), 1};
     meshes_.emplace(cloneId, std::move(clone));
 
     objectIt->second.meshId = cloneId;
@@ -378,6 +438,18 @@ std::vector<ChangeEvent> Document::changesSince(const std::uint64_t revision) co
     return result;
 }
 
+void Document::resetMovedFrom() noexcept {
+    runtimeId_ = allocateRuntimeDocumentId();
+    id_ = DocumentId{1};
+    nextId_ = 2;
+    revision_ = 0;
+    scenes_.clear();
+    collections_.clear();
+    meshes_.clear();
+    objects_.clear();
+    changes_.clear();
+}
+
 void Document::markChanged(const DataKind dataKind, const ChangeKind changeKind, const std::uint64_t entityId) {
     ++revision_;
     changes_.push_back(ChangeEvent{revision_, dataKind, changeKind, entityId});
@@ -415,7 +487,7 @@ bool Document::collectionBelongsToScene(const CollectionId collectionId, const S
 }
 
 bool Document::validate() const noexcept {
-    if (!id_) {
+    if (!runtimeId_ || !id_) {
         return false;
     }
 
@@ -447,7 +519,8 @@ bool Document::validate() const noexcept {
     }
 
     for (const auto& [meshId, mesh] : meshes_) {
-        if (!meshId || mesh.id != meshId || !mesh.authoredMesh_ || !mesh.authoredMesh_->validate()) {
+        if (!meshId || mesh.id != meshId || mesh.ownerDocumentRuntimeId_ != runtimeId_ ||
+            !mesh.authoredMesh_ || !mesh.authoredMesh_->validate()) {
             return false;
         }
     }
