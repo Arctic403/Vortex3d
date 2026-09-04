@@ -4,111 +4,98 @@ Last updated: 2026-09-04
 
 ## Current engineering focus
 
-**Production-hardening the portable foundation, then connecting authored geometry to an evaluated-mesh layer.**
+**Phase 4 has started: deterministic evaluated geometry, then modifiers and cache invalidation.**
 
-The project is no longer in the original bootstrap-only state. The Document, mesh kernel, command/history path, Android compile gate, static analysis, performance instrumentation, and deliberate validation-corruption coverage are all live.
+The portable foundation is now strong enough to build upward from without rewriting the authoring kernel. Document ownership/history, mesh topology, Android dual-ABI compilation, static analysis, sanitizer coverage, performance instrumentation, deliberate corruption testing, and the first authored-to-evaluated boundary are all live.
 
 ## Foundation state
 
 ### Language and portability
 
-- [x] C++20 required.
-- [x] C++ extensions disabled.
-- [x] GCC + Clang warnings-as-errors builds.
-- [x] AddressSanitizer + UndefinedBehaviorSanitizer CI.
-- [x] clang-tidy executes in CI against a real compile database.
-- [x] Portable-core dependency scanner.
-- [x] Android NDK cross-compile gate for `armeabi-v7a`.
-- [x] Android NDK cross-compile gate for `arm64-v8a`.
-- [x] Explicit CMake pointer-width validation proves ARMv7 is compiled as 32-bit and ARM64 as 64-bit.
-- [x] Portable core remains free of Android/JNI/Vulkan/WebView/Emscripten/Three.js/platform-header dependencies.
+- [x] C++20 required; extensions disabled.
+- [x] GCC + Clang warnings-as-errors.
+- [x] ASan + UBSan.
+- [x] clang-tidy against a real compile database.
+- [x] portable-core dependency scanner.
+- [x] Android NDK `armeabi-v7a` compile gate with explicit 32-bit pointer-width validation.
+- [x] Android NDK `arm64-v8a` compile gate with explicit 64-bit pointer-width validation.
+- [x] no Android/JNI/Vulkan/WebView/platform framework dependency in portable engine code.
 
 ### Document and ownership
 
 - [x] Scene / Collection / Object / Mesh data blocks.
-- [x] Stable typed 64-bit IDs.
-- [x] Shared mesh instances through `MeshId` references.
+- [x] stable typed 64-bit IDs.
+- [x] shared mesh instances through `MeshId` references.
 - [x] explicit Make Unique behavior.
-- [x] Parent-cycle rejection and reference validation.
-- [x] Document revision/change events.
-- [x] `Document` is move-only rather than casually copied.
+- [x] move-only `Document`.
 - [x] `MeshBlock` uniquely owns authored `EditableMesh` data.
 - [x] ordinary Document undo uses reversible deltas rather than retained whole-Document snapshots.
 - [x] global Document history has an explicit retained-byte budget.
 
-Objects do not own mesh geometry. Sharing means multiple Objects reference the same Mesh data block. Make Unique is the deliberate geometry clone boundary.
-
 ### Mesh kernel
 
-- [x] Vertex / Edge / Face / Corner domains with stable IDs independent from packed indices.
-- [x] Face `next/prev` cycles and radial edge cycles.
-- [x] N-gons.
-- [x] Manifold and selected non-manifold topology.
-- [x] Generic domain-qualified attributes.
-- [x] conservative add/remove topology primitives.
+- [x] Vertex / Edge / Face / Corner domains.
+- [x] stable IDs independent from packed storage.
+- [x] n-gons, face cycles, radial cycles, manifold and selected non-manifold topology.
+- [x] generic domain-qualified attributes.
+- [x] conservative add/remove topology operations.
 - [x] stable-ID edge split.
 - [x] face extrusion.
-- [x] deterministic attribute copying/interpolation/compaction.
-- [x] structured validation diagnostics.
-- [x] deterministic randomized mutation testing.
-- [x] donor behavior contracts rewritten as native tests rather than architecture copies.
+- [x] deterministic attribute copy/interpolation/compaction.
+- [x] structured mesh validation.
+- [x] deterministic randomized mutation coverage.
 
 ### Commands and history
 
-- [x] Document command/transaction boundary.
-- [x] compact rename / parent / mesh-reference style Document deltas.
+- [x] command/transaction mutation boundary.
+- [x] compact Document deltas.
 - [x] bounded `MeshHistory`.
-- [x] vertex move before/after history.
+- [x] vertex movement before/after deltas.
 - [x] exact-ID local topology history for face extrusion.
-- [x] undo/redo branch handling and budget enforcement.
-- [x] Mesh history bound to its owning Document instance + MeshId when used through the Document bridge.
-- [x] repeated and stacked extrusion undo/redo coverage.
+- [x] repeated and stacked extrusion undo/redo tests.
+- [x] mesh history bound to owning Document instance + `MeshId` through the Document bridge.
 
-Whole meshes are **not retained as normal undo steps**. Some complex topology operations still use full `EditableMesh` copies as temporary operation-local rollback guards. Those are correctness debt to profile, not retained history architecture.
+Whole meshes are not retained as normal undo steps. Some complex topology operations still use temporary whole-`EditableMesh` copies as atomic rollback guards; those remain performance debt to profile rather than history architecture.
 
 ### Validation hardening
 
-CTest currently registers **11 native suites**.
+CTest now registers **12 native suites**, including the evaluator test.
 
-Coverage includes:
+Coverage includes valid and deliberately malformed topology:
 
-- valid triangle/quad/n-gon/cube topology,
+- triangle / quad / n-gon / cube,
 - shared and 3-face non-manifold radial edges,
-- removal and attribute compaction,
-- edge splitting,
-- face extrusion,
-- command/history replay,
-- stacked topology undo/redo,
+- edge split and face extrusion,
+- attribute compaction,
+- exact-ID history replay,
 - deterministic randomized mutation,
-- deliberate broken face cycles,
-- deliberate broken radial cycles,
-- invalid edge endpoints,
+- broken face cycles,
+- broken radial cycles,
+- invalid endpoints,
 - invalid face sizes,
-- orphan/unreachable corners,
+- unreachable corners,
 - attribute-size mismatch,
 - duplicate/reversed edge prevention,
-- illegal deletion order.
+- illegal deletion order,
+- authored-to-evaluated conversion and revision behavior.
 
-Deliberate private corruption access exists only in test builds through `VORTEX_ENABLE_TEST_HOOKS`.
+Private corruption access exists only in test builds through `VORTEX_ENABLE_TEST_HOOKS`.
 
 ### Performance and memory measurement
 
-- [x] optional `vortex_mesh_bench` Release benchmark target.
-- [x] benchmark vertex creation.
-- [x] benchmark edge creation.
-- [x] benchmark face creation.
-- [x] benchmark topology traversal.
-- [x] benchmark edge split.
-- [x] benchmark face extrusion.
-- [x] benchmark attribute lookup/mutation.
-- [x] benchmark vertex movement.
-- [x] benchmark undo/redo.
-- [x] benchmark full validation.
-- [x] JSON output and GitHub Actions artifacts.
-- [x] requested 10k / 100k / 1M manual profiles where practical.
+- [x] optional `vortex_mesh_bench` Release target.
+- [x] vertex / edge / face creation.
+- [x] topology traversal.
+- [x] edge split / face extrusion.
+- [x] attribute lookup / mutation.
+- [x] vertex movement.
+- [x] undo / redo.
+- [x] full validation.
+- [x] JSON output and Actions artifacts.
+- [x] manual 10k / 100k / 1M requested profiles where practical.
 - [x] normal CI benchmark smoke.
 
-Initial 64-bit CI layout observations from the smoke profile:
+Initial 64-bit layout observations:
 
 ```text
 MeshVertex              8 bytes
@@ -123,58 +110,66 @@ corner hash payload    72 bytes
 bucket pointer           8 bytes
 ```
 
-These values exclude allocator/node bookkeeping. They confirm that corner/hash-heavy storage deserves investigation, but **do not justify a container rewrite by themselves**.
+These measurements make corner/hash-heavy storage a future optimization candidate, but they do not justify a container rewrite by themselves.
 
-The current storage remains intentionally redundant:
+## Evaluated geometry boundary
 
-```text
-stable ID
-  -> ID order
-  -> ID-to-packed-index lookup
-  -> ID-to-topology-record lookup
-```
+A separate portable `vortex_eval` target is now live.
 
-Future packed/sparse/generational storage must preserve the stable public ID contract.
+`MeshEvaluator` converts a validated `MeshBlock` / `EditableMesh` into a read-only `EvaluatedMesh` that contains:
+
+- source `MeshId`,
+- source mesh revision,
+- source Vertex/Edge/Face/Corner IDs,
+- copied generic attribute layers,
+- preserved n-gon boundaries,
+- preserved face and radial connectivity,
+- checked 32-bit packed generated topology references.
+
+Persistent authored IDs remain 64-bit. The 32-bit evaluated indices are rebuildable implementation detail and are never persistent identity.
+
+Evaluation fails explicitly rather than truncating if generated element counts exceed the packed-index representation.
+
+An evaluated snapshot is independent from later authored edits. Re-evaluation after a command observes the new Mesh revision; undo followed by re-evaluation restores the authored result. See `docs/EVALUATION.md`.
 
 ## Current CI gate
 
-Normal Core CI contains **8 jobs**:
+Normal Core CI has **8 jobs**:
 
 1. portable dependency boundary,
 2. GCC host build/tests,
 3. Clang host build/tests,
-4. ASan + UBSan tests,
-5. clang-tidy static analysis,
+4. ASan + UBSan,
+5. clang-tidy,
 6. Android ARMv7 32-bit cross-compile,
 7. Android ARM64 cross-compile,
 8. Release benchmark smoke + artifact.
 
-All eight jobs are green on the validation-hardening foundation head.
+The evaluator PR passed all eight gates before merge.
 
 ## Deferred intentionally
 
-The following are not being introduced prematurely:
+Still deliberately deferred:
 
 - custom persistent allocators,
 - broad `std::pmr` conversion,
-- ECS replacement of the authoring model,
+- ECS replacement of authoring data,
 - plugin ABI,
-- storage rewrite without benchmark evidence,
+- storage rewrite without larger benchmark evidence,
 - exception-heavy result architecture,
-- Android framework types inside the modeling core,
-- renderer ownership of authored mesh data.
-
-`std::pmr`, arenas, scratch buffers, and operation-local reusable storage remain candidates specifically for temporary topology work after profiling.
+- renderer ownership of authored data,
+- parallel evaluation before deterministic invalidation exists.
 
 ## Next engineering target
 
-1. Capture larger benchmark baselines at requested 10k / 100k / 1M profiles and compare scaling.
-2. Use those results to choose the first narrow storage/performance experiment; `findEdge()` linear lookup and corner/hash memory are current suspects, not assumptions.
-3. Keep temporary whole-mesh rollback until measurements justify replacing it with scratch/local patches.
-4. Begin the authored `EditableMesh` -> read-only `EvaluatedMesh` boundary with source-ID mappings and revision tracking.
-5. Add modifiers only after that source/evaluated separation is deterministic.
+1. Add the first modifier interface over immutable evaluated input.
+2. Implement **Transform** as the simplest deterministic modifier.
+3. Add revision/configuration keys and a small evaluator cache contract.
+4. Implement **Mirror** once modifier ownership/invalidation is proven.
+5. Add **Triangulate** as a derived/render-oriented topology operation while preserving authored n-gons.
+6. Keep storage optimization separate and evidence-driven from benchmark results.
 
-No renderer or Android UI code should bypass this sequence.
+No renderer or Android UI code should bypass the evaluator boundary.
 
 ## First meaningful product milestone
 
@@ -194,4 +189,4 @@ Launch native APK
 -> Re-import and validate
 ```
 
-The headless kernel already performs and exactly replays the Extrude/Undo/Redo portion. The next architectural gap is evaluated geometry, followed by project serialization and the Android host/render path.
+The native engine now owns the authored mesh, exact command/history replay, and the first immutable evaluated snapshot layer. The next missing piece in that chain is the modifier stack, starting with Transform and Mirror.
