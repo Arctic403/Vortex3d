@@ -400,6 +400,22 @@ public:
         return result;
     }
 
+    [[nodiscard]] std::vector<AttributeKey> sortedLayerKeys() const {
+        std::vector<AttributeKey> result;
+        result.reserve(layers_.size());
+        for (const auto& [key, layer] : layers_) {
+            (void)layer;
+            result.push_back(key);
+        }
+        std::sort(result.begin(), result.end(), [](const AttributeKey& a, const AttributeKey& b) {
+            if (a.domain != b.domain) {
+                return a.domain < b.domain;
+            }
+            return a.name < b.name;
+        });
+        return result;
+    }
+
     [[nodiscard]] bool replaceSerializedLayers(
         const std::array<std::size_t, 4>& domainSizes,
         std::vector<AttributeLayer> layers) {
@@ -407,12 +423,16 @@ public:
         for (AttributeLayer& layer : layers) {
             const std::size_t expected = domainSizes[domainIndex(layer.key.domain)];
             const bool sizeMatches = std::visit([expected](const auto& storage) { return storage.size() == expected; }, layer.storage);
-            const bool typeMatches = std::visit([&layer](const auto& storage) {
+            const bool storageTypeMatches = std::visit([&layer](const auto& storage) {
                 using Vector = std::decay_t<decltype(storage)>;
                 using Value = typename Vector::value_type;
                 return layer.type == AttributeTypeOf<Value>::value;
             }, layer.storage);
-            if (!sizeMatches || !typeMatches || rebuilt.contains(layer.key)) {
+            const bool defaultTypeMatches = std::visit([&layer](const auto& value) {
+                using Value = std::decay_t<decltype(value)>;
+                return layer.type == AttributeTypeOf<Value>::value;
+            }, layer.defaultValue);
+            if (!sizeMatches || !storageTypeMatches || !defaultTypeMatches || rebuilt.contains(layer.key)) {
                 return false;
             }
             rebuilt.emplace(layer.key, std::move(layer));

@@ -2,6 +2,8 @@
 
 > **Implemented preview:** schema v1 is now live through `ProjectCodec`. It is a deterministic binary authored-state container with exact stable IDs, generic attributes, hierarchy/shared-mesh references, bounded decoding, payload length, and integrity checksum. Runtime identity, undo history, evaluated data, and caches remain non-persistent. The schema is still pre-1.0 and may migrate.
 
+Schema v1 now writes the standard FNV-1a 64-bit checksum while accepting the earlier v0.2 preview checksum variant for backward compatibility. Encoding uses a single output buffer and const topology/attribute views to avoid avoidable whole-project temporary copies on memory-constrained 32-bit hosts.
+
 ## Purpose
 
 A Vortex project file preserves editable authoring state. It is not merely an exported runtime mesh container.

@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <vector>
 
 namespace {
 
@@ -14,6 +15,27 @@ vortex::EditableMesh makeQuad() {
     const auto d = mesh.addVertex({-1.0F,  1.0F, 0.0F});
     assert(a && b && c && d);
     assert(mesh.addFace({a,b,c,d}));
+    assert(mesh.validateStrict());
+    return mesh;
+}
+
+vortex::EditableMesh makeCube() {
+    vortex::EditableMesh mesh;
+    const auto v0 = mesh.addVertex({-1.0F, -1.0F, -1.0F});
+    const auto v1 = mesh.addVertex({1.0F, -1.0F, -1.0F});
+    const auto v2 = mesh.addVertex({1.0F, 1.0F, -1.0F});
+    const auto v3 = mesh.addVertex({-1.0F, 1.0F, -1.0F});
+    const auto v4 = mesh.addVertex({-1.0F, -1.0F, 1.0F});
+    const auto v5 = mesh.addVertex({1.0F, -1.0F, 1.0F});
+    const auto v6 = mesh.addVertex({1.0F, 1.0F, 1.0F});
+    const auto v7 = mesh.addVertex({-1.0F, 1.0F, 1.0F});
+    assert(v0 && v1 && v2 && v3 && v4 && v5 && v6 && v7);
+    assert(mesh.addFace({v0, v3, v2, v1}));
+    assert(mesh.addFace({v4, v5, v6, v7}));
+    assert(mesh.addFace({v0, v1, v5, v4}));
+    assert(mesh.addFace({v1, v2, v6, v5}));
+    assert(mesh.addFace({v2, v3, v7, v6}));
+    assert(mesh.addFace({v3, v0, v4, v7}));
     assert(mesh.validateStrict());
     return mesh;
 }
@@ -67,10 +89,24 @@ void testDependencyGraph() {
     assert(graph.addDependency(source, modifier));
     assert(graph.addDependency(modifier, viewport));
     assert(!graph.addDependency(viewport, source));
+    assert(graph.dependenciesOf(viewport) == std::vector<vortex::DependencyNodeId>{modifier});
+
     graph.markAllClean();
     assert(graph.markDirty(source));
     const auto dirty = graph.dirtyEvaluationOrder();
     assert(dirty.size() == 3U && dirty.front() == source && dirty.back() == viewport);
+
+    graph.markClean(viewport);
+    assert(graph.node(viewport) != nullptr && !graph.node(viewport)->dirty);
+    assert(graph.markDirty(source));
+    assert(graph.node(viewport)->dirty);
+
+    graph.markAllClean();
+    assert(graph.removeDependency(modifier, viewport));
+    assert(graph.node(viewport)->dirty);
+    graph.markAllClean();
+    assert(graph.addDependency(modifier, viewport));
+    assert(graph.node(viewport)->dirty);
 }
 
 void testProceduralAndViewport() {
@@ -90,6 +126,36 @@ void testProceduralAndViewport() {
     assert(evaluated && evaluated.mesh->faceCount() == 2U);
     const auto render = vortex::RenderExtractor::extract(*evaluated.mesh);
     assert(render && render.mesh->triangles.size() == 2U && render.mesh->vertices.size() == 4U);
+
+    vortex::GeometryGraph isolatedGraph;
+    (void)isolatedGraph.addNode(vortex::GeometryTransformNode{{100.0F,0.0F,0.0F},{},{1.0F,1.0F,1.0F}});
+    const auto selected = isolatedGraph.addNode(vortex::GeometryTransformNode{{1.0F,0.0F,0.0F},{},{1.0F,1.0F,1.0F}});
+    assert(isolatedGraph.setOutput(selected));
+    const auto isolatedEvaluation = isolatedGraph.evaluate(*block);
+    assert(isolatedEvaluation);
+    const auto isolatedPosition = isolatedEvaluation.mesh->position(0U);
+    assert(isolatedPosition && std::abs(isolatedPosition->x) < 1.0e-5F);
+
+    vortex::GeometryGraph linearOnly;
+    const auto first = linearOnly.addNode(vortex::GeometryTransformNode{});
+    const auto second = linearOnly.addNode(vortex::GeometryMirrorNode{});
+    const auto third = linearOnly.addNode(vortex::GeometryTriangulateNode{});
+    assert(linearOnly.connect(first, second));
+    assert(!linearOnly.connect(first, third));
+    assert(!linearOnly.connect(third, second));
+
+    vortex::Document cubeDocument;
+    const auto cubeMeshId = cubeDocument.createMesh("Cube", makeCube());
+    const auto* cubeBlock = cubeDocument.mesh(cubeMeshId);
+    assert(cubeBlock != nullptr);
+    const auto cubeEvaluation = vortex::MeshEvaluator::evaluate(*cubeBlock);
+    assert(cubeEvaluation);
+    const auto cubeRender = vortex::RenderExtractor::extract(*cubeEvaluation.mesh);
+    assert(cubeRender);
+    assert(cubeRender.mesh->triangles.size() == 12U);
+    // Flat cube faces must retain split Corner normals instead of being averaged back
+    // onto the eight authored vertices.
+    assert(cubeRender.mesh->vertices.size() == 24U);
 }
 
 void testRegistries() {

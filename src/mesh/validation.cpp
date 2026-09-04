@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -149,7 +150,8 @@ MeshValidationResult EditableMesh::validateStrict() const {
     considerRegistry(edges_);
     considerRegistry(faces_);
     considerRegistry(corners_);
-    if (nextElementId_ == 0U || nextElementId_ <= maximumLiveId) {
+    if (nextElementId_ == 0U || nextElementId_ == std::numeric_limits<std::uint64_t>::max() ||
+        nextElementId_ <= maximumLiveId) {
         issue(
             MeshValidationCode::InvalidAllocatorState,
             nextElementId_,

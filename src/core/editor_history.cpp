@@ -85,15 +85,14 @@ bool EditorHistory::executeMesh(
         return false;
     }
 
-    const auto execution = command.apply(*meshIt->second.authoredMesh_);
+    auto execution = command.apply(*meshIt->second.authoredMesh_);
     if (!execution) {
         return false;
     }
 
-    MeshCommandResult executionResult = execution->result;
-    executionResult.changed = execution->history.has_value();
+    execution->result.changed = execution->history.has_value();
     if (result != nullptr) {
-        *result = executionResult;
+        *result = std::move(execution->result);
     }
     if (!execution->history) {
         return true;

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <utility>
 
@@ -124,7 +125,7 @@ MeshId Document::createMesh(std::string name) {
 }
 
 MeshId Document::createMesh(std::string name, EditableMesh authoredMeshValue) {
-    if (!authoredMeshValue.validate()) {
+    if (!authoredMeshValue.validateStrict()) {
         return {};
     }
 
@@ -319,11 +320,12 @@ bool Document::executeMeshCommand(
         return false;
     }
 
+    const bool changed = executionResult.changed;
     if (result != nullptr) {
-        *result = executionResult;
+        *result = std::move(executionResult);
     }
 
-    if (executionResult.changed) {
+    if (changed) {
         ++meshIt->second.revision;
         ++meshIt->second.evaluationRevision_;
         markChanged(DataKind::Mesh, ChangeKind::Updated, meshId.value());
@@ -557,14 +559,19 @@ bool Document::collectionBelongsToScene(const CollectionId collectionId, const S
 }
 
 bool Document::validate() const noexcept {
-    if (!runtimeId_ || !id_) {
+    if (!runtimeId_ || !id_ || nextId_ == 0U || nextId_ == std::numeric_limits<std::uint64_t>::max() ||
+        revision_ == std::numeric_limits<std::uint64_t>::max()) {
         return false;
     }
 
+    std::uint64_t maximumPersistentId = id_.value();
+
     for (const auto& [sceneId, scene] : scenes_) {
-        if (!sceneId || scene.id != sceneId) {
+        if (!sceneId || scene.id != sceneId || scene.revision == 0U ||
+            scene.revision == std::numeric_limits<std::uint64_t>::max()) {
             return false;
         }
+        maximumPersistentId = std::max(maximumPersistentId, sceneId.value());
         const auto rootIt = collections_.find(scene.rootCollectionId);
         if (rootIt == collections_.end() || rootIt->second.sceneId != sceneId || rootIt->second.parentId) {
             return false;
@@ -572,15 +579,40 @@ bool Document::validate() const noexcept {
     }
 
     for (const auto& [collectionId, collection] : collections_) {
-        if (!collectionId || collection.id != collectionId || !hasScene(collection.sceneId)) {
+        if (!collectionId || collection.id != collectionId || collection.revision == 0U ||
+            collection.revision == std::numeric_limits<std::uint64_t>::max() || !hasScene(collection.sceneId)) {
             return false;
         }
-        if (collection.parentId) {
+        maximumPersistentId = std::max(maximumPersistentId, collectionId.value());
+
+        const SceneBlock& owningScene = scenes_.at(collection.sceneId);
+        if (!collection.parentId) {
+            if (owningScene.rootCollectionId != collectionId) {
+                return false;
+            }
+        } else {
             const auto parentIt = collections_.find(collection.parentId);
             if (parentIt == collections_.end() || parentIt->second.sceneId != collection.sceneId) {
                 return false;
             }
+
+            CollectionId cursor = collection.parentId;
+            std::size_t visited = 0;
+            while (cursor) {
+                if (cursor == collectionId) {
+                    return false;
+                }
+                const auto ancestorIt = collections_.find(cursor);
+                if (ancestorIt == collections_.end() || ancestorIt->second.sceneId != collection.sceneId) {
+                    return false;
+                }
+                cursor = ancestorIt->second.parentId;
+                if (++visited > collections_.size()) {
+                    return false;
+                }
+            }
         }
+
         for (const ObjectId objectId : collection.objectIds) {
             if (!hasObject(objectId)) {
                 return false;
@@ -590,16 +622,21 @@ bool Document::validate() const noexcept {
 
     for (const auto& [meshId, mesh] : meshes_) {
         if (!meshId || mesh.id != meshId || mesh.ownerDocumentRuntimeId_ != runtimeId_ ||
-            mesh.revision == 0U || mesh.evaluationRevision_ == 0U || mesh.evaluationRevision_ > mesh.revision ||
-            !mesh.authoredMesh_ || !mesh.authoredMesh_->validate()) {
+            mesh.revision == 0U || mesh.revision == std::numeric_limits<std::uint64_t>::max() ||
+            mesh.evaluationRevision_ == 0U || mesh.evaluationRevision_ == std::numeric_limits<std::uint64_t>::max() ||
+            mesh.evaluationRevision_ > mesh.revision ||
+            !mesh.authoredMesh_ || !mesh.authoredMesh_->validateStrict()) {
             return false;
         }
+        maximumPersistentId = std::max(maximumPersistentId, meshId.value());
     }
 
     for (const auto& [objectId, object] : objects_) {
-        if (!objectId || object.id != objectId) {
+        if (!objectId || object.id != objectId || object.revision == 0U ||
+            object.revision == std::numeric_limits<std::uint64_t>::max()) {
             return false;
         }
+        maximumPersistentId = std::max(maximumPersistentId, objectId.value());
         if (object.meshId && !hasMesh(object.meshId)) {
             return false;
         }
@@ -611,7 +648,7 @@ bool Document::validate() const noexcept {
         }
     }
 
-    return true;
+    return nextId_ > maximumPersistentId;
 }
 
 } // namespace vortex

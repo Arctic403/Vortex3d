@@ -16,6 +16,16 @@ namespace {
 
 constexpr std::array<std::uint8_t, 8> magic{'V','T','X','3','D','0','0','1'};
 constexpr std::uint64_t maxElements = 16ULL * 1024ULL * 1024ULL;
+constexpr std::uint64_t fnv64Offset = 14695981039346656037ULL;
+constexpr std::uint64_t legacyFnv64Offset = 1469598103934665603ULL;
+constexpr std::uint64_t fnv64Prime = 1099511628211ULL;
+
+static_assert(std::endian::native == std::endian::little, "ProjectCodec schema v1 requires little-endian encoding");
+static_assert(sizeof(bool) == 1U, "ProjectCodec schema v1 requires one-byte bool");
+static_assert(sizeof(float) == 4U && std::numeric_limits<float>::is_iec559,
+              "ProjectCodec schema v1 requires IEEE-754 32-bit float");
+static_assert(sizeof(Vec2) == 8U && sizeof(Vec3) == 12U && sizeof(Vec4) == 16U,
+              "ProjectCodec schema v1 requires tightly packed vector value types");
 
 class Writer final {
 public:
@@ -49,15 +59,37 @@ public:
         return true;
     }
     [[nodiscard]] std::size_t remaining() const noexcept { return input_.size() - offset_; }
+    [[nodiscard]] bool canReadElements(const std::uint64_t count, const std::size_t elementBytes) const noexcept {
+        if (elementBytes == 0U) {
+            return true;
+        }
+        if (count > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max() / elementBytes)) {
+            return false;
+        }
+        return static_cast<std::size_t>(count) * elementBytes <= remaining();
+    }
 private:
     std::span<const std::uint8_t> input_;
     std::size_t offset_ = 0;
 };
 
-std::uint64_t checksum(const std::span<const std::uint8_t> bytes) noexcept {
-    std::uint64_t hash = 1469598103934665603ULL;
-    for (const std::uint8_t byte : bytes) { hash ^= byte; hash *= 1099511628211ULL; }
+std::uint64_t checksumWithOffset(
+    const std::span<const std::uint8_t> bytes,
+    const std::uint64_t offset) noexcept {
+    std::uint64_t hash = offset;
+    for (const std::uint8_t byte : bytes) {
+        hash ^= byte;
+        hash *= fnv64Prime;
+    }
     return hash;
+}
+
+std::uint64_t checksum(const std::span<const std::uint8_t> bytes) noexcept {
+    return checksumWithOffset(bytes, fnv64Offset);
+}
+
+std::uint64_t legacyChecksum(const std::span<const std::uint8_t> bytes) noexcept {
+    return checksumWithOffset(bytes, legacyFnv64Offset);
 }
 
 template <typename IdType> void writeId(Writer& writer, const IdType id) { writer.pod<std::uint64_t>(id.value()); }
@@ -68,7 +100,7 @@ template <typename T> void writeVectorPod(Writer& writer, const std::vector<T>& 
     for (const T& value : values) writer.pod<T>(value);
 }
 template <typename T> bool readVectorPod(Reader& reader, std::vector<T>& values) {
-    std::uint64_t count=0; if(!reader.pod(count) || count>maxElements) return false;
+    std::uint64_t count=0; if(!reader.pod(count) || count>maxElements || !reader.canReadElements(count, sizeof(T))) return false;
     values.resize(static_cast<std::size_t>(count));
     for (T& value : values) if(!reader.pod(value)) return false;
     return true;
@@ -76,13 +108,20 @@ template <typename T> bool readVectorPod(Reader& reader, std::vector<T>& values)
 
 void writeScalar(Writer& w, const AttributeScalar& scalar) {
     w.pod<std::uint8_t>(static_cast<std::uint8_t>(scalar.index()));
-    std::visit([&](const auto& value){ w.pod(value); }, scalar);
+    std::visit([&](const auto& value) {
+        using Value = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<Value, bool>) {
+            w.pod<std::uint8_t>(value ? 1U : 0U);
+        } else {
+            w.pod(value);
+        }
+    }, scalar);
 }
 
 bool readScalar(Reader& r, AttributeScalar& scalar) {
     std::uint8_t index=0; if(!r.pod(index) || index>6U) return false;
     switch(index){
-        case 0:{bool v=false; if(!r.pod(v)) return false; scalar=v; break;}
+        case 0:{std::uint8_t v=0; if(!r.pod(v) || v>1U) return false; scalar=(v!=0U); break;}
         case 1:{std::int32_t v=0; if(!r.pod(v)) return false; scalar=v; break;}
         case 2:{std::uint32_t v=0; if(!r.pod(v)) return false; scalar=v; break;}
         case 3:{float v=0; if(!r.pod(v)) return false; scalar=v; break;}
@@ -106,9 +145,22 @@ void writeStorage(Writer& w, const AttributeStorage& storage) {
 
 bool readStorage(Reader& r, AttributeStorage& storage) {
     std::uint8_t index=0; std::uint64_t count=0; if(!r.pod(index)||index>6U||!r.pod(count)||count>maxElements) return false;
+    const std::size_t elementBytes = [&]() -> std::size_t {
+        switch (index) {
+            case 0: return sizeof(std::uint8_t);
+            case 1: return sizeof(std::int32_t);
+            case 2: return sizeof(std::uint32_t);
+            case 3: return sizeof(float);
+            case 4: return sizeof(Vec2);
+            case 5: return sizeof(Vec3);
+            case 6: return sizeof(Vec4);
+            default: return 0U;
+        }
+    }();
+    if (elementBytes == 0U || !r.canReadElements(count, elementBytes)) return false;
     const auto n=static_cast<std::size_t>(count);
     switch(index){
-        case 0:{std::vector<bool> v(n); for(std::size_t i=0;i<n;++i){std::uint8_t x=0;if(!r.pod(x))return false;v[i]=x!=0;} storage=std::move(v);break;}
+        case 0:{std::vector<bool> v(n); for(std::size_t i=0;i<n;++i){std::uint8_t x=0;if(!r.pod(x)||x>1U)return false;v[i]=x!=0;} storage=std::move(v);break;}
         case 1:{std::vector<std::int32_t> v(n);for(auto& x:v)if(!r.pod(x))return false;storage=std::move(v);break;}
         case 2:{std::vector<std::uint32_t> v(n);for(auto& x:v)if(!r.pod(x))return false;storage=std::move(v);break;}
         case 3:{std::vector<float> v(n);for(auto& x:v)if(!r.pod(x))return false;storage=std::move(v);break;}
@@ -124,9 +176,10 @@ void writeAttributes(Writer& w, const AttributeSet& attributes) {
     for (std::uint8_t domain = 0; domain < 4U; ++domain) {
         w.pod<std::uint64_t>(attributes.domainSize(static_cast<AttributeDomain>(domain)));
     }
-    const auto layers = attributes.layersSnapshot();
-    w.pod<std::uint64_t>(layers.size());
-    for (const AttributeLayer& layer : layers) {
+    const auto layerKeys = attributes.sortedLayerKeys();
+    w.pod<std::uint64_t>(layerKeys.size());
+    for (const AttributeKey& key : layerKeys) {
+        const AttributeLayer& layer = *attributes.layer(key.name, key.domain);
         w.string(layer.key.name);
         w.pod<std::uint8_t>(static_cast<std::uint8_t>(layer.key.domain));
         w.pod<std::uint8_t>(static_cast<std::uint8_t>(layer.type));
@@ -169,29 +222,31 @@ bool readAttributes(Reader& r, AttributeSet& attributes) {
 }
 
 void writeMesh(Writer& w, const EditableMesh& mesh) {
-    const EditableMeshSerializedState state = mesh.serializedState();
-    w.pod<std::uint64_t>(state.nextElementId);
-    writeAttributes(w, state.attributes);
+    w.pod<std::uint64_t>(mesh.serializedNextElementId());
+    writeAttributes(w, mesh.attributes());
 
-    w.pod<std::uint64_t>(state.vertices.size());
-    for (const MeshVertex& value : state.vertices) {
-        writeId(w, value.id);
+    w.pod<std::uint64_t>(mesh.vertexCount());
+    for (const VertexId id : mesh.vertexIds()) {
+        writeId(w, id);
     }
-    w.pod<std::uint64_t>(state.edges.size());
-    for (const MeshEdge& value : state.edges) {
+    w.pod<std::uint64_t>(mesh.edgeCount());
+    for (const EdgeId id : mesh.edgeIds()) {
+        const MeshEdge& value = *mesh.edge(id);
         writeId(w, value.id);
         writeId(w, value.vertexA);
         writeId(w, value.vertexB);
         writeId(w, value.anyCorner);
     }
-    w.pod<std::uint64_t>(state.faces.size());
-    for (const MeshFace& value : state.faces) {
+    w.pod<std::uint64_t>(mesh.faceCount());
+    for (const FaceId id : mesh.faceIds()) {
+        const MeshFace& value = *mesh.face(id);
         writeId(w, value.id);
         writeId(w, value.firstCorner);
         w.pod(value.cornerCount);
     }
-    w.pod<std::uint64_t>(state.corners.size());
-    for (const MeshCorner& value : state.corners) {
+    w.pod<std::uint64_t>(mesh.cornerCount());
+    for (const CornerId id : mesh.cornerIds()) {
+        const MeshCorner& value = *mesh.corner(id);
         writeId(w, value.id);
         writeId(w, value.faceId);
         writeId(w, value.vertexId);
@@ -213,28 +268,28 @@ bool readMesh(Reader& r, EditableMesh& mesh) {
         return false;
     }
     std::uint64_t count = 0;
-    if (!readCount(r, count)) return false;
+    if (!readCount(r, count) || !r.canReadElements(count, sizeof(std::uint64_t))) return false;
     state.vertices.reserve(static_cast<std::size_t>(count));
     for (std::uint64_t i = 0; i < count; ++i) {
         MeshVertex value{};
         if (!readId(r, value.id)) return false;
         state.vertices.push_back(value);
     }
-    if (!readCount(r, count)) return false;
+    if (!readCount(r, count) || !r.canReadElements(count, sizeof(std::uint64_t) * 4U)) return false;
     state.edges.reserve(static_cast<std::size_t>(count));
     for (std::uint64_t i = 0; i < count; ++i) {
         MeshEdge value{};
         if (!readId(r, value.id) || !readId(r, value.vertexA) || !readId(r, value.vertexB) || !readId(r, value.anyCorner)) return false;
         state.edges.push_back(value);
     }
-    if (!readCount(r, count)) return false;
+    if (!readCount(r, count) || !r.canReadElements(count, sizeof(std::uint64_t) * 2U + sizeof(std::uint32_t))) return false;
     state.faces.reserve(static_cast<std::size_t>(count));
     for (std::uint64_t i = 0; i < count; ++i) {
         MeshFace value{};
         if (!readId(r, value.id) || !readId(r, value.firstCorner) || !r.pod(value.cornerCount)) return false;
         state.faces.push_back(value);
     }
-    if (!readCount(r, count)) return false;
+    if (!readCount(r, count) || !r.canReadElements(count, sizeof(std::uint64_t) * 8U)) return false;
     state.corners.reserve(static_cast<std::size_t>(count));
     for (std::uint64_t i = 0; i < count; ++i) {
         MeshCorner value{};
@@ -269,66 +324,73 @@ ProjectWriteResult ProjectCodec::encode(const Document& document) {
         return {{}, ProjectIoError::InvalidDocument};
     }
 
-    Writer payload;
-    writeId(payload, document.id_);
-    payload.pod(document.nextId_);
-    payload.pod(document.revision_);
+    Writer out;
+    out.bytes.insert(out.bytes.end(), magic.begin(), magic.end());
+    out.pod<std::uint32_t>(schemaVersion);
+    const std::size_t payloadSizeOffset = out.bytes.size();
+    out.pod<std::uint64_t>(0U);
+    const std::size_t checksumOffset = out.bytes.size();
+    out.pod<std::uint64_t>(0U);
+    const std::size_t payloadOffset = out.bytes.size();
+
+    writeId(out, document.id_);
+    out.pod(document.nextId_);
+    out.pod(document.revision_);
 
     const auto sceneIds = sortedIds<SceneId>(document.scenes_);
-    payload.pod<std::uint64_t>(sceneIds.size());
+    out.pod<std::uint64_t>(sceneIds.size());
     for (const SceneId id : sceneIds) {
         const auto& scene = document.scenes_.at(id);
-        writeId(payload, scene.id);
-        payload.string(scene.name);
-        writeId(payload, scene.rootCollectionId);
-        payload.pod(scene.revision);
+        writeId(out, scene.id);
+        out.string(scene.name);
+        writeId(out, scene.rootCollectionId);
+        out.pod(scene.revision);
     }
 
     const auto collectionIds = sortedIds<CollectionId>(document.collections_);
-    payload.pod<std::uint64_t>(collectionIds.size());
+    out.pod<std::uint64_t>(collectionIds.size());
     for (const CollectionId id : collectionIds) {
         const auto& collection = document.collections_.at(id);
-        writeId(payload, collection.id);
-        payload.string(collection.name);
-        writeId(payload, collection.sceneId);
-        writeId(payload, collection.parentId);
-        payload.pod(collection.revision);
+        writeId(out, collection.id);
+        out.string(collection.name);
+        writeId(out, collection.sceneId);
+        writeId(out, collection.parentId);
+        out.pod(collection.revision);
         std::vector<ObjectId> objectIds(collection.objectIds.begin(), collection.objectIds.end());
         std::sort(objectIds.begin(), objectIds.end(), [](const auto a, const auto b) { return a.value() < b.value(); });
-        payload.pod<std::uint64_t>(objectIds.size());
+        out.pod<std::uint64_t>(objectIds.size());
         for (const ObjectId objectId : objectIds) {
-            writeId(payload, objectId);
+            writeId(out, objectId);
         }
     }
 
     const auto meshIds = sortedIds<MeshId>(document.meshes_);
-    payload.pod<std::uint64_t>(meshIds.size());
+    out.pod<std::uint64_t>(meshIds.size());
     for (const MeshId id : meshIds) {
         const auto& mesh = document.meshes_.at(id);
-        writeId(payload, mesh.id);
-        payload.string(mesh.name);
-        payload.pod(mesh.revision);
-        payload.pod(mesh.evaluationRevision_);
-        writeMesh(payload, *mesh.authoredMesh_);
+        writeId(out, mesh.id);
+        out.string(mesh.name);
+        out.pod(mesh.revision);
+        out.pod(mesh.evaluationRevision_);
+        writeMesh(out, *mesh.authoredMesh_);
     }
 
     const auto objectIds = sortedIds<ObjectId>(document.objects_);
-    payload.pod<std::uint64_t>(objectIds.size());
+    out.pod<std::uint64_t>(objectIds.size());
     for (const ObjectId id : objectIds) {
         const auto& object = document.objects_.at(id);
-        writeId(payload, object.id);
-        payload.string(object.name);
-        writeId(payload, object.meshId);
-        writeId(payload, object.parentId);
-        payload.pod(object.revision);
+        writeId(out, object.id);
+        out.string(object.name);
+        writeId(out, object.meshId);
+        writeId(out, object.parentId);
+        out.pod(object.revision);
     }
 
-    Writer out;
-    out.bytes.insert(out.bytes.end(), magic.begin(), magic.end());
-    out.pod<std::uint32_t>(schemaVersion);
-    out.pod<std::uint64_t>(payload.bytes.size());
-    out.pod<std::uint64_t>(checksum(payload.bytes));
-    out.bytes.insert(out.bytes.end(), payload.bytes.begin(), payload.bytes.end());
+    const std::uint64_t payloadSize = static_cast<std::uint64_t>(out.bytes.size() - payloadOffset);
+    const std::span<const std::uint8_t> payloadSpan{out.bytes.data() + payloadOffset, out.bytes.size() - payloadOffset};
+    const std::uint64_t payloadChecksum = checksum(payloadSpan);
+    std::memcpy(out.bytes.data() + payloadSizeOffset, &payloadSize, sizeof(payloadSize));
+    std::memcpy(out.bytes.data() + checksumOffset, &payloadChecksum, sizeof(payloadChecksum));
     return {std::move(out.bytes), ProjectIoError::None};
 }
 
@@ -355,7 +417,7 @@ ProjectReadResult ProjectCodec::decode(const std::span<const std::uint8_t> bytes
     }
 
     const auto payloadSpan = bytes.subspan(28);
-    if (checksum(payloadSpan) != expectedChecksum) {
+    if (checksum(payloadSpan) != expectedChecksum && legacyChecksum(payloadSpan) != expectedChecksum) {
         return {Document{}, ProjectIoError::IntegrityMismatch};
     }
 
@@ -383,7 +445,9 @@ ProjectReadResult ProjectCodec::decode(const std::span<const std::uint8_t> bytes
             !reader.pod(scene.revision)) {
             return {Document{}, ProjectIoError::Truncated};
         }
-        document.scenes_.emplace(scene.id, std::move(scene));
+        if (!document.scenes_.emplace(scene.id, std::move(scene)).second) {
+            return {Document{}, ProjectIoError::InvalidData};
+        }
     }
 
     if (!readCount(reader, count)) {
@@ -404,9 +468,13 @@ ProjectReadResult ProjectCodec::decode(const std::span<const std::uint8_t> bytes
             if (!readId(reader, objectId)) {
                 return {Document{}, ProjectIoError::Truncated};
             }
-            collection.objectIds.insert(objectId);
+            if (!collection.objectIds.insert(objectId).second) {
+                return {Document{}, ProjectIoError::InvalidData};
+            }
         }
-        document.collections_.emplace(collection.id, std::move(collection));
+        if (!document.collections_.emplace(collection.id, std::move(collection)).second) {
+            return {Document{}, ProjectIoError::InvalidData};
+        }
     }
 
     if (!readCount(reader, count)) {
@@ -426,7 +494,9 @@ ProjectReadResult ProjectCodec::decode(const std::span<const std::uint8_t> bytes
         }
         MeshBlock block{document.runtimeId_, id, std::move(name), std::move(authored), revision};
         block.evaluationRevision_ = evaluationRevision;
-        document.meshes_.emplace(id, std::move(block));
+        if (!document.meshes_.emplace(id, std::move(block)).second) {
+            return {Document{}, ProjectIoError::InvalidData};
+        }
     }
 
     if (!readCount(reader, count)) {
@@ -438,7 +508,9 @@ ProjectReadResult ProjectCodec::decode(const std::span<const std::uint8_t> bytes
             !readId(reader, object.parentId) || !reader.pod(object.revision)) {
             return {Document{}, ProjectIoError::Truncated};
         }
-        document.objects_.emplace(object.id, std::move(object));
+        if (!document.objects_.emplace(object.id, std::move(object)).second) {
+            return {Document{}, ProjectIoError::InvalidData};
+        }
     }
 
     if (reader.remaining() != 0U || !document.validate()) {

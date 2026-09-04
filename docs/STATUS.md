@@ -31,6 +31,17 @@ Post-audit hardening status:
 
 See `docs/V02_ARCHITECTURE.md`.
 
+### v0.2 deep hardening freeze
+
+- [x] strict Document allocator/revision/collection-hierarchy validation at project trust boundaries.
+- [x] serialized attribute default-type validation and bounded pre-allocation checks.
+- [x] single-buffer/no-snapshot ProjectCodec encoding to reduce ARMv7 save peak memory.
+- [x] standard FNV-1a file checksums with legacy schema-v1 checksum compatibility.
+- [x] dependency dirty propagation and linear GeometryGraph semantics hardened.
+- [x] RenderExtractor preserves Corner-normal splits for flat/hard shading.
+
+See `docs/V02_HARDENING_AUDIT.md`.
+
 ## Foundation state
 
 ### Language and portability

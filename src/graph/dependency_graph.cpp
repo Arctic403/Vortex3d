@@ -49,6 +49,7 @@ bool DependencyGraph::addDependency(const DependencyNodeId dependency, const Dep
     }
     outgoing_[dependency].insert(dependent);
     incoming_[dependent].insert(dependency);
+    (void)markDirty(dependent);
     return true;
 }
 
@@ -60,6 +61,7 @@ bool DependencyGraph::removeDependency(const DependencyNodeId dependency, const 
     if (const auto inIt = incoming_.find(dependent); inIt != incoming_.end()) {
         inIt->second.erase(dependency);
     }
+    (void)markDirty(dependent);
     return true;
 }
 
@@ -67,21 +69,24 @@ bool DependencyGraph::markDirty(const DependencyNodeId nodeId) noexcept {
     if (!nodes_.contains(nodeId)) {
         return false;
     }
+
+    std::unordered_set<DependencyNodeId> visited;
     std::vector<DependencyNodeId> stack{nodeId};
     while (!stack.empty()) {
         const DependencyNodeId current = stack.back();
         stack.pop_back();
+        if (!visited.insert(current).second) {
+            continue;
+        }
+
         auto nodeIt = nodes_.find(current);
         if (nodeIt == nodes_.end()) {
             continue;
         }
-        const bool wasDirty = nodeIt->second.dirty;
         nodeIt->second.dirty = true;
         if (const auto outIt = outgoing_.find(current); outIt != outgoing_.end()) {
             for (const DependencyNodeId next : outIt->second) {
-                if (!wasDirty || !nodes_.at(next).dirty) {
-                    stack.push_back(next);
-                }
+                stack.push_back(next);
             }
         }
     }
@@ -104,6 +109,15 @@ void DependencyGraph::markAllClean() noexcept {
 const DependencyNode* DependencyGraph::node(const DependencyNodeId nodeId) const noexcept {
     const auto it = nodes_.find(nodeId);
     return it == nodes_.end() ? nullptr : &it->second;
+}
+
+std::vector<DependencyNodeId> DependencyGraph::dependenciesOf(const DependencyNodeId nodeId) const {
+    std::vector<DependencyNodeId> result;
+    if (const auto it = incoming_.find(nodeId); it != incoming_.end()) {
+        result.assign(it->second.begin(), it->second.end());
+        std::sort(result.begin(), result.end());
+    }
+    return result;
 }
 
 std::vector<DependencyNodeId> DependencyGraph::dependentsOf(const DependencyNodeId nodeId) const {

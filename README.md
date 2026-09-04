@@ -122,6 +122,7 @@ GitHub Actions provides explicit 10k, 100k, and 1M requested benchmark profiles.
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [v0.2 Architecture Stack](docs/V02_ARCHITECTURE.md)
+- [v0.2 Deep Hardening Audit](docs/V02_HARDENING_AUDIT.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Current Status](docs/STATUS.md)
 - [Foundation Rules](docs/FOUNDATION_RULES.md)

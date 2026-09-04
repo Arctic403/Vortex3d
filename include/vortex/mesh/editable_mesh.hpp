@@ -139,6 +139,7 @@ public:
 
     [[nodiscard]] const AttributeSet& attributes() const noexcept { return attributes_; }
     [[nodiscard]] AttributeSet& attributes() noexcept { return attributes_; }
+    [[nodiscard]] std::uint64_t serializedNextElementId() const noexcept { return nextElementId_; }
 
     // Topology/attribute validation retained for compatibility with the existing mutation paths.
     [[nodiscard]] MeshValidationResult validate() const;

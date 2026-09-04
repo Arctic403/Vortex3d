@@ -334,22 +334,21 @@ bool MeshHistory::execute(EditableMesh& mesh, MeshCommand& command, MeshCommandR
         return false;
     }
 
-    const auto execution = command.apply(mesh);
+    auto execution = command.apply(mesh);
     if (!execution) {
         return false;
     }
 
-    MeshCommandResult executionResult = execution->result;
-    executionResult.changed = execution->history.has_value();
+    execution->result.changed = execution->history.has_value();
     if (result != nullptr) {
-        *result = executionResult;
+        *result = std::move(execution->result);
     }
 
     if (!execution->history) {
         return true;
     }
 
-    MeshHistoryRecord record = *execution->history;
+    MeshHistoryRecord record = std::move(*execution->history);
     const std::size_t bytes = record.estimatedBytes();
     if (bytes > budgetBytes_) {
         (void)applyRecord(mesh, record, false);

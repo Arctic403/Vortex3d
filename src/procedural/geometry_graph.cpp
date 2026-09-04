@@ -1,6 +1,9 @@
 #include "vortex/procedural/geometry_graph.hpp"
 
+#include <algorithm>
 #include <type_traits>
+#include <unordered_set>
+#include <vector>
 
 namespace vortex {
 
@@ -14,7 +17,23 @@ DependencyNodeId GeometryGraph::addNode(GeometryNodePayload payload) {
 }
 
 bool GeometryGraph::connect(const DependencyNodeId before, const DependencyNodeId after) {
-    return nodes_.contains(before) && nodes_.contains(after) && graph_.addDependency(before, after);
+    if (!nodes_.contains(before) || !nodes_.contains(after)) {
+        return false;
+    }
+
+    const auto existingDependents = graph_.dependentsOf(before);
+    const auto existingDependencies = graph_.dependenciesOf(after);
+    if (std::find(existingDependents.begin(), existingDependents.end(), after) != existingDependents.end()) {
+        return true;
+    }
+
+    // v0.2 GeometryGraph is deliberately a modifier-chain graph. Fan-in/fan-out would
+    // imply branching merge semantics that do not exist yet, so reject them instead of
+    // silently linearizing a DAG into the wrong geometry result.
+    if (!existingDependents.empty() || !existingDependencies.empty()) {
+        return false;
+    }
+    return graph_.addDependency(before, after);
 }
 
 bool GeometryGraph::setOutput(const DependencyNodeId nodeId) noexcept {
@@ -36,12 +55,29 @@ MeshEvaluationResult GeometryGraph::evaluate(const MeshBlock& source) const {
         return failed;
     }
 
+    std::unordered_set<DependencyNodeId> required;
+    std::vector<DependencyNodeId> pending{output_};
+    while (!pending.empty()) {
+        const DependencyNodeId current = pending.back();
+        pending.pop_back();
+        if (!required.insert(current).second) {
+            continue;
+        }
+        const auto dependencies = graph_.dependenciesOf(current);
+        pending.insert(pending.end(), dependencies.begin(), dependencies.end());
+    }
+
     std::vector<std::unique_ptr<MeshModifier>> owned;
     std::vector<const MeshModifier*> stack;
     for (const DependencyNodeId id : *order) {
+        if (!required.contains(id)) {
+            continue;
+        }
         const auto nodeIt = nodes_.find(id);
         if (nodeIt == nodes_.end()) {
-            continue;
+            MeshEvaluationResult failed;
+            failed.error = MeshEvaluationError::ModifierFailed;
+            return failed;
         }
         std::unique_ptr<MeshModifier> modifier = std::visit(
             [](const auto& payload) -> std::unique_ptr<MeshModifier> {

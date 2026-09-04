@@ -28,6 +28,7 @@ public:
     void markAllClean() noexcept;
 
     [[nodiscard]] const DependencyNode* node(DependencyNodeId nodeId) const noexcept;
+    [[nodiscard]] std::vector<DependencyNodeId> dependenciesOf(DependencyNodeId nodeId) const;
     [[nodiscard]] std::vector<DependencyNodeId> dependentsOf(DependencyNodeId nodeId) const;
     [[nodiscard]] std::optional<std::vector<DependencyNodeId>> evaluationOrder() const;
     [[nodiscard]] std::vector<DependencyNodeId> dirtyEvaluationOrder() const;

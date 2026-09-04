@@ -33,6 +33,8 @@ enum class RenderExtractError : std::uint8_t {
     InvalidEvaluatedMesh,
     TriangulationFailed,
     MissingPosition,
+    MissingNormal,
+    InvalidNormal,
     InvalidCornerCycle,
 };
 
