@@ -21,6 +21,8 @@ struct ViewportCamera final {
     float yawRadians = 0.6108652382F;
     float pitchRadians = -0.3490658504F;
     float distance = 7.0F;
+    float panX = 0.0F;
+    float panY = 0.0F;
     float fovYRadians = 1.0471975512F;
     float nearPlane = 0.1F;
     float farPlane = 100.0F;
@@ -45,6 +47,11 @@ public:
     void detach() noexcept;
     [[nodiscard]] bool render();
 
+    // Touch deltas are expressed in Android view pixels. Camera state remains native-owned.
+    [[nodiscard]] bool orbitCamera(float deltaXPixels, float deltaYPixels) noexcept;
+    [[nodiscard]] bool panCamera(float deltaXPixels, float deltaYPixels) noexcept;
+    [[nodiscard]] bool zoomCamera(float scaleFactor) noexcept;
+
     [[nodiscard]] std::string info() const;
 
 private:
@@ -61,6 +68,7 @@ private:
     [[nodiscard]] bool createGridResources();
     [[nodiscard]] bool createGraphicsPipeline();
     [[nodiscard]] bool recordCommandBuffers();
+    [[nodiscard]] bool rebuildCameraCommandBuffers();
     [[nodiscard]] CameraPushConstants cameraPushConstants(float aspect) const noexcept;
 
     [[nodiscard]] bool createBuffer(
@@ -120,6 +128,7 @@ private:
     VkPipeline gridPipeline_ = VK_NULL_HANDLE;
 
     ViewportCamera camera_{};
+    bool cameraDirty_ = false;
 
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> commandBuffers_;
