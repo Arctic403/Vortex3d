@@ -2,17 +2,17 @@
 #include "ViewportStage1ShadersGenerated.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstring>
-#include <limits>
 
 namespace vortex::android {
 namespace {
 
 constexpr std::array<ViewportVertex, 4> kVertices{{
-    {{{-0.60F, -0.45F, 0.25F}}, {{1.00F, 0.20F, 0.15F}}},
-    {{{ 0.60F, -0.45F, 0.25F}}, {{0.15F, 0.85F, 0.25F}}},
-    {{{ 0.60F,  0.45F, 0.25F}}, {{0.15F, 0.40F, 1.00F}}},
-    {{{-0.60F,  0.45F, 0.25F}}, {{1.00F, 0.80F, 0.15F}}},
+    ViewportVertex{{-0.60F, -0.45F, 0.25F}, {1.00F, 0.20F, 0.15F}},
+    ViewportVertex{{ 0.60F, -0.45F, 0.25F}, {0.15F, 0.85F, 0.25F}},
+    ViewportVertex{{ 0.60F,  0.45F, 0.25F}, {0.15F, 0.40F, 1.00F}},
+    ViewportVertex{{-0.60F,  0.45F, 0.25F}, {1.00F, 0.80F, 0.15F}},
 }};
 constexpr std::array<std::uint32_t, 6> kIndices{{0U, 1U, 2U, 2U, 3U, 0U}};
 
@@ -193,15 +193,24 @@ bool VulkanViewport::createGraphicsPipeline() {
         device_, stage1_shaders::kFragmentSpirv,
         sizeof(stage1_shaders::kFragmentSpirv) / sizeof(stage1_shaders::kFragmentSpirv[0]));
     if (vertexModule == VK_NULL_HANDLE || fragmentModule == VK_NULL_HANDLE) {
-        if (vertexModule != VK_NULL_HANDLE) vkDestroyShaderModule(device_, vertexModule, nullptr);
-        if (fragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device_, fragmentModule, nullptr);
+        if (vertexModule != VK_NULL_HANDLE) {
+            vkDestroyShaderModule(device_, vertexModule, nullptr);
+        }
+        if (fragmentModule != VK_NULL_HANDLE) {
+            vkDestroyShaderModule(device_, fragmentModule, nullptr);
+        }
         return fail("Failed to create Stage 1 shader modules");
     }
 
-    const std::array<VkPipelineShaderStageCreateInfo, 2> stages{{
-        {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0U, VK_SHADER_STAGE_VERTEX_BIT, vertexModule, "main", nullptr},
-        {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0U, VK_SHADER_STAGE_FRAGMENT_BIT, fragmentModule, "main", nullptr},
-    }};
+    std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertexModule;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragmentModule;
+    stages[1].pName = "main";
 
     VkVertexInputBindingDescription binding{};
     binding.binding = 0U;
@@ -289,11 +298,21 @@ bool VulkanViewport::createGraphicsPipeline() {
 }
 
 void VulkanViewport::destroyGeometry() noexcept {
-    if (device_ == VK_NULL_HANDLE) return;
-    if (indexBuffer_ != VK_NULL_HANDLE) vkDestroyBuffer(device_, indexBuffer_, nullptr);
-    if (indexMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, indexMemory_, nullptr);
-    if (vertexBuffer_ != VK_NULL_HANDLE) vkDestroyBuffer(device_, vertexBuffer_, nullptr);
-    if (vertexMemory_ != VK_NULL_HANDLE) vkFreeMemory(device_, vertexMemory_, nullptr);
+    if (device_ == VK_NULL_HANDLE) {
+        return;
+    }
+    if (indexBuffer_ != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, indexBuffer_, nullptr);
+    }
+    if (indexMemory_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, indexMemory_, nullptr);
+    }
+    if (vertexBuffer_ != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, vertexBuffer_, nullptr);
+    }
+    if (vertexMemory_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, vertexMemory_, nullptr);
+    }
     indexBuffer_ = VK_NULL_HANDLE;
     indexMemory_ = VK_NULL_HANDLE;
     vertexBuffer_ = VK_NULL_HANDLE;
