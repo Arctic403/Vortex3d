@@ -57,6 +57,7 @@ endif()
 
 add_library(vortex_eval STATIC
     src/eval/evaluator.cpp
+    src/eval/modifier.cpp
 )
 
 add_library(Vortex3D::eval ALIAS vortex_eval)
@@ -154,6 +155,11 @@ if(VORTEX_BUILD_TESTS)
     target_link_libraries(vortex_evaluator_smoke PRIVATE Vortex3D::eval)
     target_compile_features(vortex_evaluator_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.eval.smoke COMMAND vortex_evaluator_smoke)
+
+    add_executable(vortex_modifier_smoke tests/modifier_smoke.cpp)
+    target_link_libraries(vortex_modifier_smoke PRIVATE Vortex3D::eval)
+    target_compile_features(vortex_modifier_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.eval.modifier.smoke COMMAND vortex_modifier_smoke)
 endif()
 
 if(VORTEX_BUILD_BENCHMARKS)
