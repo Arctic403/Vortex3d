@@ -4,7 +4,7 @@
 
 namespace vortex {
 
-Document::Document() : id_(allocateId<DocumentId>()) {}
+Document::Document() : id_(DocumentId{1}), nextId_(2) {}
 
 MeshId Document::createMesh(std::string name) {
     const MeshId id = allocateId<MeshId>();
