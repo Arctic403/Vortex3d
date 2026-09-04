@@ -89,6 +89,62 @@ const ObjectBlock* Document::object(const ObjectId id) const noexcept {
     return it == objects_.end() ? nullptr : &it->second;
 }
 
+bool Document::renameScene(const SceneId sceneId, std::string name) {
+    const auto it = scenes_.find(sceneId);
+    if (it == scenes_.end()) {
+        return false;
+    }
+    if (it->second.name == name) {
+        return true;
+    }
+    it->second.name = std::move(name);
+    ++it->second.revision;
+    markChanged(DataKind::Scene, ChangeKind::Updated, sceneId.value());
+    return true;
+}
+
+bool Document::renameCollection(const CollectionId collectionId, std::string name) {
+    const auto it = collections_.find(collectionId);
+    if (it == collections_.end()) {
+        return false;
+    }
+    if (it->second.name == name) {
+        return true;
+    }
+    it->second.name = std::move(name);
+    ++it->second.revision;
+    markChanged(DataKind::Collection, ChangeKind::Updated, collectionId.value());
+    return true;
+}
+
+bool Document::renameMesh(const MeshId meshId, std::string name) {
+    const auto it = meshes_.find(meshId);
+    if (it == meshes_.end()) {
+        return false;
+    }
+    if (it->second.name == name) {
+        return true;
+    }
+    it->second.name = std::move(name);
+    ++it->second.revision;
+    markChanged(DataKind::Mesh, ChangeKind::Updated, meshId.value());
+    return true;
+}
+
+bool Document::renameObject(const ObjectId objectId, std::string name) {
+    const auto it = objects_.find(objectId);
+    if (it == objects_.end()) {
+        return false;
+    }
+    if (it->second.name == name) {
+        return true;
+    }
+    it->second.name = std::move(name);
+    ++it->second.revision;
+    markChanged(DataKind::Object, ChangeKind::Updated, objectId.value());
+    return true;
+}
+
 bool Document::setObjectMesh(const ObjectId objectId, const MeshId meshId) {
     const auto objectIt = objects_.find(objectId);
     if (objectIt == objects_.end()) {
