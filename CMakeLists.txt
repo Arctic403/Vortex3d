@@ -7,6 +7,7 @@ project(Vortex3D
 )
 
 option(VORTEX_BUILD_TESTS "Build Vortex3D native tests" ON)
+option(VORTEX_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 
 add_library(vortex_core STATIC
     src/core/command.cpp
@@ -32,6 +33,14 @@ if(MSVC)
     target_compile_options(vortex_core PRIVATE /W4 /permissive-)
 else()
     target_compile_options(vortex_core PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(VORTEX_WARNINGS_AS_ERRORS)
+    if(MSVC)
+        target_compile_options(vortex_core PRIVATE /WX)
+    else()
+        target_compile_options(vortex_core PRIVATE -Werror)
+    endif()
 endif()
 
 if(VORTEX_BUILD_TESTS)
