@@ -1,26 +1,12 @@
 #include "vortex/core/command.hpp"
 #include "vortex/core/document.hpp"
+#include "vortex/core/document_commands.hpp"
 
 #include <cassert>
 #include <iostream>
 #include <string_view>
 
 namespace {
-
-class ParentCommand final : public vortex::Command {
-public:
-    ParentCommand(vortex::ObjectId child, vortex::ObjectId parent) : child_(child), parent_(parent) {}
-
-    [[nodiscard]] std::string_view name() const noexcept override { return "Set Parent"; }
-
-    [[nodiscard]] bool apply(vortex::Document& document) override {
-        return document.setObjectParent(child_, parent_);
-    }
-
-private:
-    vortex::ObjectId child_;
-    vortex::ObjectId parent_;
-};
 
 class FailingCommand final : public vortex::Command {
 public:
@@ -47,6 +33,12 @@ int main() {
     assert(props);
     assert(document.collectionCount() == 2);
 
+    // Persistent IDs use one monotonic document allocator even across typed domains.
+    assert(document.id().value() != scene.value());
+    assert(scene.value() != sceneData->rootCollectionId.value());
+    assert(!document.hasObject({}));
+    assert(!document.hasMesh({}));
+
     const vortex::MeshId sharedMesh = document.createMesh("Shared Cube Mesh");
     const vortex::ObjectId parent = document.createObject("Parent", sharedMesh);
     const vortex::ObjectId child = document.createObject("Child", sharedMesh);
@@ -67,13 +59,21 @@ int main() {
     assert(document.object(child)->meshId == childMesh);
 
     // Commands execute through a transaction and commit atomically.
-    ParentCommand setParent{child, parent};
+    vortex::SetObjectParentCommand setParent{child, parent};
     {
         vortex::Transaction transaction{document};
         assert(transaction.execute(setParent));
         assert(transaction.commit());
     }
     assert(document.object(child)->parentId == parent);
+
+    {
+        vortex::Transaction transaction{document};
+        vortex::RenameObjectCommand rename{child, "Child Renamed"};
+        assert(transaction.execute(rename));
+        assert(transaction.commit());
+    }
+    assert(document.object(child)->name == "Child Renamed");
 
     // A failed command restores the complete document snapshot.
     const std::uint64_t beforeFailure = document.revision();
@@ -89,7 +89,7 @@ int main() {
     // A transaction that is not committed rolls back on destruction.
     {
         vortex::Transaction transaction{document};
-        ParentCommand clearParent{child, {}};
+        vortex::SetObjectParentCommand clearParent{child, {}};
         assert(transaction.execute(clearParent));
         assert(!document.object(child)->parentId);
     }
