@@ -23,14 +23,7 @@ private:
 
 std::size_t EditorHistoryRecord::estimatedBytes() const noexcept {
     return sizeof(EditorHistoryRecord) + std::visit(
-        [](const auto& value) -> std::size_t {
-            using Value = std::decay_t<decltype(value)>;
-            if constexpr (std::is_same_v<Value, DocumentHistoryRecord>) {
-                return value.estimatedBytes();
-            } else {
-                return value.estimatedBytes();
-            }
-        },
+        [](const auto& value) -> std::size_t { return value.estimatedBytes(); },
         payload);
 }
 
