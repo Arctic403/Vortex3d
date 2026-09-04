@@ -1,10 +1,31 @@
 #include "vortex/mesh/command.hpp"
 
+#include <algorithm>
 #include <type_traits>
 #include <unordered_set>
 #include <utility>
 
 namespace vortex {
+namespace {
+
+std::size_t estimatedAttributeRowBytes(const AttributeRow& row) noexcept {
+    std::size_t bytes = sizeof(AttributeRow) + row.values.capacity() * sizeof(AttributeRowValue);
+    for (const AttributeRowValue& value : row.values) {
+        bytes += value.key.name.capacity();
+    }
+    return bytes;
+}
+
+template <typename Snapshot>
+std::size_t estimatedSnapshotVectorBytes(const std::vector<Snapshot>& snapshots) noexcept {
+    std::size_t bytes = snapshots.capacity() * sizeof(Snapshot);
+    for (const Snapshot& snapshot : snapshots) {
+        bytes += estimatedAttributeRowBytes(snapshot.attributes);
+    }
+    return bytes;
+}
+
+} // namespace
 
 std::size_t MeshHistoryRecord::estimatedBytes() const noexcept {
     std::size_t bytes = sizeof(MeshHistoryRecord) + name.capacity();
@@ -13,6 +34,16 @@ std::size_t MeshHistoryRecord::estimatedBytes() const noexcept {
         if constexpr (std::is_same_v<Payload, VertexPositionHistory>) {
             bytes += sizeof(VertexPositionHistory);
             bytes += payload.changes.capacity() * sizeof(VertexPositionChange);
+        } else if constexpr (std::is_same_v<Payload, FaceExtrudeHistory>) {
+            bytes += sizeof(FaceExtrudeHistory);
+            bytes += estimatedAttributeRowBytes(payload.sourceFace.attributes);
+            bytes += estimatedSnapshotVectorBytes(payload.sourceCorners);
+            bytes += estimatedSnapshotVectorBytes(payload.createdVertices);
+            bytes += estimatedSnapshotVectorBytes(payload.createdEdges);
+            bytes += estimatedSnapshotVectorBytes(payload.createdFaces);
+            bytes += estimatedSnapshotVectorBytes(payload.createdCorners);
+            bytes += payload.result.sideFaces.capacity() * sizeof(FaceId);
+            bytes += payload.result.newVertices.capacity() * sizeof(VertexId);
         }
     }, payload);
     return bytes;
@@ -75,19 +106,130 @@ std::optional<MeshCommandExecution> MoveVerticesCommand::apply(EditableMesh& mes
 }
 
 std::optional<MeshCommandExecution> ExtrudeFaceCommand::apply(EditableMesh& mesh) {
+    if (!mesh.hasFace(faceId_) || !mesh.validate()) {
+        return std::nullopt;
+    }
+
+    // Operation-local rollback only. This copy is never retained in MeshHistory.
+    EditableMesh rollbackMesh = mesh;
+
+    FaceExtrudeHistory history;
+    const auto sourceFaceIndexIt = mesh.faceIndex_.find(faceId_);
+    if (sourceFaceIndexIt == mesh.faceIndex_.end()) {
+        return std::nullopt;
+    }
+    const auto sourceFaceRow = mesh.attributes_.captureDomainIndex(AttributeDomain::Face, sourceFaceIndexIt->second);
+    if (!sourceFaceRow) {
+        return std::nullopt;
+    }
+    history.sourceFace = FaceTopologySnapshot{mesh.faces_.at(faceId_), sourceFaceIndexIt->second, *sourceFaceRow};
+
+    const std::vector<CornerId> sourceCornerIds = mesh.faceCorners(faceId_);
+    if (sourceCornerIds.size() != history.sourceFace.data.cornerCount) {
+        return std::nullopt;
+    }
+    history.sourceCorners.reserve(sourceCornerIds.size());
+    for (const CornerId cornerId : sourceCornerIds) {
+        const auto cornerIndexIt = mesh.cornerIndex_.find(cornerId);
+        if (cornerIndexIt == mesh.cornerIndex_.end()) {
+            return std::nullopt;
+        }
+        const auto row = mesh.attributes_.captureDomainIndex(AttributeDomain::Corner, cornerIndexIt->second);
+        if (!row) {
+            return std::nullopt;
+        }
+        history.sourceCorners.push_back(
+            CornerTopologySnapshot{mesh.corners_.at(cornerId), cornerIndexIt->second, *row});
+    }
+
+    const std::unordered_set<VertexId, IdHash<VertexId>> beforeVertices(mesh.vertexOrder_.begin(), mesh.vertexOrder_.end());
+    const std::unordered_set<EdgeId, IdHash<EdgeId>> beforeEdges(mesh.edgeOrder_.begin(), mesh.edgeOrder_.end());
+    const std::unordered_set<FaceId, IdHash<FaceId>> beforeFaces(mesh.faceOrder_.begin(), mesh.faceOrder_.end());
+    const std::unordered_set<CornerId, IdHash<CornerId>> beforeCorners(mesh.cornerOrder_.begin(), mesh.cornerOrder_.end());
+
     const auto extrusion = mesh.extrudeFace(faceId_, offset_);
     if (!extrusion) {
         return std::nullopt;
+    }
+    history.result = *extrusion;
+
+    const auto failAndRollback = [&]() -> std::optional<MeshCommandExecution> {
+        mesh = std::move(rollbackMesh);
+        return std::nullopt;
+    };
+
+    for (const VertexId id : mesh.vertexOrder_) {
+        if (beforeVertices.contains(id)) {
+            continue;
+        }
+        const auto indexIt = mesh.vertexIndex_.find(id);
+        if (indexIt == mesh.vertexIndex_.end()) {
+            return failAndRollback();
+        }
+        const auto row = mesh.attributes_.captureDomainIndex(AttributeDomain::Vertex, indexIt->second);
+        if (!row) {
+            return failAndRollback();
+        }
+        history.createdVertices.push_back(VertexTopologySnapshot{mesh.vertices_.at(id), indexIt->second, *row});
+    }
+
+    for (const EdgeId id : mesh.edgeOrder_) {
+        if (beforeEdges.contains(id)) {
+            continue;
+        }
+        const auto indexIt = mesh.edgeIndex_.find(id);
+        if (indexIt == mesh.edgeIndex_.end()) {
+            return failAndRollback();
+        }
+        const auto row = mesh.attributes_.captureDomainIndex(AttributeDomain::Edge, indexIt->second);
+        if (!row) {
+            return failAndRollback();
+        }
+        history.createdEdges.push_back(EdgeTopologySnapshot{mesh.edges_.at(id), indexIt->second, *row});
+    }
+
+    for (const FaceId id : mesh.faceOrder_) {
+        if (beforeFaces.contains(id)) {
+            continue;
+        }
+        const auto indexIt = mesh.faceIndex_.find(id);
+        if (indexIt == mesh.faceIndex_.end()) {
+            return failAndRollback();
+        }
+        const auto row = mesh.attributes_.captureDomainIndex(AttributeDomain::Face, indexIt->second);
+        if (!row) {
+            return failAndRollback();
+        }
+        history.createdFaces.push_back(FaceTopologySnapshot{mesh.faces_.at(id), indexIt->second, *row});
+    }
+
+    for (const CornerId id : mesh.cornerOrder_) {
+        if (beforeCorners.contains(id)) {
+            continue;
+        }
+        const auto indexIt = mesh.cornerIndex_.find(id);
+        if (indexIt == mesh.cornerIndex_.end()) {
+            return failAndRollback();
+        }
+        const auto row = mesh.attributes_.captureDomainIndex(AttributeDomain::Corner, indexIt->second);
+        if (!row) {
+            return failAndRollback();
+        }
+        history.createdCorners.push_back(CornerTopologySnapshot{mesh.corners_.at(id), indexIt->second, *row});
+    }
+
+    if (!mesh.validate()) {
+        return failAndRollback();
     }
 
     MeshCommandExecution execution;
     execution.result.extrusion = *extrusion;
     execution.result.touchedVertices = extrusion->newVertices;
+    execution.history = MeshHistoryRecord{std::string{name()}, MeshHistoryPayload{std::move(history)}};
     return execution;
 }
 
 bool MeshHistory::execute(EditableMesh& mesh, MeshCommand& command, MeshCommandResult* result) {
-    // Editor/history execution only accepts commands that can produce reversible state.
     if (!command.undoable()) {
         return false;
     }
@@ -102,20 +244,17 @@ bool MeshHistory::execute(EditableMesh& mesh, MeshCommand& command, MeshCommandR
     }
 
     if (!execution->history) {
-        // A successful no-op is valid and should not create a history step.
         return true;
     }
 
     MeshHistoryRecord record = *execution->history;
     const std::size_t bytes = record.estimatedBytes();
     if (bytes > budgetBytes_) {
-        // The command already ran. Rewind it immediately rather than retaining an
-        // unbounded step or leaving a non-undoable editor mutation behind.
-        const bool rewound = applyRecord(mesh, record, false);
+        (void)applyRecord(mesh, record, false);
         if (result != nullptr) {
             *result = {};
         }
-        return rewound ? false : false;
+        return false;
     }
 
     clearRedo();
@@ -197,6 +336,148 @@ bool MeshHistory::applyRecord(EditableMesh& mesh, const MeshHistoryRecord& recor
                 return false;
             }
             return true;
+        } else if constexpr (std::is_same_v<Payload, FaceExtrudeHistory>) {
+            // Temporary operation-local rollback. It is never retained in the history record.
+            EditableMesh rollbackMesh = mesh;
+            const auto fail = [&]() -> bool {
+                mesh = std::move(rollbackMesh);
+                return false;
+            };
+
+            const auto rebuildAll = [&]() {
+                mesh.rebuildVertexIndex();
+                mesh.rebuildEdgeIndex();
+                mesh.rebuildFaceIndex();
+                mesh.rebuildCornerIndex();
+                for (const EdgeId edgeId : mesh.edgeOrder_) {
+                    mesh.rebuildRadialCycle(edgeId);
+                }
+            };
+
+            const auto restoreVertex = [&](const VertexTopologySnapshot& snapshot) -> bool {
+                if (!snapshot.data.id || mesh.vertices_.contains(snapshot.data.id) ||
+                    snapshot.packedIndex > mesh.vertexOrder_.size()) {
+                    return false;
+                }
+                if (!mesh.attributes_.insertDomainIndex(AttributeDomain::Vertex, snapshot.packedIndex, snapshot.attributes)) {
+                    return false;
+                }
+                mesh.vertexOrder_.insert(
+                    mesh.vertexOrder_.begin() + static_cast<std::ptrdiff_t>(snapshot.packedIndex), snapshot.data.id);
+                return mesh.vertices_.emplace(snapshot.data.id, snapshot.data).second;
+            };
+
+            const auto restoreEdge = [&](const EdgeTopologySnapshot& snapshot) -> bool {
+                if (!snapshot.data.id || mesh.edges_.contains(snapshot.data.id) ||
+                    snapshot.packedIndex > mesh.edgeOrder_.size()) {
+                    return false;
+                }
+                if (!mesh.attributes_.insertDomainIndex(AttributeDomain::Edge, snapshot.packedIndex, snapshot.attributes)) {
+                    return false;
+                }
+                mesh.edgeOrder_.insert(
+                    mesh.edgeOrder_.begin() + static_cast<std::ptrdiff_t>(snapshot.packedIndex), snapshot.data.id);
+                return mesh.edges_.emplace(snapshot.data.id, snapshot.data).second;
+            };
+
+            const auto restoreFace = [&](const FaceTopologySnapshot& snapshot) -> bool {
+                if (!snapshot.data.id || mesh.faces_.contains(snapshot.data.id) ||
+                    snapshot.packedIndex > mesh.faceOrder_.size()) {
+                    return false;
+                }
+                if (!mesh.attributes_.insertDomainIndex(AttributeDomain::Face, snapshot.packedIndex, snapshot.attributes)) {
+                    return false;
+                }
+                mesh.faceOrder_.insert(
+                    mesh.faceOrder_.begin() + static_cast<std::ptrdiff_t>(snapshot.packedIndex), snapshot.data.id);
+                return mesh.faces_.emplace(snapshot.data.id, snapshot.data).second;
+            };
+
+            const auto restoreCorner = [&](const CornerTopologySnapshot& snapshot) -> bool {
+                if (!snapshot.data.id || mesh.corners_.contains(snapshot.data.id) ||
+                    snapshot.packedIndex > mesh.cornerOrder_.size()) {
+                    return false;
+                }
+                if (!mesh.attributes_.insertDomainIndex(AttributeDomain::Corner, snapshot.packedIndex, snapshot.attributes)) {
+                    return false;
+                }
+                mesh.cornerOrder_.insert(
+                    mesh.cornerOrder_.begin() + static_cast<std::ptrdiff_t>(snapshot.packedIndex), snapshot.data.id);
+                return mesh.corners_.emplace(snapshot.data.id, snapshot.data).second;
+            };
+
+            const auto orderedCornerPointers = [](const std::vector<CornerTopologySnapshot>& snapshots) {
+                std::vector<const CornerTopologySnapshot*> ordered;
+                ordered.reserve(snapshots.size());
+                for (const CornerTopologySnapshot& snapshot : snapshots) {
+                    ordered.push_back(&snapshot);
+                }
+                std::sort(ordered.begin(), ordered.end(), [](const auto* left, const auto* right) {
+                    return left->packedIndex < right->packedIndex;
+                });
+                return ordered;
+            };
+
+            if (!forward) {
+                if (mesh.hasFace(payload.sourceFace.data.id)) {
+                    return false;
+                }
+
+                for (const FaceTopologySnapshot& snapshot : payload.createdFaces) {
+                    if (!mesh.hasFace(snapshot.data.id) || !mesh.removeFace(snapshot.data.id, false)) {
+                        return fail();
+                    }
+                }
+                for (const EdgeTopologySnapshot& snapshot : payload.createdEdges) {
+                    if (!mesh.hasEdge(snapshot.data.id) || !mesh.removeEdge(snapshot.data.id)) {
+                        return fail();
+                    }
+                }
+                for (const VertexTopologySnapshot& snapshot : payload.createdVertices) {
+                    if (!mesh.hasVertex(snapshot.data.id) || !mesh.removeVertex(snapshot.data.id)) {
+                        return fail();
+                    }
+                }
+
+                if (!restoreFace(payload.sourceFace)) {
+                    return fail();
+                }
+                for (const CornerTopologySnapshot* snapshot : orderedCornerPointers(payload.sourceCorners)) {
+                    if (!restoreCorner(*snapshot)) {
+                        return fail();
+                    }
+                }
+                rebuildAll();
+                return mesh.validate() ? true : fail();
+            }
+
+            if (!mesh.hasFace(payload.sourceFace.data.id) || !mesh.removeFace(payload.sourceFace.data.id, false)) {
+                return fail();
+            }
+
+            for (const VertexTopologySnapshot& snapshot : payload.createdVertices) {
+                if (!restoreVertex(snapshot)) {
+                    return fail();
+                }
+            }
+            for (const EdgeTopologySnapshot& snapshot : payload.createdEdges) {
+                if (!restoreEdge(snapshot)) {
+                    return fail();
+                }
+            }
+            for (const FaceTopologySnapshot& snapshot : payload.createdFaces) {
+                if (!restoreFace(snapshot)) {
+                    return fail();
+                }
+            }
+            for (const CornerTopologySnapshot* snapshot : orderedCornerPointers(payload.createdCorners)) {
+                if (!restoreCorner(*snapshot)) {
+                    return fail();
+                }
+            }
+
+            rebuildAll();
+            return mesh.validate() ? true : fail();
         }
         return false;
     }, record.payload);
