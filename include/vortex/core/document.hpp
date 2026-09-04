@@ -85,6 +85,11 @@ public:
     [[nodiscard]] const MeshBlock* mesh(MeshId id) const noexcept;
     [[nodiscard]] const ObjectBlock* object(ObjectId id) const noexcept;
 
+    [[nodiscard]] bool renameScene(SceneId sceneId, std::string name);
+    [[nodiscard]] bool renameCollection(CollectionId collectionId, std::string name);
+    [[nodiscard]] bool renameMesh(MeshId meshId, std::string name);
+    [[nodiscard]] bool renameObject(ObjectId objectId, std::string name);
+
     [[nodiscard]] bool setObjectMesh(ObjectId objectId, MeshId meshId);
     [[nodiscard]] bool setObjectParent(ObjectId objectId, ObjectId parentId);
     [[nodiscard]] MeshId makeObjectMeshUnique(ObjectId objectId);
