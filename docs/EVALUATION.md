@@ -19,7 +19,9 @@ EvaluatedMesh         generated topology/attributes
         v
 ordered modifier stack
         |
-        +--> future triangulation
+        +--> Transform
+        +--> Mirror / Weld
+        +--> Triangulate
         +--> future renderer upload
 ```
 
@@ -48,6 +50,7 @@ Evaluated record
 - Re-evaluation may repack generated geometry freely.
 - Picking/diagnostics can map generated elements back to stable source IDs.
 - One source ID may map to multiple generated elements after topology-generating modifiers.
+- A generated element with no authored equivalent may carry an invalid source ID rather than inventing persistent identity.
 - 32-bit connectivity reduces generated topology memory and is friendly to the required ARMv7 target.
 - Evaluation/modifiers fail explicitly rather than silently truncating generated indices.
 
@@ -77,55 +80,59 @@ position -> scale -> rotate X -> rotate Y -> rotate Z -> translate
 
 ### Mirror modifier v0.2
 
-`MirrorModifier` is the first topology-generating modifier. It supports X/Y/Z axes, an explicit plane offset, source-ID preserving generated topology, reflected positions/normals, reversed mirrored winding, and optional deterministic seam welding.
+`MirrorModifier` supports X/Y/Z axes, an explicit plane offset, source-ID preserving generated topology, reflected positions/normals, reversed mirrored winding, and optional deterministic seam welding.
 
 Mirror operates on the **current evaluated input**, so it can stack after Transform or another Mirror without touching authored topology.
 
-#### No-weld mode
-
-Welding is disabled by default. No-weld behavior remains compatible with Mirror v0.1: vertices, edges, faces, and corners are duplicated, including vertices exactly on the plane.
-
-#### Weld configuration
-
-Welding is controlled by:
-
-```cpp
-MirrorWeldSettings {
-    bool enabled;
-    float tolerance;
-};
-```
-
-There is no hidden epsilon. A vertex welds when:
-
-```text
-abs(axis_coordinate - plane_offset) <= tolerance
-```
-
-Tolerance must be finite and non-negative. Exact-only welding is represented by `tolerance == 0`.
-
-#### Deterministic seam rules
+Welding is controlled by `MirrorWeldSettings { enabled, tolerance }`. There is no hidden epsilon. A vertex welds when `abs(axis_coordinate - plane_offset) <= tolerance`; `tolerance == 0` means exact-only welding.
 
 When welding is enabled:
 
 1. The source evaluated vertex is the deterministic survivor.
-2. A surviving seam vertex is projected exactly onto the configured plane in **evaluated output only**.
-3. The mirrored duplicate of that vertex is not created.
-4. A source edge whose two endpoints both weld reuses the source evaluated edge instead of creating a duplicate seam edge.
-5. A face whose entire boundary welds to the plane is not duplicated back onto itself.
+2. A surviving seam vertex is projected exactly onto the configured plane in evaluated output only.
+3. Its mirrored duplicate is omitted.
+4. A seam edge whose endpoints both weld reuses the source evaluated edge.
+5. A face fully contained in the seam is not duplicated back onto itself.
 6. Other mirrored faces retain reversed winding.
-7. Mirrored Corner attributes are copied according to the reversed source-corner order, preserving face-varying data such as UVs.
-8. Mirrored Vertex/Corner normal data is reflected when present.
-9. Radial rings are rebuilt globally after seam reuse. A seam edge may therefore become a normal two-face ring or a supported non-manifold ring with 3+ uses.
-10. Stable authored IDs are never changed. Generated mirrored elements retain the source IDs they derive from; welded seam elements simply reuse the surviving evaluated element.
+7. Corner attributes are copied according to reversed source-corner order.
+8. Vertex/Corner normal data is reflected when present.
+9. Radial rings are rebuilt globally after seam reuse and may form supported non-manifold rings.
+10. Authored stable IDs are never changed.
 
-Welding is **not** broad spatial deduplication. It only decides whether each source vertex and its own mirrored counterpart collapse at the configured mirror plane. Symmetric but unrelated geometry away from the seam is not merged.
+Welding is not broad spatial deduplication; it only merges each source vertex with its own mirrored counterpart at the configured plane.
+
+### Triangulate modifier v0.1
+
+`TriangulateModifier` converts the **current evaluated faces** into triangles while leaving the authored `EditableMesh` untouched. Authored n-gons therefore remain editable n-gons even when renderer/export-facing evaluated geometry is triangular.
+
+The current triangulation contract is:
+
+- triangles remain triangles,
+- an n-gon with `n` corners produces `n - 2` generated triangles,
+- simple concave n-gons use deterministic ear clipping rather than a naive fan,
+- a Newell face normal chooses the dominant 2D projection plane for ear clipping,
+- generated triangles retain the source `FaceId` of the evaluated face they derive from,
+- each generated triangle corner retains the source `CornerId` of the corner supplying its face-varying attributes,
+- boundary edges retain their existing source `EdgeId`,
+- newly generated diagonal edges intentionally use an invalid source `EdgeId` because no authored edge exists,
+- generated diagonal edge attributes start from the Edge-domain layer defaults,
+- diagonal edges are reused by packed endpoint pair when shared by adjacent generated triangles,
+- radial rings are rebuilt after the generated face/corner topology is replaced,
+- degenerate polygons that cannot be triangulated fail with `TriangulationFailed` instead of emitting invalid triangles.
+
+Triangulate currently assumes a simple polygon boundary. Broad support for self-intersecting polygons is not implied.
+
+#### Attribute remapping
+
+Topology-generating evaluation now uses `AttributeSet::remapDomain()` for Face and Corner domains. The operation copies attribute storage directly from source-index mappings layer-by-layer instead of materializing one heavyweight `AttributeRow` object per generated corner.
+
+This keeps the generic attribute system intact while reducing temporary memory pressure for large generated meshes, particularly on 32-bit Android.
 
 ## Error model
 
 Evaluation reports focused structured errors such as missing/invalid authored geometry, generated index overflow, missing topology references, null modifiers, and modifier failure.
 
-Modifier failures additionally report `ModifierApplyError` and the failing stack index. Mirror-specific failures distinguish invalid axis/plane configuration, invalid weld settings, generated-topology overflow, invalid generated topology, missing position data, and attribute-copy failure.
+Modifier failures additionally report `ModifierApplyError` and the failing stack index. Current structured failures include invalid transforms, invalid Mirror/weld settings, invalid generated topology, generated-topology overflow, missing position data, attribute-copy failure, and `TriangulationFailed`.
 
 The evaluator intentionally avoids an exception-heavy result architecture.
 
@@ -139,24 +146,24 @@ source MeshId
 + ordered modifier-stack revision
 ```
 
-The modifier-stack revision hashes stable modifier type and configuration in stack order. Mirror axis, plane offset, weld enabled state, and weld tolerance all participate in the modifier configuration token.
+The modifier-stack revision hashes stable modifier type and configuration in stack order.
 
 Consequences:
 
 - same authored revision + same ordered modifiers => same key,
 - authored changes => different key,
 - modifier setting changes => different key,
-- weld setting/tolerance changes => different key,
-- modifier reordering => different key.
+- Mirror weld setting/tolerance changes => different key,
+- adding/removing/reordering Triangulate => different key.
 
-`EvaluationCacheKeyHash` exists for a future cache. **No retained evaluation cache exists yet.** Cache lifetime and byte budgets will be designed separately for 32-bit Android.
+`EvaluationCacheKeyHash` exists for a future cache. **No retained evaluation cache exists yet.** Cache lifetime and byte budgets will be designed explicitly for 32-bit Android.
 
 ## Modifier roadmap
 
 1. Transform **implemented**
 2. Mirror no-weld **implemented**
 3. Mirror weld/merge v0.2 **implemented**
-4. Triangulate
+4. Triangulate v0.1 **implemented**
 5. Recalculate Normals
 6. Bevel
 7. Subdivision
@@ -167,18 +174,17 @@ Do not add parallel evaluation until deterministic dependency and invalidation b
 
 ## Testing gate
 
-Evaluation coverage now proves authored/evaluated separation, source mappings, packed generated topology, Transform behavior, modifier ordering/cache identity, Mirror no-weld topology, and Mirror weld behavior including:
+Evaluation coverage now proves authored/evaluated separation, source mappings, packed generated topology, Transform behavior, modifier ordering/cache identity, Mirror no-weld/weld behavior, and Triangulate behavior including:
 
-- configurable tolerance,
-- exact-only tolerance,
-- source evaluated vertex survival,
-- projection to the mirror plane without authored mutation,
-- seam-edge reuse,
-- fully planar face suppression,
-- reversed mirrored Corner/UV mapping,
-- reflected normals,
-- manifold two-use seam radials,
-- supported four-use non-manifold seam radials,
-- invalid tolerance diagnostics.
+- concave n-gon ear clipping,
+- exact `n - 2` triangle count,
+- triangle area coverage of a concave polygon,
+- Face/Corner source mappings,
+- material and UV remapping,
+- intentionally source-less generated diagonals,
+- stable already-triangular input,
+- `Transform -> Mirror Weld -> Triangulate`,
+- authored n-gon/quad preservation,
+- explicit degenerate-polygon failure.
 
 The evaluator target is compiled by GCC, Clang, Android ARMv7, and Android ARM64 and is exercised under ASan/UBSan and clang-tidy through normal CI.
