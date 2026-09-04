@@ -6,17 +6,57 @@ on:
   pull_request:
 
 jobs:
-  linux-core:
+  portable-boundary:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check portable core boundary
+        run: python3 scripts/check_core_portability.py
+
+  linux-core:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx: [g++, clang++]
+    env:
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DVORTEX_BUILD_TESTS=ON
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DVORTEX_BUILD_TESTS=ON -DVORTEX_WARNINGS_AS_ERRORS=ON
 
       - name: Build
         run: cmake --build build --config Debug --parallel
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+  sanitizers:
+    runs-on: ubuntu-latest
+    env:
+      CXX: clang++
+      ASAN_OPTIONS: detect_leaks=1
+      UBSAN_OPTIONS: halt_on_error=1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure ASan + UBSan
+        run: >-
+          cmake -S . -B build-san
+          -DCMAKE_BUILD_TYPE=Debug
+          -DVORTEX_BUILD_TESTS=ON
+          -DVORTEX_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build
+        run: cmake --build build-san --parallel
+
+      - name: Test under sanitizers
+        run: ctest --test-dir build-san --output-on-failure
