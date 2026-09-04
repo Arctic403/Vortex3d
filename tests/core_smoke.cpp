@@ -113,8 +113,9 @@ int main() {
     assert(document.validate());
 
     const auto allChanges = document.changesSince(0);
-    assert(!allChanges.empty());
-    assert(allChanges.back().revision == document.revision());
+    assert(allChanges.complete());
+    assert(!allChanges.events.empty());
+    assert(allChanges.events.back().revision == document.revision());
 
     assert(document.setObjectMesh(child, {}));
     assert(document.removeMesh(childMesh));

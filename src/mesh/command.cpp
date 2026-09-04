@@ -167,13 +167,27 @@ std::optional<MeshCommandExecution> SetFaceSharpCommand::apply(EditableMesh& mes
     }
 
     const auto packedIndex = packedIndexOf<FaceId>(mesh.faceIds(), faceId_);
+    if (!packedIndex) {
+        return std::nullopt;
+    }
+
+    MeshCommandExecution execution;
+    const AttributeLayer* existingLayer = mesh.attributes().layer("sharp_face", AttributeDomain::Face);
+    if (existingLayer == nullptr && sharp_) {
+        // Missing sharp_face semantically means flat/true. A no-op must not materialize
+        // a full Face-domain layer or create an undo/cache-invalidation step.
+        return execution;
+    }
+    if (existingLayer != nullptr && existingLayer->type != AttributeType::Bool) {
+        return std::nullopt;
+    }
+
     auto* sharpValues = ensureBoolAttribute(mesh, "sharp_face", AttributeDomain::Face, true);
-    if (!packedIndex || sharpValues == nullptr || *packedIndex >= sharpValues->size()) {
+    if (sharpValues == nullptr || *packedIndex >= sharpValues->size()) {
         return std::nullopt;
     }
 
     const bool before = static_cast<bool>((*sharpValues)[*packedIndex]);
-    MeshCommandExecution execution;
     if (before == sharp_) {
         return execution;
     }
@@ -186,7 +200,8 @@ std::optional<MeshCommandExecution> SetFaceSharpCommand::apply(EditableMesh& mes
 
     execution.result.touchedFaces.push_back(faceId_);
     execution.history = MeshHistoryRecord{
-        std::string{name()}, MeshHistoryPayload{FaceSharpHistory{faceId_, before, sharp_}}};
+        std::string{name()},
+        MeshHistoryPayload{FaceSharpHistory{faceId_, before, sharp_, existingLayer != nullptr}}};
     return execution;
 }
 
@@ -324,8 +339,10 @@ bool MeshHistory::execute(EditableMesh& mesh, MeshCommand& command, MeshCommandR
         return false;
     }
 
+    MeshCommandResult executionResult = execution->result;
+    executionResult.changed = execution->history.has_value();
     if (result != nullptr) {
-        *result = execution->result;
+        *result = executionResult;
     }
 
     if (!execution->history) {
@@ -443,6 +460,15 @@ bool MeshHistory::applyRecord(EditableMesh& mesh, const MeshHistoryRecord& recor
                 return false;
             }
             const auto packedIndex = packedIndexOf<FaceId>(mesh.faceIds(), payload.faceId);
+            if (!forward && !payload.layerExistedBefore) {
+                if (!packedIndex || !mesh.attributes().contains("sharp_face", AttributeDomain::Face)) {
+                    return false;
+                }
+                if (!mesh.attributes().erase("sharp_face", AttributeDomain::Face) || !mesh.validate()) {
+                    return false;
+                }
+                return true;
+            }
             auto* sharpValues = ensureBoolAttribute(mesh, "sharp_face", AttributeDomain::Face, true);
             if (!packedIndex || sharpValues == nullptr || *packedIndex >= sharpValues->size()) {
                 return false;

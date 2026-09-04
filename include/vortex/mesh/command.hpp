@@ -38,6 +38,7 @@ struct FaceSharpHistory final {
     FaceId faceId;
     bool before = true;
     bool after = true;
+    bool layerExistedBefore = true;
 };
 
 struct VertexTopologySnapshot final {
@@ -84,6 +85,7 @@ struct MeshHistoryRecord final {
 };
 
 struct MeshCommandResult final {
+    bool changed = false;
     std::vector<VertexId> touchedVertices;
     std::vector<EdgeId> touchedEdges;
     std::vector<FaceId> touchedFaces;

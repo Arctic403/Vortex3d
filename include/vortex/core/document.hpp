@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -31,6 +32,9 @@ public:
 
     [[nodiscard]] const EditableMesh* authoredMesh() const noexcept { return authoredMesh_.get(); }
     [[nodiscard]] RuntimeDocumentId ownerDocumentRuntimeId() const noexcept { return ownerDocumentRuntimeId_; }
+    // Evaluation revision advances only when geometry/shading inputs change. The public
+    // datablock revision below also advances for metadata changes such as renameMesh().
+    [[nodiscard]] std::uint64_t evaluationRevision() const noexcept { return evaluationRevision_; }
 
     MeshId id;
     std::string name;
@@ -47,6 +51,7 @@ private:
         std::uint64_t revision = 1);
 
     RuntimeDocumentId ownerDocumentRuntimeId_;
+    std::uint64_t evaluationRevision_ = 1;
     std::unique_ptr<EditableMesh> authoredMesh_;
 };
 
@@ -71,6 +76,18 @@ struct ChangeEvent final {
     DataKind dataKind = DataKind::Document;
     ChangeKind changeKind = ChangeKind::Updated;
     std::uint64_t entityId = 0;
+};
+
+struct ChangeQueryResult final {
+    std::vector<ChangeEvent> events;
+    std::uint64_t requestedAfterRevision = 0;
+    std::uint64_t discardedThroughRevision = 0;
+
+    // False means at least one event newer than the caller's revision was already discarded;
+    // consumers must perform a broader state resync instead of treating events as complete.
+    [[nodiscard]] bool complete() const noexcept {
+        return requestedAfterRevision >= discardedThroughRevision;
+    }
 };
 
 struct ObjectBlock final {
@@ -157,8 +174,20 @@ public:
     [[nodiscard]] std::size_t objectCount() const noexcept { return objects_.size(); }
     [[nodiscard]] std::size_t meshUserCount(MeshId meshId) const noexcept;
 
-    [[nodiscard]] std::vector<ChangeEvent> changesSince(std::uint64_t revision) const;
-    void clearChangeHistory() noexcept { changes_.clear(); }
+    [[nodiscard]] ChangeQueryResult changesSince(std::uint64_t revision) const;
+    void clearChangeHistory() noexcept;
+    void setChangeHistoryBudgetBytes(std::size_t budgetBytes) noexcept;
+
+    [[nodiscard]] std::size_t changeHistoryBudgetBytes() const noexcept { return changeHistoryBudgetBytes_; }
+    // Logical ChangeEvent payload bytes. std::deque allocator/block overhead is platform
+    // dependent, but event count is still strictly bounded by changeHistoryBudgetBytes().
+    [[nodiscard]] std::size_t retainedChangeHistoryBytes() const noexcept {
+        return changes_.size() * sizeof(ChangeEvent);
+    }
+    [[nodiscard]] std::size_t changeHistoryCount() const noexcept { return changes_.size(); }
+    [[nodiscard]] std::uint64_t discardedChangesThroughRevision() const noexcept {
+        return discardedChangesThroughRevision_;
+    }
 
     [[nodiscard]] bool validate() const noexcept;
 
@@ -173,6 +202,9 @@ private:
 
     void resetMovedFrom() noexcept;
     void markChanged(DataKind dataKind, ChangeKind changeKind, std::uint64_t entityId);
+    void beginChangeHistoryBatch() noexcept { ++changeHistoryBatchDepth_; }
+    void endChangeHistoryBatch() noexcept;
+    void enforceChangeHistoryBudget() noexcept;
     [[nodiscard]] bool wouldCreateParentCycle(ObjectId objectId, ObjectId parentId) const noexcept;
     [[nodiscard]] bool collectionBelongsToScene(CollectionId collectionId, SceneId sceneId) const noexcept;
 
@@ -185,7 +217,11 @@ private:
     std::unordered_map<CollectionId, CollectionBlock, IdHash<CollectionId>> collections_;
     std::unordered_map<MeshId, MeshBlock, IdHash<MeshId>> meshes_;
     std::unordered_map<ObjectId, ObjectBlock, IdHash<ObjectId>> objects_;
-    std::vector<ChangeEvent> changes_;
+    std::size_t changeHistoryBudgetBytes_ = std::size_t{256} * std::size_t{1024};
+    std::uint64_t discardedChangesThroughRevision_ = 0;
+    std::size_t changeHistoryBatchDepth_ = 0;
+    std::uint64_t pendingClearChangesThroughRevision_ = 0;
+    std::deque<ChangeEvent> changes_;
 };
 
 } // namespace vortex

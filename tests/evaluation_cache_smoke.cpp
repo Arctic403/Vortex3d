@@ -72,7 +72,7 @@ int main() {
     assert(!documentBFirst.cacheHit);
     assert(documentAFirst.mesh->cacheKey() != documentBFirst.mesh->cacheKey());
     assert(documentAFirst.mesh->sourceMeshId() == documentBFirst.mesh->sourceMeshId());
-    assert(documentAFirst.mesh->sourceRevision() == documentBFirst.mesh->sourceRevision());
+    assert(documentAFirst.mesh->sourceEvaluationRevision() == documentBFirst.mesh->sourceEvaluationRevision());
     assert(documentAFirst.mesh->sourceDocumentRuntimeId() != documentBFirst.mesh->sourceDocumentRuntimeId());
     const auto documentBPosition = documentBFirst.mesh->position(0);
     assert(documentBPosition.has_value());

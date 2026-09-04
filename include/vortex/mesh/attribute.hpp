@@ -140,6 +140,10 @@ public:
         return it == layers_.end() ? nullptr : &it->second;
     }
 
+    [[nodiscard]] bool erase(const std::string_view name, const AttributeDomain domain) noexcept {
+        return layers_.erase(AttributeKey{std::string{name}, domain}) != 0U;
+    }
+
     template <typename T>
     [[nodiscard]] std::vector<T>* values(const std::string_view name, const AttributeDomain domain) noexcept {
         const auto it = layers_.find(AttributeKey{std::string{name}, domain});

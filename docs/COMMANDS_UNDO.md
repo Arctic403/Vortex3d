@@ -50,6 +50,12 @@ Face extrusion already uses a local exact-ID topology patch rather than a retain
 
 Undo restores the original source Face/Corner IDs. Redo restores the same cap/side/new topology IDs produced by the first execution.
 
+## No-op commands and runtime revisions
+
+An undoable mesh command that succeeds but produces no history record is a semantic no-op. Through the Document bridge it does not advance Mesh/Document revisions and does not emit a runtime `ChangeEvent`. This prevents operations such as moving a vertex to its current position or reapplying an existing shading value from invalidating evaluated caches.
+
+The runtime Document change journal is separately bounded. Transaction and DocumentHistory application temporarily defer journal pruning while rollback may need the retained suffix, then enforce the journal budget at the outer atomic boundary. See `docs/CHANGE_TRACKING.md`.
+
 ## Memory budgets
 
 Document and mesh histories both track estimated retained bytes.

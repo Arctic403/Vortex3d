@@ -143,7 +143,7 @@ MeshEvaluationKeyResult MeshEvaluator::cacheKeyFor(
     result.key = EvaluationCacheKey{
         source.ownerDocumentRuntimeId(),
         source.id,
-        source.revision,
+        source.evaluationRevision(),
         *stackRevision};
     return result;
 }

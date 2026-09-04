@@ -36,9 +36,15 @@ Query functions may return `const T*` or views into Document/Mesh-owned state. T
 
 `MeshBlock` does not expose its owning `unique_ptr`. `MeshBlock::authoredMesh()` returns `const EditableMesh*`, so const access propagates to the authored payload. This prevents callers from mutating geometry through a read-only datablock handle without advancing the `MeshBlock` revision.
 
-Authored mesh mutation remains owned by `Document` command/history paths. That revision discipline is required for evaluator/cache correctness.
+Authored mesh mutation remains owned by `Document` command/history paths. `MeshBlock::revision` tracks general datablock changes; `MeshBlock::evaluationRevision()` advances only for geometry/shading changes and is the revision used by evaluator/cache identity. Metadata-only rename does not invalidate geometry, and successful no-op mesh commands advance neither revision. That split is required for evaluator/cache correctness without needless churn.
 
 Stable IDs are the durable reference mechanism across editor systems, history, serialization, evaluation, renderer caches, scripting, and future AI tooling. Runtime Document identity is not a replacement for stable IDs and must never be persisted as project identity.
+
+## Runtime change-journal ownership
+
+`Document` also owns a bounded in-memory `ChangeEvent` journal for runtime invalidation/synchronization. It is not undo history and is not serialized. The default logical payload budget is 256 KiB; oldest events are discarded when the budget is exceeded. Queries report whether the requested revision range is complete so consumers can detect an eviction gap and resync. Pruning is deferred across atomic Transaction/DocumentHistory scopes so rollback bookkeeping remains valid.
+
+See `docs/CHANGE_TRACKING.md`.
 
 ## History ownership
 
@@ -85,7 +91,7 @@ EvaluationCache
 - the cache's byte budget counts only snapshots retained by the cache,
 - external consumers must not pin an unbounded number of snapshots,
 - zero cache budget means evaluation still works but no generated result is retained,
-- cache identity includes `RuntimeDocumentId + MeshId + source revision + modifier stack revision`,
+- cache identity includes `RuntimeDocumentId + MeshId + source evaluation revision + modifier stack revision`,
 - explicit `eraseMesh(RuntimeDocumentId, MeshId)` releases entries for exactly one authored mesh in one live Document lineage.
 
 The cache is intentionally single-threaded in v0.1. No locking or concurrent mutation contract is implied yet.

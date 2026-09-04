@@ -30,7 +30,7 @@ int main() {
 
     const MeshBlock* source = document.mesh(meshId);
     assert(source != nullptr);
-    const std::uint64_t firstRevision = source->revision;
+    const std::uint64_t firstRevision = source->evaluationRevision();
 
     MeshEvaluationResult firstResult = MeshEvaluator::evaluate(*source);
     assert(firstResult);
@@ -38,7 +38,7 @@ int main() {
     const EvaluatedMesh& first = *firstResult.mesh;
 
     assert(first.sourceMeshId() == meshId);
-    assert(first.sourceRevision() == firstRevision);
+    assert(first.sourceEvaluationRevision() == firstRevision);
     assert(first.vertexCount() == 4U);
     assert(first.edgeCount() == 4U);
     assert(first.faceCount() == 1U);
@@ -74,12 +74,12 @@ int main() {
 
     source = document.mesh(meshId);
     assert(source != nullptr);
-    assert(source->revision > firstRevision);
+    assert(source->evaluationRevision() > firstRevision);
 
     MeshEvaluationResult secondResult = MeshEvaluator::evaluate(*source);
     assert(secondResult);
     const EvaluatedMesh& second = *secondResult.mesh;
-    assert(second.sourceRevision() == source->revision);
+    assert(second.sourceEvaluationRevision() == source->evaluationRevision());
 
     const auto newPosition = second.position(0);
     assert(newPosition.has_value());

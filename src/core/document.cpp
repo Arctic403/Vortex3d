@@ -3,6 +3,7 @@
 #include "vortex/mesh/command.hpp"
 #include "vortex/mesh/editable_mesh.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <memory>
 #include <utility>
@@ -42,6 +43,7 @@ MeshBlock::MeshBlock(
       name(std::move(meshName)),
       revision(meshRevision),
       ownerDocumentRuntimeId_(ownerDocumentRuntimeId),
+      evaluationRevision_(meshRevision),
       authoredMesh_(std::move(mesh)) {}
 
 MeshBlock::~MeshBlock() = default;
@@ -59,6 +61,9 @@ Document::Document(Document&& other) noexcept
       collections_(std::move(other.collections_)),
       meshes_(std::move(other.meshes_)),
       objects_(std::move(other.objects_)),
+      changeHistoryBudgetBytes_(other.changeHistoryBudgetBytes_),
+      discardedChangesThroughRevision_(other.discardedChangesThroughRevision_),
+      pendingClearChangesThroughRevision_(other.pendingClearChangesThroughRevision_),
       changes_(std::move(other.changes_)) {
     other.resetMovedFrom();
 }
@@ -76,6 +81,10 @@ Document& Document::operator=(Document&& other) noexcept {
     collections_ = std::move(other.collections_);
     meshes_ = std::move(other.meshes_);
     objects_ = std::move(other.objects_);
+    changeHistoryBudgetBytes_ = other.changeHistoryBudgetBytes_;
+    discardedChangesThroughRevision_ = other.discardedChangesThroughRevision_;
+    changeHistoryBatchDepth_ = 0;
+    pendingClearChangesThroughRevision_ = other.pendingClearChangesThroughRevision_;
     changes_ = std::move(other.changes_);
     other.resetMovedFrom();
     return *this;
@@ -305,12 +314,20 @@ bool Document::executeMeshCommand(
         return false;
     }
 
-    if (!history.execute(*meshIt->second.authoredMesh_, command, result)) {
+    MeshCommandResult executionResult;
+    if (!history.execute(*meshIt->second.authoredMesh_, command, &executionResult)) {
         return false;
     }
 
-    ++meshIt->second.revision;
-    markChanged(DataKind::Mesh, ChangeKind::Updated, meshId.value());
+    if (result != nullptr) {
+        *result = executionResult;
+    }
+
+    if (executionResult.changed) {
+        ++meshIt->second.revision;
+        ++meshIt->second.evaluationRevision_;
+        markChanged(DataKind::Mesh, ChangeKind::Updated, meshId.value());
+    }
     return true;
 }
 
@@ -325,6 +342,7 @@ bool Document::undoMeshCommand(const MeshId meshId, MeshHistory& history) {
     }
 
     ++meshIt->second.revision;
+    ++meshIt->second.evaluationRevision_;
     markChanged(DataKind::Mesh, ChangeKind::Updated, meshId.value());
     return true;
 }
@@ -340,6 +358,7 @@ bool Document::redoMeshCommand(const MeshId meshId, MeshHistory& history) {
     }
 
     ++meshIt->second.revision;
+    ++meshIt->second.evaluationRevision_;
     markChanged(DataKind::Mesh, ChangeKind::Updated, meshId.value());
     return true;
 }
@@ -428,14 +447,33 @@ std::size_t Document::meshUserCount(const MeshId meshId) const noexcept {
     return users;
 }
 
-std::vector<ChangeEvent> Document::changesSince(const std::uint64_t revision) const {
-    std::vector<ChangeEvent> result;
+ChangeQueryResult Document::changesSince(const std::uint64_t revision) const {
+    ChangeQueryResult result;
+    result.requestedAfterRevision = revision;
+    result.discardedThroughRevision = discardedChangesThroughRevision_;
+    result.events.reserve(changes_.size());
     for (const ChangeEvent& event : changes_) {
         if (event.revision > revision) {
-            result.push_back(event);
+            result.events.push_back(event);
         }
     }
     return result;
+}
+
+void Document::clearChangeHistory() noexcept {
+    if (changeHistoryBatchDepth_ != 0U) {
+        pendingClearChangesThroughRevision_ = revision_;
+        return;
+    }
+    changes_.clear();
+    discardedChangesThroughRevision_ = revision_;
+}
+
+void Document::setChangeHistoryBudgetBytes(const std::size_t budgetBytes) noexcept {
+    changeHistoryBudgetBytes_ = budgetBytes;
+    if (changeHistoryBatchDepth_ == 0U) {
+        enforceChangeHistoryBudget();
+    }
 }
 
 void Document::resetMovedFrom() noexcept {
@@ -447,12 +485,44 @@ void Document::resetMovedFrom() noexcept {
     collections_.clear();
     meshes_.clear();
     objects_.clear();
+    discardedChangesThroughRevision_ = 0;
+    changeHistoryBatchDepth_ = 0;
+    pendingClearChangesThroughRevision_ = 0;
     changes_.clear();
 }
 
 void Document::markChanged(const DataKind dataKind, const ChangeKind changeKind, const std::uint64_t entityId) {
     ++revision_;
     changes_.push_back(ChangeEvent{revision_, dataKind, changeKind, entityId});
+    if (changeHistoryBatchDepth_ == 0U) {
+        enforceChangeHistoryBudget();
+    }
+}
+
+void Document::endChangeHistoryBatch() noexcept {
+    if (changeHistoryBatchDepth_ == 0U) {
+        return;
+    }
+    --changeHistoryBatchDepth_;
+    if (changeHistoryBatchDepth_ == 0U) {
+        if (pendingClearChangesThroughRevision_ != 0U) {
+            const std::uint64_t clearThrough = std::min(pendingClearChangesThroughRevision_, revision_);
+            while (!changes_.empty() && changes_.front().revision <= clearThrough) {
+                changes_.pop_front();
+            }
+            discardedChangesThroughRevision_ = std::max(discardedChangesThroughRevision_, clearThrough);
+            pendingClearChangesThroughRevision_ = 0;
+        }
+        enforceChangeHistoryBudget();
+    }
+}
+
+void Document::enforceChangeHistoryBudget() noexcept {
+    const std::size_t maximumEvents = changeHistoryBudgetBytes_ / sizeof(ChangeEvent);
+    while (changes_.size() > maximumEvents) {
+        discardedChangesThroughRevision_ = changes_.front().revision;
+        changes_.pop_front();
+    }
 }
 
 bool Document::wouldCreateParentCycle(const ObjectId objectId, ObjectId parentId) const noexcept {
@@ -520,6 +590,7 @@ bool Document::validate() const noexcept {
 
     for (const auto& [meshId, mesh] : meshes_) {
         if (!meshId || mesh.id != meshId || mesh.ownerDocumentRuntimeId_ != runtimeId_ ||
+            mesh.revision == 0U || mesh.evaluationRevision_ == 0U || mesh.evaluationRevision_ > mesh.revision ||
             !mesh.authoredMesh_ || !mesh.authoredMesh_->validate()) {
             return false;
         }
