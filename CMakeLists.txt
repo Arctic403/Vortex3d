@@ -1,0 +1,46 @@
+cmake_minimum_required(VERSION 3.22)
+
+project(Vortex3D
+    VERSION 0.1.0
+    DESCRIPTION "Vortex3D native-first modeling engine"
+    LANGUAGES CXX
+)
+
+option(VORTEX_BUILD_TESTS "Build Vortex3D native tests" ON)
+
+add_library(vortex_core STATIC
+    src/core/document.cpp
+)
+
+add_library(Vortex3D::core ALIAS vortex_core)
+
+target_include_directories(vortex_core
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+
+target_compile_features(vortex_core PUBLIC cxx_std_20)
+set_target_properties(vortex_core PROPERTIES
+    CXX_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON
+)
+
+if(MSVC)
+    target_compile_options(vortex_core PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(vortex_core PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(VORTEX_BUILD_TESTS)
+    include(CTest)
+    enable_testing()
+
+    add_executable(vortex_core_smoke
+        tests/core_smoke.cpp
+    )
+    target_link_libraries(vortex_core_smoke PRIVATE Vortex3D::core)
+    target_compile_features(vortex_core_smoke PRIVATE cxx_std_20)
+
+    add_test(NAME vortex.core.smoke COMMAND vortex_core_smoke)
+endif()
