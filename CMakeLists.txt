@@ -11,6 +11,7 @@ option(VORTEX_BUILD_TESTS "Build Vortex3D native tests" ON)
 add_library(vortex_core STATIC
     src/core/command.cpp
     src/core/document.cpp
+    src/mesh/editable_mesh.cpp
 )
 
 add_library(Vortex3D::core ALIAS vortex_core)
@@ -44,4 +45,12 @@ if(VORTEX_BUILD_TESTS)
     target_compile_features(vortex_core_smoke PRIVATE cxx_std_20)
 
     add_test(NAME vortex.core.smoke COMMAND vortex_core_smoke)
+
+    add_executable(vortex_mesh_kernel_smoke
+        tests/mesh_kernel_smoke.cpp
+    )
+    target_link_libraries(vortex_mesh_kernel_smoke PRIVATE Vortex3D::core)
+    target_compile_features(vortex_mesh_kernel_smoke PRIVATE cxx_std_20)
+
+    add_test(NAME vortex.mesh.kernel.smoke COMMAND vortex_mesh_kernel_smoke)
 endif()
