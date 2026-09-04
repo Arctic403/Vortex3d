@@ -39,7 +39,7 @@ public:
         std::span<const MeshModifier* const> modifiers = {});
 
     void clear() noexcept;
-    void eraseMesh(MeshId sourceMeshId) noexcept;
+    void eraseMesh(RuntimeDocumentId sourceDocumentRuntimeId, MeshId sourceMeshId) noexcept;
     void setBudgetBytes(std::size_t budgetBytes) noexcept;
 
     [[nodiscard]] std::size_t budgetBytes() const noexcept { return budgetBytes_; }
