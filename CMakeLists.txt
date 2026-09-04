@@ -87,4 +87,12 @@ if(VORTEX_BUILD_TESTS)
     target_compile_features(vortex_mesh_randomized_smoke PRIVATE cxx_std_20)
 
     add_test(NAME vortex.mesh.randomized.smoke COMMAND vortex_mesh_randomized_smoke)
+
+    add_executable(vortex_donor_contract_smoke
+        tests/donor_contract_smoke.cpp
+    )
+    target_link_libraries(vortex_donor_contract_smoke PRIVATE Vortex3D::core)
+    target_compile_features(vortex_donor_contract_smoke PRIVATE cxx_std_20)
+
+    add_test(NAME vortex.donor.contract.smoke COMMAND vortex_donor_contract_smoke)
 endif()
