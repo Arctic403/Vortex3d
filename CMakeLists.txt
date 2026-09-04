@@ -55,6 +55,38 @@ if(VORTEX_WARNINGS_AS_ERRORS)
     endif()
 endif()
 
+add_library(vortex_eval STATIC
+    src/eval/evaluator.cpp
+)
+
+add_library(Vortex3D::eval ALIAS vortex_eval)
+
+target_link_libraries(vortex_eval PUBLIC Vortex3D::core)
+target_include_directories(vortex_eval
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+target_compile_features(vortex_eval PUBLIC cxx_std_20)
+set_target_properties(vortex_eval PROPERTIES
+    CXX_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON
+)
+
+if(MSVC)
+    target_compile_options(vortex_eval PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(vortex_eval PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(VORTEX_WARNINGS_AS_ERRORS)
+    if(MSVC)
+        target_compile_options(vortex_eval PRIVATE /WX)
+    else()
+        target_compile_options(vortex_eval PRIVATE -Werror)
+    endif()
+endif()
+
 if(VORTEX_BUILD_TESTS)
     include(CTest)
     enable_testing()
@@ -117,6 +149,11 @@ if(VORTEX_BUILD_TESTS)
     target_link_libraries(vortex_mesh_validation_corruption_smoke PRIVATE Vortex3D::core)
     target_compile_features(vortex_mesh_validation_corruption_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.mesh.validation.corruption.smoke COMMAND vortex_mesh_validation_corruption_smoke)
+
+    add_executable(vortex_evaluator_smoke tests/evaluator_smoke.cpp)
+    target_link_libraries(vortex_evaluator_smoke PRIVATE Vortex3D::eval)
+    target_compile_features(vortex_evaluator_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.eval.smoke COMMAND vortex_evaluator_smoke)
 endif()
 
 if(VORTEX_BUILD_BENCHMARKS)
