@@ -2,14 +2,15 @@
 
 Last updated: 2026-09-04
 
-## Current phase
+## Current engineering focus
 
-**Phase 0 — Native Core Bootstrap**
+**Commands, mesh transactions, and undo/redo.**
 
-## Completed
+The portable Document foundation and Mesh Kernel v2 foundation are now far enough along to begin routing real modeling operations through command/history infrastructure. Android and Vulkan remain intentionally downstream.
 
-- Clean native repository established.
-- MIT license retained.
+## Completed foundation
+
+- Clean native repository established under MIT.
 - Architecture blueprint, staged roadmap, foundation rules, donor strategy, Android dual-ABI contract, project format, mesh-kernel contract, research index, and code policy written.
 - CMake C++20 `vortex_core` target created.
 - Strong typed 64-bit ID foundation created.
@@ -17,87 +18,82 @@ Last updated: 2026-09-04
 - Shared mesh references, public user-count query, and Make Unique implemented.
 - Parent-cycle rejection, safe detachment, collection unlink-on-delete, and referenced-mesh deletion protection implemented.
 - Monotonic Document revisions and queryable change events implemented.
-- `Command` + snapshot-backed `Transaction` commit/rollback boundary implemented.
+- `Command` + snapshot-backed Document `Transaction` commit/rollback boundary implemented.
 - Concrete document commands implemented for rename, parent changes, mesh assignment, and Make Unique.
 - Explicit invalid-ID and allocator behavior coverage added.
 - `EditableMesh` v2 created outside the Document layer.
 - Stable Vertex/Edge/Face/Corner topology identities implemented.
 - Face boundary `next/prev` cycles and edge radial Corner cycles implemented.
 - Non-manifold radial topology with 3+ faces around one edge is supported and tested.
-- Generic typed AttributeSet implemented with `(name, domain)` identity so the same semantic name can coexist on different domains.
-- Generic deterministic attribute compaction, copying, and interpolation helpers implemented.
+- Generic typed AttributeSet implemented with `(name, domain)` identity.
+- Deterministic attribute compaction, copying, and interpolation helpers implemented.
 - Initial attributes implemented: position, crease, sharp, seam, material index, UV, and corner normal.
-- Mesh validator reports structured diagnostics for topology and attribute invariant failures.
-- Validator now proves each Corner edge connects that Corner to the next face Corner and every radial cycle covers all live uses of its edge.
-- Trusted topology primitives implemented: add/remove vertex, add/remove edge, add/remove polygon face, and split edge.
+- Structured mesh validator implemented and hardened around face-edge continuity and complete radial coverage.
+- Trusted primitives implemented: add/remove vertex, add/remove edge, add/remove polygon face, and split edge.
 - Face removal compacts Face/Corner attributes, rebuilds radials, and optionally removes unused affected edges without silently deleting vertices.
-- Edge/vertex removal are conservative and reject still-referenced topology.
-- Edge split has a locked stable-ID contract: original edge ID survives on `vertexA -> newVertex`; the second segment receives a fresh edge ID.
-- Edge split interpolates vertex/corner attributes, copies edge attributes, updates every radial face, and supports boundary/manifold/non-manifold topology.
-- Authoring n-gons are supported; concave n-gon, shared-edge, non-manifold, and cube fixtures pass validation.
-- Native CTest coverage now contains Document/Transaction, Mesh Kernel, and Mesh Mutation suites.
-- GCC, Clang, warnings-as-errors, AddressSanitizer, UndefinedBehaviorSanitizer, and portable-core boundary checks pass on GitHub-hosted runners for the edge-split/removal code.
+- Edge split has a locked stable-ID contract and supports boundary/manifold/non-manifold topology.
+- First higher-level modeling operation implemented: `extrudeFace(face, offset)`.
+- Face extrusion supports isolated faces, faces attached to closed topology, and concave n-gons.
+- Extrusion copies vertex/face attributes, inherits cap/side corner data deterministically, and returns explicit source-to-new-topology mappings.
+- Extrusion is atomic in Phase 0/early Phase 3 via rollback to a pre-operation mesh snapshot on failure.
+- Deterministic randomized kernel torture testing performs hundreds of create/split/remove/move steps with validation after every step.
+- Behavior from `Vortex3dGm` has begun moving into native contract tests rather than source/architecture copies: persistent topology identity, explicit polygon loops, edge flags, face material data, and corner UV behavior are covered.
+- CTest now registers six native suites: Document/Transaction, Mesh Kernel, Mesh Mutation, Face Extrude, Randomized Kernel, and Donor Contract.
+- GCC, Clang, warnings-as-errors, AddressSanitizer, UndefinedBehaviorSanitizer, and the portable-core dependency scan pass on GitHub-hosted runners with all six suites enabled.
 - Portable core remains free of Android/JNI/Vulkan/WebView/Emscripten/Three.js/platform-header dependencies.
 - `.clang-format`, `.clang-tidy`, and `docs/STYLE.md` establish the code-quality policy.
 
-## Phase 0.1 — Document hardening
+## Document foundation
 
-- [x] Grow lightweight native test harness.
-- [x] Add explicit ID uniqueness/invalid-ID behavior tests.
-- [x] Add concrete Command APIs for ordinary document mutations.
-- [x] Add `Scene` and `Collection` data-blocks.
-- [x] Add shared-mesh user-count/query API.
-- [x] Add Make Unique behavior with tests.
-- [x] Add document-level revision/change event model.
-- [x] Add first Command/Transaction mutation boundary.
+- [x] Scene and Collection data-blocks.
+- [x] Shared mesh user-count/query API.
+- [x] Make Unique behavior.
+- [x] Document revision/change events.
+- [x] Concrete command boundary for ordinary document changes.
+- [x] Snapshot-backed transaction rollback for the still-small Document.
+- [x] Invalid-ID and allocator behavior coverage.
 
-**Phase 0.1 is complete.**
+> Whole-Document snapshots are temporary. Before large authored meshes enter document undo, history must move toward deltas/copy-on-write so `armeabi-v7a` remains viable.
 
-> The current Transaction implementation intentionally snapshots the small Phase-0 Document. Before large mesh payloads land in undo state, this must evolve toward delta/copy-on-write history so 32-bit Android memory stays under control.
+## Mesh Kernel v2 foundation
 
-## Phase 0.2 — Mesh Kernel v2
+- [x] Vertex/Edge/Face/Corner storage with stable IDs.
+- [x] Generic domain-qualified attributes.
+- [x] Structured topology diagnostics.
+- [x] Quad, concave n-gon, cube, shared-edge and non-manifold fixtures.
+- [x] Conservative removal primitives.
+- [x] Deterministic attribute compaction.
+- [x] Stable-ID edge split.
+- [x] Shared-manifold and 3-face non-manifold split coverage.
+- [x] Vertex interpolation and edge-attribute inheritance on split.
+- [x] Deterministic randomized mutation validation.
+- [x] Initial donor behavior contracts rewritten as native tests.
+- [x] First composed modeling operation: face extrude.
 
-- [x] Create `EditableMesh` separate from `Document`.
-- [x] Define Vertex/Edge/Face/Corner storage with stable IDs.
-- [x] Define generic AttributeSet domains.
-- [x] Key generic attributes by name + domain.
-- [x] Add topology validator result/diagnostic type.
-- [x] Add first trusted topology primitives and tests.
-- [x] Add shared-edge radial fixture.
-- [x] Add non-manifold 3+ radial-face fixture.
-- [x] Add concave n-gon fixture.
-- [x] Add closed cube fixture.
-- [x] Add removal primitives with deterministic attribute compaction rules.
-- [x] Add edge-split primitive with explicit ID-inheritance contract.
-- [x] Test edge split across a shared manifold edge.
-- [x] Test edge split across a 3-face non-manifold radial edge.
-- [x] Test vertex interpolation and edge-attribute inheritance during split.
-- [ ] Port donor topology fixtures as behavior tests, not source-copy architecture.
-- [ ] Add randomized trusted-operation validation tests.
-- [ ] Add the next trusted topology primitive needed by the first higher-level modeling operation.
+**The Mesh Kernel v2 foundation gate is considered complete.** New topology primitives will now be added because real tools require them, not as speculative API surface.
 
-## Phase 0.3 — Portability gate
+## Portability gate
 
-- [x] Add GCC + Clang CI coverage.
-- [x] Add warnings-as-errors CI.
-- [x] Add ASan/UBSan host test job.
-- [x] Add formatting/static-analysis policy.
-- [x] Add portable-core dependency scanner.
-- [x] Confirm the current core has no Android/JNI/Vulkan/WebView/Emscripten/Three.js/platform-header dependency.
-- [x] Confirm the expanded GitHub Actions matrix completes successfully on GitHub-hosted runners with the mutation kernel enabled.
-
-**Phase 0.3 portability gates are established and green.**
+- [x] GCC + Clang CI.
+- [x] Warnings-as-errors.
+- [x] ASan/UBSan.
+- [x] Formatting/static-analysis policy.
+- [x] Portable-core dependency scanner.
+- [x] No Android/JNI/Vulkan/WebView/Emscripten/Three.js/platform-header dependency in the portable core.
+- [x] Full six-suite matrix green on GitHub-hosted runners.
 
 ## Next engineering target
 
-The next kernel work is now **behavior hardening and composition**:
+The next slice is **mesh-level command/history infrastructure**:
 
-1. randomized trusted-operation validation,
-2. donor topology fixtures rewritten as native contract tests,
-3. choose and implement the next primitive required for a real higher-level modeling operation,
-4. build that operation through the trusted kernel rather than bypassing topology contracts.
+1. define a mesh command result/mapping contract,
+2. make vertex movement and face extrusion executable through commands rather than direct editor-facing mutation calls,
+3. add undo/redo for mesh operations,
+4. avoid permanent whole-mesh history snapshots by introducing reversible deltas or copy-on-write records,
+5. torture undo/redo with deterministic randomized sequences,
+6. then add the next modeling operation (likely inset or face/region duplication support) through the same command pipeline.
 
-The leading higher-level target remains a simple **face extrude** path because it exercises duplication, side-face creation, transforms, stable selection identities, commands, and eventual undo without forcing us to build the entire modeling toolset first.
+The key 32-bit rule is now active: correctness snapshots are fine for tests/temporary atomic rollback, but production history may not retain a full copy of a large mesh per edit.
 
 ## First architecture milestone
 
@@ -117,4 +113,4 @@ Launch APK
 -> Re-import and validate
 ```
 
-We are intentionally building the engine underneath that workflow in dependency order.
+The native kernel can now perform the **Extrude** part headlessly. The immediate objective is making that same operation command-driven and undoable before Android UI work begins.
