@@ -11,6 +11,9 @@
 
 namespace vortex {
 
+class ExtrudeFaceCommand;
+class MeshHistory;
+
 struct MeshVertex final {
     VertexId id;
 };
@@ -125,6 +128,9 @@ public:
     [[nodiscard]] MeshValidationResult validate() const;
 
 private:
+    friend class ExtrudeFaceCommand;
+    friend class MeshHistory;
+
     template <typename IdType>
     [[nodiscard]] IdType allocateId() noexcept { return IdType{nextElementId_++}; }
 
