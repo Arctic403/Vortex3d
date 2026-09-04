@@ -116,8 +116,12 @@ bool GeometryOperations::translateVertices(EditableMesh& mesh, const std::span<c
 
     EditableMesh snapshot = mesh;
     for (const VertexId vertexId : unique) {
-        const Vec3 position = *mesh.position(vertexId);
-        if (!mesh.setPosition(vertexId, {position.x + offset.x, position.y + offset.y, position.z + offset.z})) {
+        const auto position = mesh.position(vertexId);
+        if (!position) {
+            mesh = std::move(snapshot);
+            return false;
+        }
+        if (!mesh.setPosition(vertexId, {position->x + offset.x, position->y + offset.y, position->z + offset.z})) {
             mesh = std::move(snapshot);
             return false;
         }
@@ -151,7 +155,12 @@ std::optional<InsetFaceResult> GeometryOperations::insetFace(EditableMesh& mesh,
     std::vector<VertexId> inner;
     inner.reserve(topology->vertices.size());
     for (const VertexId sourceVertex : topology->vertices) {
-        const Vec3 source = *mesh.position(sourceVertex);
+        const auto sourcePosition = mesh.position(sourceVertex);
+        if (!sourcePosition) {
+            mesh = std::move(snapshot);
+            return std::nullopt;
+        }
+        const Vec3 source = *sourcePosition;
         const Vec3 position{
             source.x + (centroid->x - source.x) * factor,
             source.y + (centroid->y - source.y) * factor,
