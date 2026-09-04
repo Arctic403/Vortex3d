@@ -12,7 +12,8 @@ Post-audit hardening status:
 - [x] Phase 2 — authored/evaluated validator hardening merged and regression-covered.
 - [x] Phase 3 — bounded change journal, mesh evaluation-revision split, and no-op mutation cleanup implemented and regression-covered.
 - [x] Phase 4 — deterministic randomized history/evaluation stress coverage and audit documentation added without changing authored/evaluated ownership rules.
-- [ ] Phases 5-6 remain separate patches; unified editor history and repository protection are not mixed into Phase 4.
+- [x] Phase 5 — unified editor history provides one runtime-lineage-bound, byte-budgeted chronological undo/redo timeline across Document and Mesh commands.
+- [x] Phase 6 — in-tree repository protection adds read-only CI permissions, CODEOWNERS, repository-policy checks, and an explicit GitHub branch/ruleset contract.
 
 ## Foundation state
 
@@ -132,7 +133,7 @@ See `docs/VALIDATION.md` for the exact invariant and diagnostic contract.
 
 ## Validation and evaluation coverage
 
-CTest registers **23 native suites** after the Phase 4 hardening audit.
+CTest registers **24 native suites** after the Phase 5-6 hardening patch.
 
 Coverage includes:
 
@@ -167,6 +168,7 @@ Coverage includes:
 - rejection of a modifier that returns success with invalid generated topology,
 - identical structured validation diagnostics through direct evaluation and `EvaluationCache`,
 - 200 deterministic randomized Transform/Mirror/Triangulate evaluation stacks proving repeated-evaluation equivalence and authored-source immutability.
+- one chronological `EditorHistory` timeline spanning Document and Mesh commands, including mixed undo/redo ordering, redo branching, budget eviction, and cross-Document rejection.
 
 Private corruption access exists only in test builds through `VORTEX_ENABLE_TEST_HOOKS`.
 
@@ -250,18 +252,19 @@ Strict validation is intentionally whole-domain and correctness-first. If valida
 
 ## Current CI gate
 
-Normal Core CI has **8 jobs**:
+Normal Core CI has **9 jobs**:
 
-1. portable dependency boundary,
-2. GCC host build/tests,
-3. Clang host build/tests,
-4. ASan + UBSan,
-5. clang-tidy,
-6. Android ARMv7 32-bit cross-compile,
-7. Android ARM64 cross-compile,
-8. Release core + evaluation benchmark smoke/artifact.
+1. repository policy,
+2. portable dependency boundary,
+3. GCC host build/tests,
+4. Clang host build/tests,
+5. ASan + UBSan,
+6. clang-tidy,
+7. Android ARMv7 32-bit cross-compile,
+8. Android ARM64 cross-compile,
+9. Release core + evaluation benchmark smoke/artifact.
 
-A hardening patch is not merge-ready until all eight jobs pass on its exact head.
+A hardening patch is not merge-ready until all nine jobs pass on its exact head. See `docs/REPOSITORY_PROTECTION.md` for the in-tree policy and required GitHub-hosted branch/ruleset settings.
 
 ## Deferred intentionally
 

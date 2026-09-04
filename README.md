@@ -127,6 +127,7 @@ GitHub Actions provides explicit 10k, 100k, and 1M requested benchmark profiles.
 - [Android / 32-bit Support](docs/ANDROID_SUPPORT.md)
 - [Project Format](docs/PROJECT_FORMAT.md)
 - [Donor Audit](docs/DONOR_AUDIT.md)
+- [Repository Protection](docs/REPOSITORY_PROTECTION.md)
 - [Research Sources](docs/RESEARCH_SOURCES.md)
 
 ## License

@@ -5,7 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
+  repository-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check repository policy
+        run: python3 scripts/check_repository_policy.py
+
   portable-boundary:
     runs-on: ubuntu-latest
     steps:

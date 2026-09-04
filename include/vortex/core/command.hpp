@@ -79,6 +79,7 @@ public:
 
 private:
     friend class Transaction;
+    friend class EditorHistory;
 
     [[nodiscard]] static bool applyRecord(Document& document, DocumentHistoryRecord& record, bool forward);
     [[nodiscard]] bool accepts(const Document& document) noexcept;

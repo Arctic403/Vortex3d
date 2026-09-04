@@ -95,3 +95,10 @@ History changes must preserve:
 - GCC and Clang builds,
 - ASan/UBSan,
 - Android ARMv7 32-bit and ARM64 compile compatibility.
+
+
+## Unified editor history
+
+`EditorHistory` is the editor-facing undo/redo owner. It stores `DocumentHistoryRecord` and `{MeshId, MeshHistoryRecord}` entries in one chronological deque pair under one byte budget and one `RuntimeDocumentId` binding. This prevents separate Document and Mesh stacks from undoing in an order different from the user-visible edit order.
+
+Legacy `DocumentHistory` and `MeshHistory` remain available as narrow low-level facilities and existing regression surfaces, but product/editor code should prefer `EditorHistory` once it owns both document and mesh mutations. Semantic no-ops do not create entries or clear an existing redo branch; a real edit after undo clears the global redo branch.

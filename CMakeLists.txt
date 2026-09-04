@@ -22,6 +22,7 @@ endif()
 add_library(vortex_core STATIC
     src/core/command.cpp
     src/core/document.cpp
+    src/core/editor_history.cpp
     src/mesh/editable_mesh.cpp
     src/mesh/validation.cpp
     src/mesh/extrude.cpp
@@ -110,6 +111,11 @@ if(VORTEX_BUILD_TESTS)
     target_link_libraries(vortex_document_history_smoke PRIVATE Vortex3D::core)
     target_compile_features(vortex_document_history_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.document.history.smoke COMMAND vortex_document_history_smoke)
+
+    add_executable(vortex_editor_history_smoke tests/editor_history_smoke.cpp)
+    target_link_libraries(vortex_editor_history_smoke PRIVATE Vortex3D::core)
+    target_compile_features(vortex_editor_history_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.editor.history.smoke COMMAND vortex_editor_history_smoke)
 
     add_executable(vortex_change_journal_smoke tests/change_journal_smoke.cpp)
     target_link_libraries(vortex_change_journal_smoke PRIVATE Vortex3D::core)

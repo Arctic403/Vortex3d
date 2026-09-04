@@ -179,6 +179,7 @@ public:
 
 private:
     friend class Document;
+    friend class EditorHistory;
 
     [[nodiscard]] bool bindToDocumentMesh(const Document& document, const MeshId meshId) noexcept {
         if (!meshId || !document.runtimeId()) {
@@ -192,7 +193,7 @@ private:
         return ownerDocumentRuntimeId_ == document.runtimeId() && ownerMeshId_ == meshId;
     }
 
-    [[nodiscard]] bool applyRecord(EditableMesh& mesh, const MeshHistoryRecord& record, bool forward);
+    [[nodiscard]] static bool applyRecord(EditableMesh& mesh, const MeshHistoryRecord& record, bool forward);
     void clearRedo() noexcept;
     void enforceBudget() noexcept;
 

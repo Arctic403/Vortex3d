@@ -18,6 +18,7 @@ class MeshCommand;
 class MeshHistory;
 struct MeshCommandResult;
 class DocumentHistory;
+class EditorHistory;
 class Transaction;
 
 class MeshBlock final {
@@ -42,6 +43,7 @@ public:
 
 private:
     friend class Document;
+    friend class EditorHistory;
 
     MeshBlock(
         RuntimeDocumentId ownerDocumentRuntimeId,
@@ -193,6 +195,7 @@ public:
 
 private:
     friend class DocumentHistory;
+    friend class EditorHistory;
     friend class Transaction;
 
     template <typename IdType>
