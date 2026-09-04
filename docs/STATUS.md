@@ -4,9 +4,9 @@ Last updated: 2026-09-04
 
 ## Current engineering focus
 
-**Phase 4 has started: deterministic evaluated geometry, then modifiers and cache invalidation.**
+**Phase 4 is active: deterministic evaluated geometry, modifier stacks, then topology-generating modifiers and cache invalidation.**
 
-The portable foundation is now strong enough to build upward from without rewriting the authoring kernel. Document ownership/history, mesh topology, Android dual-ABI compilation, static analysis, sanitizer coverage, performance instrumentation, deliberate corruption testing, and the first authored-to-evaluated boundary are all live.
+The portable foundation is now strong enough to build upward from without rewriting the authoring kernel. Document ownership/history, mesh topology, Android dual-ABI compilation, static analysis, sanitizer coverage, performance instrumentation, deliberate corruption testing, authored-to-evaluated conversion, and the first non-destructive modifier stack are all live.
 
 ## Foundation state
 
@@ -59,9 +59,9 @@ Whole meshes are not retained as normal undo steps. Some complex topology operat
 
 ### Validation hardening
 
-CTest now registers **12 native suites**, including the evaluator test.
+CTest now registers **13 native suites**, including evaluator and modifier-stack coverage.
 
-Coverage includes valid and deliberately malformed topology:
+Coverage includes valid and deliberately malformed topology plus evaluated/modifier behavior:
 
 - triangle / quad / n-gon / cube,
 - shared and 3-face non-manifold radial edges,
@@ -77,7 +77,11 @@ Coverage includes valid and deliberately malformed topology:
 - attribute-size mismatch,
 - duplicate/reversed edge prevention,
 - illegal deletion order,
-- authored-to-evaluated conversion and revision behavior.
+- authored-to-evaluated conversion and revision behavior,
+- Transform source immutability,
+- modifier ordering,
+- modifier cache-key invalidation,
+- invalid/null modifier diagnostics.
 
 Private corruption access exists only in test builds through `VORTEX_ENABLE_TEST_HOOKS`.
 
@@ -112,11 +116,11 @@ bucket pointer           8 bytes
 
 These measurements make corner/hash-heavy storage a future optimization candidate, but they do not justify a container rewrite by themselves.
 
-## Evaluated geometry boundary
+## Evaluated geometry and modifier boundary
 
-A separate portable `vortex_eval` target is now live.
+A separate portable `vortex_eval` target is live.
 
-`MeshEvaluator` converts a validated `MeshBlock` / `EditableMesh` into a read-only `EvaluatedMesh` that contains:
+`MeshEvaluator` converts a validated `MeshBlock` / `EditableMesh` into an `EvaluatedMesh` containing:
 
 - source `MeshId`,
 - source mesh revision,
@@ -128,9 +132,19 @@ A separate portable `vortex_eval` target is now live.
 
 Persistent authored IDs remain 64-bit. The 32-bit evaluated indices are rebuildable implementation detail and are never persistent identity.
 
-Evaluation fails explicitly rather than truncating if generated element counts exceed the packed-index representation.
+`MeshModifier` now defines the ordered non-destructive modifier contract. `TransformModifier` is the first implementation and supports translation, XYZ rotation, and non-uniform scale while keeping authored geometry unchanged.
 
-An evaluated snapshot is independent from later authored edits. Re-evaluation after a command observes the new Mesh revision; undo followed by re-evaluation restores the authored result. See `docs/EVALUATION.md`.
+Normals are transformed with inverse scale plus rotation and normalization. Invalid/non-finite transforms fail with structured diagnostics.
+
+Every evaluated snapshot now carries an `EvaluationCacheKey`:
+
+```text
+MeshId + authored Mesh revision + ordered modifier-stack revision
+```
+
+Same inputs produce the same key; authored edits, modifier configuration changes, or modifier reordering change it. Hash support exists for future caches, but **no retained evaluation cache is introduced yet**.
+
+See `docs/EVALUATION.md`.
 
 ## Current CI gate
 
@@ -145,7 +159,7 @@ Normal Core CI has **8 jobs**:
 7. Android ARM64 cross-compile,
 8. Release benchmark smoke + artifact.
 
-The evaluator PR passed all eight gates before merge.
+The modifier-stack PR passed all eight gates before merge.
 
 ## Deferred intentionally
 
@@ -158,15 +172,16 @@ Still deliberately deferred:
 - storage rewrite without larger benchmark evidence,
 - exception-heavy result architecture,
 - renderer ownership of authored data,
+- retained evaluation caches without explicit memory budgets,
 - parallel evaluation before deterministic invalidation exists.
 
 ## Next engineering target
 
-1. Add the first modifier interface over immutable evaluated input.
-2. Implement **Transform** as the simplest deterministic modifier.
-3. Add revision/configuration keys and a small evaluator cache contract.
-4. Implement **Mirror** once modifier ownership/invalidation is proven.
-5. Add **Triangulate** as a derived/render-oriented topology operation while preserving authored n-gons.
+1. Implement **Mirror** as the first topology-generating modifier.
+2. Preserve source mappings across generated mirrored topology.
+3. Define deterministic welding/merge behavior at the mirror plane rather than hiding tolerance rules.
+4. Implement **Triangulate** downstream while preserving authored n-gons.
+5. Add an explicitly budgeted evaluation cache only after modifier invalidation behavior is proven.
 6. Keep storage optimization separate and evidence-driven from benchmark results.
 
 No renderer or Android UI code should bypass the evaluator boundary.
@@ -189,4 +204,4 @@ Launch native APK
 -> Re-import and validate
 ```
 
-The native engine now owns the authored mesh, exact command/history replay, and the first immutable evaluated snapshot layer. The next missing piece in that chain is the modifier stack, starting with Transform and Mirror.
+The native engine now owns authored mesh state, exact command/history replay, immutable evaluated snapshots, ordered modifier evaluation, and Transform. The next missing operation in that product chain is Mirror.
