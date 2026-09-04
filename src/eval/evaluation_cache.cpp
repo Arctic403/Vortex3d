@@ -84,6 +84,7 @@ CachedEvaluationResult EvaluationCache::evaluate(
         result.error = evaluated.error;
         result.modifierError = evaluated.modifierError;
         result.normalError = evaluated.normalError;
+        result.evaluatedValidationCode = evaluated.evaluatedValidationCode;
         result.modifierIndex = evaluated.modifierIndex;
         return result;
     }
