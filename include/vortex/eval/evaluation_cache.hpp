@@ -16,6 +16,7 @@ struct CachedEvaluationResult final {
     MeshEvaluationError error = MeshEvaluationError::None;
     ModifierApplyError modifierError = ModifierApplyError::None;
     NormalGenerationError normalError = NormalGenerationError::None;
+    std::optional<EvaluatedMeshValidationCode> evaluatedValidationCode;
     std::optional<std::size_t> modifierIndex;
     bool cacheHit = false;
     bool retainedByCache = false;
