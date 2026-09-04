@@ -1,0 +1,33 @@
+# CMake
+/build/
+/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+CTestTestfile.cmake
+Testing/
+Makefile
+cmake_install.cmake
+compile_commands.json
+
+# Native binaries
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+
+# Android/Gradle
+.gradle/
+**/build/
+local.properties
+*.apk
+*.aab
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
