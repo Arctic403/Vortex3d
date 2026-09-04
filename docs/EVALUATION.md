@@ -14,10 +14,7 @@ EditableMesh          durable authored topology
 vortex_eval
         |
         v
-EvaluationCache       optional bounded reuse
-        |
-        v
-EvaluatedMesh         generated topology/attributes
+initial EvaluatedMesh
         |
         v
 ordered modifier stack
@@ -25,8 +22,16 @@ ordered modifier stack
         +--> Transform
         +--> Mirror / Weld
         +--> Triangulate
-        +--> future Recalculate Normals
-        +--> future renderer upload
+        |
+        v
+Derived Shading Normals
+        |
+        v
+immutable EvaluatedMesh snapshot
+        |
+        +--> EvaluationCache (optional bounded reuse)
+        +--> future tangent generation
+        +--> future renderer/export upload
 ```
 
 Nothing in `vortex_core` depends on the evaluator, cache, or renderer.
@@ -62,15 +67,15 @@ Evaluated record
 
 `EvaluatedMesh` exposes const spans and const attributes to normal consumers. There is no editor mutation API.
 
-Modifiers receive controlled internal mutation access through the evaluation layer only. Editor operations still modify authored data exclusively through commands/history.
+Modifiers and final derived stages receive controlled internal mutation access through the evaluation layer only. Editor operations still modify authored data exclusively through commands/history.
 
 An older evaluated snapshot remains valid as its own immutable value. Later authored edits, modifier evaluations, cache eviction, or cache clearing do not silently mutate a snapshot still held by a consumer.
 
 ## Authored revision discipline
 
-Evaluation identity depends on `MeshBlock::revision`, so authored geometry must not be mutated without advancing that revision.
+Evaluation identity depends on `MeshBlock::revision`, so authored geometry and shading state must not be mutated without advancing that revision.
 
-`MeshBlock` therefore keeps its owning `std::unique_ptr<EditableMesh>` private and exposes only `const EditableMesh* authoredMesh() const`. Const datablock access now propagates constness to the authored payload. Normal mutation remains behind `Document` mesh command/history operations, which advance mesh/document revisions.
+`MeshBlock` keeps its owning `std::unique_ptr<EditableMesh>` private and exposes only `const EditableMesh* authoredMesh() const`. Const datablock access propagates constness to the authored payload. Normal mutation remains behind `Document` mesh command/history operations, which advance mesh/document revisions.
 
 This rule prevents stale cache hits caused by untracked authored mutation.
 
@@ -84,7 +89,9 @@ Modifier configurations are immutable values after construction in the current d
 
 `TransformModifier` supports translation, XYZ Euler rotation in radians, and non-uniform scale. Authored positions remain unchanged.
 
-Normals, when present on Vertex or Corner domains, use inverse scale followed by the same rotation and normalization. Zero/near-zero scale components and non-finite transform values are rejected.
+Existing normal attributes, when present on Vertex or Corner domains during intermediate evaluation, use inverse scale followed by the same rotation and normalization. Standard shading normals are then regenerated from the final evaluated geometry after the modifier stack, so stale authored/bootstrap normal values never define completed evaluated shading.
+
+Zero/near-zero scale components and non-finite transform values are rejected.
 
 ```text
 position -> scale -> rotate X -> rotate Y -> rotate Z -> translate
@@ -92,7 +99,7 @@ position -> scale -> rotate X -> rotate Y -> rotate Z -> translate
 
 ### Mirror modifier v0.2
 
-`MirrorModifier` supports X/Y/Z axes, an explicit plane offset, source-ID preserving generated topology, reflected positions/normals, reversed mirrored winding, and optional deterministic seam welding.
+`MirrorModifier` supports X/Y/Z axes, an explicit plane offset, source-ID preserving generated topology, reflected positions/intermediate normal vectors, reversed mirrored winding, and optional deterministic seam welding.
 
 Mirror operates on the **current evaluated input**, so it can stack after Transform or another Mirror without touching authored topology.
 
@@ -107,9 +114,11 @@ When welding is enabled:
 5. A face fully contained in the seam is not duplicated back onto itself.
 6. Other mirrored faces retain reversed winding.
 7. Corner attributes are copied according to reversed source-corner order.
-8. Vertex/Corner normal data is reflected when present.
+8. Intermediate Vertex/Corner normal data is reflected when present.
 9. Radial rings are rebuilt globally after seam reuse and may form supported non-manifold rings.
 10. Authored stable IDs are never changed.
+
+Standard Corner normals are regenerated after Mirror/Weld finishes, so final shading describes the generated seam topology rather than relying on incremental normal maintenance.
 
 Welding is not broad spatial deduplication; it only merges each source vertex with its own mirrored counterpart at the configured plane.
 
@@ -132,6 +141,8 @@ The current triangulation contract is:
 - radial rings are rebuilt after the generated face/corner topology is replaced,
 - degenerate polygons that cannot be triangulated fail with `TriangulationFailed` instead of emitting invalid triangles.
 
+Generated diagonals default to `sharp == false`, so triangulation does not introduce an artificial shading split into a smooth source surface.
+
 Triangulate currently assumes a simple polygon boundary. Broad support for self-intersecting polygons is not implied.
 
 #### Attribute remapping
@@ -140,11 +151,34 @@ Topology-generating evaluation uses `AttributeSet::remapDomain()` for Face and C
 
 This keeps the generic attribute system intact while reducing temporary memory pressure for large generated meshes, particularly on 32-bit Android.
 
+## Derived Shading Normals v0.1
+
+Standard shading normals are a final derived evaluation stage, **not a `MeshModifier`**.
+
+`DerivedNormalsGenerator` runs after the complete modifier stack and writes the completed Corner-domain `normal : Vec3` layer. Temporary face normals, corner angles, edge-use counts, and smoothing-fan data are released after generation; evaluated snapshots retain only the final Corner normals.
+
+Authoring controls are:
+
+- Edge `sharp : Bool`, default `false`.
+- Face `sharp_face : Bool`, semantic default `true` when the layer is absent.
+
+Flat faces use their geometric Newell normal at every corner. Smooth faces form angle-weighted normal fans around each evaluated vertex. Smoothing crosses an edge only when that edge has exactly two face uses, is not sharp, and both incident faces are smooth. Boundary, sharp, flat-face, and non-manifold edges therefore stop smoothing deterministically.
+
+`SetEdgeSharpCommand` and `SetFaceSharpCommand` store tiny stable-ID + before/after boolean history records. Through the Document bridge they advance the Mesh revision, automatically invalidating revision-keyed evaluated cache results.
+
+Degenerate/non-finite geometry and invalid shading attribute types produce focused `NormalGenerationError` values rather than NaN/Inf output.
+
+The early authored Corner `normal` bootstrap layer is not authoritative standard shading truth; completed evaluated normals overwrite it. Future custom/split-normal authoring must use an explicit separate semantic such as `custom_normal`.
+
+See `docs/SHADING_NORMALS.md` for the complete normal/shading contract and memory rules.
+
 ## Error model
 
-Evaluation reports focused structured errors such as missing/invalid authored geometry, generated index overflow, missing topology references, null modifiers, and modifier failure.
+Evaluation reports focused structured errors such as missing/invalid authored geometry, generated index overflow, missing topology references, null modifiers, modifier failure, and derived-normal generation failure.
 
-Modifier failures additionally report `ModifierApplyError` and the failing stack index. Current structured failures include invalid transforms, invalid Mirror/weld settings, invalid generated topology, generated-topology overflow, missing position data, attribute-copy failure, and `TriangulationFailed`.
+Modifier failures additionally report `ModifierApplyError` and the failing stack index. Current structured modifier failures include invalid transforms, invalid Mirror/weld settings, invalid generated topology, generated-topology overflow, missing position data, attribute-copy failure, and `TriangulationFailed`.
+
+`MeshEvaluationError::NormalGenerationFailed` additionally carries a focused `NormalGenerationError` through both direct and cached evaluation results.
 
 The evaluator intentionally avoids an exception-heavy result architecture.
 
@@ -163,7 +197,7 @@ The modifier-stack revision hashes stable modifier type and configuration in sta
 Consequences:
 
 - same authored revision + same ordered modifiers => same key,
-- authored changes => different key,
+- authored geometry or shading changes => different key,
 - modifier setting changes => different key,
 - Mirror weld setting/tolerance changes => different key,
 - adding/removing/reordering Triangulate => different key.
@@ -182,7 +216,7 @@ Consequences:
 - results larger than the entire cache budget are still returned to the caller but are not retained,
 - a zero-byte budget disables retention while leaving evaluation functional,
 - lowering the budget immediately evicts entries until retained bytes fit,
-- `eraseMesh(MeshId)` releases every retained revision/modifier result for that authored mesh,
+- `eraseMesh(MeshId)` releases every retained revision/modifier result for one authored mesh,
 - `clear()` releases all cache-owned evaluated snapshots,
 - hit, miss, and budget-eviction counters are exposed for diagnostics/benchmarking.
 
@@ -198,7 +232,7 @@ The cache intentionally uses a small `std::vector<Entry>` with linear key lookup
 
 - the `EvaluatedMesh` object,
 - Vertex/Edge/Face/Corner vector capacities,
-- dynamic generic attribute storage.
+- dynamic generic attribute storage, including derived Corner normals.
 
 Arithmetic saturates at `std::numeric_limits<std::size_t>::max()`. The estimate is intentionally allocator-agnostic and conservative; it is a stable budgeting metric, not a claim of allocator-exact heap telemetry.
 
@@ -220,15 +254,16 @@ Evaluation and `EvaluationCache` are single-threaded in v0.1. No method promises
 2. Mirror no-weld **implemented**
 3. Mirror weld/merge v0.2 **implemented**
 4. Triangulate v0.1 **implemented**
-5. Recalculate Normals
-6. Bevel
-7. Subdivision
+5. Bevel
+6. Subdivision
+
+Derived Shading Normals v0.1 is **implemented as a final evaluation stage**, not a modifier.
 
 Topology-generating modifiers must preserve meaningful source mappings and must never write generated topology back into authored meshes.
 
-## Testing gate
+## Testing and performance gate
 
-Evaluation coverage proves authored/evaluated separation, source mappings, packed generated topology, Transform behavior, modifier ordering/cache identity, Mirror no-weld/weld behavior, Triangulate behavior, and cache behavior including:
+Evaluation coverage proves authored/evaluated separation, source mappings, packed generated topology, Transform behavior, modifier ordering/cache identity, Mirror no-weld/weld behavior, Triangulate behavior, bounded cache behavior, and derived shading normals including:
 
 - exact-key cache hits,
 - modifier-configuration separation,
@@ -236,7 +271,7 @@ Evaluation coverage proves authored/evaluated separation, source mappings, packe
 - explicit retained-byte budget enforcement,
 - oversized-result non-retention,
 - zero-budget operation,
-- authored-revision invalidation after a mesh command,
+- authored-revision invalidation after geometry and shading commands,
 - immutable old snapshots after authored edits,
 - cache clear/per-mesh invalidation while externally held snapshots remain valid,
 - invalid modifier diagnostics,
@@ -245,6 +280,14 @@ Evaluation coverage proves authored/evaluated separation, source mappings, packe
 - Face/Corner source mappings,
 - material and UV remapping,
 - intentionally source-less generated diagonals,
-- `Transform -> Mirror Weld -> Triangulate`.
+- flat and fully smooth face normals,
+- reversed winding,
+- sharp-edge fan splitting,
+- Mirror Weld + Triangulate normals,
+- non-manifold smoothing boundaries,
+- non-uniform Transform geometry,
+- explicit degenerate-face normal failure.
+
+`vortex_eval_bench` separately times derived-normal generation on a smooth manifold strip and emits JSON alongside the existing core benchmark. Normal CI runs the 1,000-corner smoke case; manual larger requested profiles record explicit caps while correctness-first authoring setup remains nonlinear.
 
 The evaluator/cache target is compiled by GCC, Clang, Android ARMv7, and Android ARM64 and is exercised under ASan/UBSan and clang-tidy through normal CI.

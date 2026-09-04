@@ -59,6 +59,7 @@ add_library(vortex_eval STATIC
     src/eval/evaluation_cache.cpp
     src/eval/evaluator.cpp
     src/eval/modifier.cpp
+    src/eval/normals.cpp
     src/eval/triangulate.cpp
 )
 
@@ -182,6 +183,11 @@ if(VORTEX_BUILD_TESTS)
     target_link_libraries(vortex_triangulate_modifier_smoke PRIVATE Vortex3D::eval)
     target_compile_features(vortex_triangulate_modifier_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.eval.triangulate.smoke COMMAND vortex_triangulate_modifier_smoke)
+
+    add_executable(vortex_derived_normals_smoke tests/derived_normals_smoke.cpp)
+    target_link_libraries(vortex_derived_normals_smoke PRIVATE Vortex3D::eval)
+    target_compile_features(vortex_derived_normals_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.eval.normals.smoke COMMAND vortex_derived_normals_smoke)
 endif()
 
 if(VORTEX_BUILD_BENCHMARKS)
@@ -190,15 +196,24 @@ if(VORTEX_BUILD_BENCHMARKS)
     target_compile_features(vortex_mesh_bench PRIVATE cxx_std_20)
     set_target_properties(vortex_mesh_bench PROPERTIES CXX_EXTENSIONS OFF)
 
+    add_executable(vortex_eval_bench benchmarks/eval_bench.cpp)
+    target_link_libraries(vortex_eval_bench PRIVATE Vortex3D::eval)
+    target_compile_features(vortex_eval_bench PRIVATE cxx_std_20)
+    set_target_properties(vortex_eval_bench PROPERTIES CXX_EXTENSIONS OFF)
+
     if(MSVC)
         target_compile_options(vortex_mesh_bench PRIVATE /W4 /permissive-)
+        target_compile_options(vortex_eval_bench PRIVATE /W4 /permissive-)
         if(VORTEX_WARNINGS_AS_ERRORS)
             target_compile_options(vortex_mesh_bench PRIVATE /WX)
+            target_compile_options(vortex_eval_bench PRIVATE /WX)
         endif()
     else()
         target_compile_options(vortex_mesh_bench PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(vortex_eval_bench PRIVATE -Wall -Wextra -Wpedantic)
         if(VORTEX_WARNINGS_AS_ERRORS)
             target_compile_options(vortex_mesh_bench PRIVATE -Werror)
+            target_compile_options(vortex_eval_bench PRIVATE -Werror)
         endif()
     endif()
 endif()

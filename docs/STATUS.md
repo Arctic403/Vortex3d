@@ -4,9 +4,9 @@ Last updated: 2026-09-04
 
 ## Current engineering focus
 
-**Phase 4 is active: bounded evaluated-geometry reuse is live; next is Recalculate Normals, then renderer-facing snapshot/upload preparation.**
+**Phase 4 is active: evaluated geometry now has bounded caching and trustworthy derived Corner normals; next is the narrow renderer-facing immutable snapshot/upload contract, then tangent-space preparation when normal-mapped materials require it.**
 
-The portable foundation is strong enough to build upward from without rewriting the authoring kernel. Document ownership/history, mesh topology, Android dual-ABI compilation, static analysis, sanitizer coverage, performance instrumentation, deliberate corruption testing, authored-to-evaluated conversion, ordered modifier evaluation, Transform, Mirror, Mirror welding, non-destructive Triangulate, and a byte-budgeted evaluation cache are all live.
+The portable foundation is strong enough to build upward from without rewriting the authoring kernel. Document ownership/history, mesh topology, Android dual-ABI compilation, static analysis, sanitizer coverage, performance instrumentation, deliberate corruption testing, authored-to-evaluated conversion, ordered modifier evaluation, Transform, Mirror, Mirror welding, non-destructive Triangulate, a byte-budgeted evaluation cache, and Derived Shading Normals v0.1 are all live on this patch branch.
 
 ## Foundation state
 
@@ -53,6 +53,7 @@ The portable foundation is strong enough to build upward from without rewriting 
 - [x] bounded `MeshHistory`.
 - [x] vertex movement before/after deltas.
 - [x] exact-ID local topology history for face extrusion.
+- [x] reversible Edge `sharp` and Face `sharp_face` boolean deltas.
 - [x] repeated and stacked extrusion undo/redo tests.
 - [x] mesh history bound to owning Document instance + `MeshId` through the Document bridge.
 
@@ -60,9 +61,9 @@ Whole meshes are not retained as normal undo steps. Some complex topology operat
 
 ### Validation and evaluation coverage
 
-CTest now registers **17 native suites**.
+CTest registers **18 native suites** on this patch.
 
-Coverage includes authored topology, deliberate corruption, command/history replay, evaluation, modifier-generated topology, and bounded evaluated-result reuse:
+Coverage includes authored topology, deliberate corruption, command/history replay, evaluation, modifier-generated topology, bounded evaluated-result reuse, and derived shading:
 
 - triangle / quad / n-gon / cube,
 - shared and non-manifold radial edges,
@@ -95,13 +96,23 @@ Coverage includes authored topology, deliberate corruption, command/history repl
 - zero-budget operation,
 - authored-revision cache invalidation,
 - old snapshot survival across edits and eviction,
-- per-mesh explicit cache invalidation.
+- no standard authored Corner normal bootstrap on new meshes,
+- evaluated Corner normal materialization,
+- flat and reversed-winding normals,
+- fully smooth cube angle-weighted fans,
+- sharp-edge fan splitting,
+- shading command undo/redo + cache invalidation,
+- Mirror Weld + Triangulate normal generation,
+- non-manifold smoothing boundaries,
+- non-uniform Transform normal correctness,
+- explicit degenerate-face normal failure.
 
 Private corruption access exists only in test builds through `VORTEX_ENABLE_TEST_HOOKS`.
 
 ### Performance and memory measurement
 
-- [x] optional `vortex_mesh_bench` Release target.
+- [x] optional `vortex_mesh_bench` Release target for authoring/kernel operations.
+- [x] optional `vortex_eval_bench` Release target for derived evaluated work.
 - [x] vertex / edge / face creation.
 - [x] topology traversal.
 - [x] edge split / face extrusion.
@@ -109,8 +120,9 @@ Private corruption access exists only in test builds through `VORTEX_ENABLE_TEST
 - [x] vertex movement.
 - [x] undo / redo.
 - [x] full validation.
+- [x] derived smooth-fan Corner normal generation.
 - [x] JSON output and Actions artifacts.
-- [x] manual 10k / 100k / 1M requested profiles where practical.
+- [x] manual 10k / 100k / 1M requested profiles with explicit caps where current setup is nonlinear.
 - [x] normal CI benchmark smoke.
 
 Initial 64-bit layout observations:
@@ -128,9 +140,13 @@ corner hash payload    72 bytes
 bucket pointer           8 bytes
 ```
 
-These measurements make corner/hash-heavy storage a future optimization candidate, but they do not justify a container rewrite by themselves.
+The first derived-normal Release smoke on the GitHub runner measured 250 smooth quads / 1,000 corners at approximately **0.062 ms**, with the completed evaluated snapshot estimating about **85.8 KB** retained bytes. This is a regression baseline for that runner, not a cross-device performance guarantee.
 
-## Evaluated geometry, modifiers, and cache
+The final v0.1 normal-memory pass removes the standard authored Corner-normal bootstrap for new meshes, computes corner-angle weights on demand, reuses one face-cycle scratch vector, and reuses the final Corner-normal storage for smooth-fan accumulation instead of retaining a second Vec3-per-corner output buffer.
+
+These measurements make corner/hash-heavy authored storage a future optimization candidate, but they do not justify a container rewrite by themselves.
+
+## Evaluated geometry, modifiers, cache, and shading
 
 A separate portable `vortex_eval` target owns rebuildable generated geometry.
 
@@ -172,9 +188,26 @@ MeshId + authored Mesh revision + ordered modifier-stack revision
 
 The cache is intentionally single-threaded in v0.1.
 
-The cache patch also hardened authored ownership: callers can no longer obtain mutable geometry through a `const MeshBlock` and bypass revision advancement.
+### Derived Shading Normals v0.1
 
-See `docs/EVALUATION.md` and `docs/OWNERSHIP.md`.
+Standard `normal` is a **final derived Corner attribute**, not a normal modifier and not authoritative authored truth.
+
+- geometric face normals use Newell accumulation,
+- flat is the default when Face `sharp_face` is absent/true,
+- smooth fans use corner-angle weighting,
+- smoothing crosses only unsharp exactly-two-use manifold edges between two smooth faces,
+- boundary edges stop smoothing,
+- non-manifold edges stop smoothing,
+- Edge `sharp` and Face `sharp_face` changes use compact reversible mesh commands,
+- shading command revisions invalidate the normal evaluation cache automatically,
+- new authored meshes do not allocate standard Corner normals,
+- only final Corner normals remain in the immutable snapshot; temporary face/fan arrays are released,
+- the final Corner-normal buffer doubles as smooth-fan accumulation storage,
+- structured errors reject non-finite/degenerate/invalid geometry instead of generating NaNs.
+
+Legacy/imported authored Corner `normal` data is tolerated for compatibility but is not authoritative; final evaluation overwrites the evaluated copy in place. Future authored custom split normals must use an explicit separate semantic such as `custom_normal`.
+
+See `docs/EVALUATION.md`, `docs/SHADING_NORMALS.md`, and `docs/OWNERSHIP.md`.
 
 ## Current CI gate
 
@@ -187,9 +220,9 @@ Normal Core CI has **8 jobs**:
 5. clang-tidy,
 6. Android ARMv7 32-bit cross-compile,
 7. Android ARM64 cross-compile,
-8. Release benchmark smoke + artifact.
+8. Release core + evaluation benchmark smoke/artifact.
 
-Evaluation Cache PR #9 passed all eight gates before merge, including suite #17 under sanitizers, clang-tidy, and both Android ABIs.
+Derived shading changes are not merge-ready until all eight jobs pass on the exact patch head.
 
 ## Deferred intentionally
 
@@ -205,15 +238,19 @@ Still deliberately deferred:
 - parallel evaluation/cache mutation before a deterministic concurrency model exists,
 - allocator-exact cache telemetry,
 - unbounded renderer/export snapshot pinning,
-- broad self-intersecting polygon triangulation guarantees.
+- broad self-intersecting polygon triangulation guarantees,
+- custom/split-normal authoring,
+- Weighted Normal modifier behavior,
+- automatic angle-threshold smoothing,
+- MikkTSpace tangents until the material/export path requires them.
 
 ## Next engineering target
 
-1. Implement **Recalculate Normals** as derived evaluated attributes.
-2. Define explicit flat versus smooth normal policy rather than inheriting accidental authored data.
-3. Add cube, mirrored seam, non-manifold, and triangulated normal fixtures.
-4. Prepare a narrow renderer-facing immutable evaluated snapshot/upload contract.
-5. Keep storage optimization separate and evidence-driven from benchmark results.
+1. Define a narrow **renderer-facing immutable mesh snapshot/upload contract** that consumes evaluated positions, Corner normals, UVs, material assignments, and generated triangle topology without owning authoring truth.
+2. Define deterministic Corner-to-render-vertex packing/splitting rules for position + normal + UV seams.
+3. Keep Vulkan handles/GPU caches entirely outside `vortex_core` and `vortex_eval` authoring truth.
+4. Add MikkTSpace-compatible Corner tangents when normal-mapped material/export requirements become real.
+5. Keep authored storage optimization separate and evidence-driven from benchmark results.
 
 No renderer or Android UI code should bypass the evaluator boundary.
 
@@ -235,4 +272,4 @@ Launch native APK
 -> Re-import and validate
 ```
 
-The headless engine can now produce deterministic welded mirrored triangles and reuse them under a bounded memory policy while keeping the editable source as n-gons. The next derived-geometry step is trustworthy generated normals for render/export consumers.
+The headless engine can now produce deterministic welded mirrored triangles, derive stable flat/smooth Corner normals, and reuse those immutable evaluated results under a bounded memory policy while keeping the editable source as n-gons.

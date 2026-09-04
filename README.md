@@ -13,8 +13,9 @@ This repository is the clean C++ foundation for Vortex3D Native. The previous `V
 - Generic vertex, edge, face, and corner attribute layers.
 - Command/delta based undo with explicit memory budgets.
 - Document-owned data blocks; objects reference meshes by stable `MeshId`; authored mesh ownership is unique and Make Unique performs the deliberate deep copy.
-- Non-destructive authored -> evaluated geometry boundary before modifiers/rendering.
-- Vulkan viewport downstream from evaluated geometry.
+- Non-destructive authored -> evaluated geometry boundary with ordered modifiers and derived shading data.
+- Byte-budgeted immutable evaluated-result reuse suitable for constrained mobile memory.
+- Vulkan viewport downstream from evaluated geometry rather than authoring truth.
 - Android host targeting both `armeabi-v7a` (32-bit ARM) and `arm64-v8a`.
 
 ## Architecture
@@ -30,18 +31,22 @@ Document + Scene DAG
         |
 Editable Mesh Kernel
         |
-Evaluation Graph + Modifiers
+Mesh Evaluator
         |
-Evaluated Mesh
+Transform -> Mirror/Weld -> Triangulate
         |
-Renderer Backend (Vulkan first)
+Derived Corner Normals
+        |
+Bounded Evaluation Cache
+        |
+future render-vertex packing / Vulkan backend
 ```
 
 Persistent authoring state never depends on Vulkan, Android, WebView, Three.js, WASM, OPFS, DOM APIs, platform event loops, or filesystem UI.
 
 ## Current foundation status
 
-The native bootstrap, mesh-kernel foundation, command/history foundation, and initial production-hardening pass are complete enough to build upward from.
+The native bootstrap, mesh kernel, command/history layer, evaluation pipeline, and first production-hardening passes are complete enough to build upward from without rewriting the foundation.
 
 Current capabilities include:
 
@@ -50,16 +55,21 @@ Current capabilities include:
 - move-only `Document` ownership and uniquely owned authored mesh payloads.
 - bounded Document delta history instead of whole-scene snapshots for ordinary editor commands.
 - bounded mesh history with exact stable-ID replay for vertex movement and face extrusion.
+- reversible edge/face shading-state commands.
 - edge split, face extrusion, manifold/non-manifold radial topology, n-gons, and typed attributes.
 - structured topology validation plus deliberate corruption fixtures.
 - deterministic randomized mutation tests.
+- authored `EditableMesh` -> packed `EvaluatedMesh` conversion with source-ID mappings.
+- ordered Transform, Mirror/Weld, and concave-safe Triangulate modifiers.
+- byte-budgeted deterministic LRU evaluation cache.
+- final derived Corner normals with flat/smooth policy, angle-weighted smooth fans, and sharp/manifold boundaries.
 - GCC + Clang warnings-as-errors builds.
 - ASan + UBSan.
 - clang-tidy with actionable bugprone/performance/portability checks.
 - Android NDK cross-compilation for ARMv7 32-bit and ARM64 with explicit pointer-width validation.
-- dependency-free performance/memory benchmark infrastructure with 10k / 100k / 1M requested profiles where practical.
+- separate core and evaluation performance/memory benchmarks with 10k / 100k / 1M requested profiles where practical.
 
-The next architectural feature is the authored-mesh -> evaluated-mesh boundary. Storage/allocator changes remain evidence-driven and are not being performed simply because a newer container pattern exists.
+The next architectural feature is a **narrow renderer-facing immutable snapshot/upload contract**. Storage/allocator changes remain evidence-driven and are not being performed simply because a newer container pattern exists.
 
 ## Repository layout
 
@@ -67,8 +77,9 @@ The next architectural feature is the authored-mesh -> evaluated-mesh boundary. 
 include/vortex/      Public portable C++ headers
 src/core/            Document / command implementation
 src/mesh/            Modeling kernel implementation
+src/eval/            Evaluated geometry, modifiers, cache, derived shading
 tests/               Native correctness and corruption tests
-benchmarks/          Performance and storage measurement harness
+benchmarks/          Core + evaluation performance measurement harnesses
 docs/                Architecture, decisions, roadmap, research
 scripts/             Portability/tooling checks
 android/             Future Android host; platform code stays outside the core
@@ -82,18 +93,22 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-## Benchmark
+The current test build registers 18 native suites on the Derived Shading Normals patch.
+
+## Benchmarks
 
 ```bash
 cmake -S . -B build-bench \
   -DCMAKE_BUILD_TYPE=Release \
   -DVORTEX_BUILD_TESTS=OFF \
   -DVORTEX_BUILD_BENCHMARKS=ON
-cmake --build build-bench --target vortex_mesh_bench
+
+cmake --build build-bench --target vortex_mesh_bench vortex_eval_bench
 ./build-bench/vortex_mesh_bench --scale 10000
+./build-bench/vortex_eval_bench --scale 10000
 ```
 
-GitHub Actions also provides explicit 10k, 100k, and 1M requested benchmark profiles. Nonlinear topology-heavy cases are transparently capped and report `capped: true` rather than hiding current scaling limits.
+GitHub Actions provides explicit 10k, 100k, and 1M requested benchmark profiles. Nonlinear setup/topology-heavy cases are transparently capped and report `capped: true` rather than hiding current scaling limits.
 
 ## Engineering documents
 
@@ -104,6 +119,8 @@ GitHub Actions also provides explicit 10k, 100k, and 1M requested benchmark prof
 - [Ownership](docs/OWNERSHIP.md)
 - [Commands and Undo](docs/COMMANDS_UNDO.md)
 - [Mesh Kernel](docs/MESH_KERNEL.md)
+- [Evaluated Geometry](docs/EVALUATION.md)
+- [Derived Shading Normals](docs/SHADING_NORMALS.md)
 - [Mesh Storage](docs/MESH_STORAGE.md)
 - [Validation](docs/VALIDATION.md)
 - [Performance](docs/PERFORMANCE.md)

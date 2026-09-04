@@ -89,11 +89,6 @@ int main() {
     assert(authored.addFace({a, c, d}));
     assert(authored.validate());
 
-    auto* cornerNormals = authored.attributes().values<Vec3>("normal", AttributeDomain::Corner);
-    assert(cornerNormals != nullptr);
-    assert(!cornerNormals->empty());
-    (*cornerNormals)[0] = {1.0F, 0.0F, 0.0F};
-
     Document document;
     const MeshId meshId = document.createMesh("Mirror Fixture", std::move(authored));
     assert(meshId);
@@ -163,8 +158,8 @@ int main() {
     const auto* mirroredNormals = mirrored.attributes().values<Vec3>("normal", AttributeDomain::Corner);
     assert(mirroredNormals != nullptr);
     assert(mirroredNormals->size() == cornerCount * 2U);
-    assert((*mirroredNormals)[0].x == 1.0F);
-    assert((*mirroredNormals)[cornerCount].x == -1.0F);
+    assert((*mirroredNormals)[0].z == 1.0F);
+    assert((*mirroredNormals)[cornerCount].z == 1.0F);
 
     MirrorModifier mirrorY(MirrorAxis::Y, 2.0F);
     const MeshModifier* yStack[] = {&mirrorY};

@@ -60,6 +60,7 @@ struct EvaluatedCorner final {
     CornerId sourceId;
 };
 
+class DerivedNormalsGenerator;
 class MeshEvaluator;
 class MeshModifier;
 
@@ -128,6 +129,7 @@ public:
     }
 
 private:
+    friend class DerivedNormalsGenerator;
     friend class MeshEvaluator;
     friend class MeshModifier;
 

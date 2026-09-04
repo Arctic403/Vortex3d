@@ -29,6 +29,18 @@ struct VertexPositionHistory final {
     std::vector<VertexPositionChange> changes;
 };
 
+struct EdgeSharpHistory final {
+    EdgeId edgeId;
+    bool before = false;
+    bool after = false;
+};
+
+struct FaceSharpHistory final {
+    FaceId faceId;
+    bool before = true;
+    bool after = true;
+};
+
 struct VertexTopologySnapshot final {
     MeshVertex data;
     std::size_t packedIndex = 0;
@@ -63,7 +75,7 @@ struct FaceExtrudeHistory final {
     std::vector<CornerTopologySnapshot> createdCorners;
 };
 
-using MeshHistoryPayload = std::variant<VertexPositionHistory, FaceExtrudeHistory>;
+using MeshHistoryPayload = std::variant<VertexPositionHistory, EdgeSharpHistory, FaceSharpHistory, FaceExtrudeHistory>;
 
 struct MeshHistoryRecord final {
     std::string name;
@@ -74,6 +86,8 @@ struct MeshHistoryRecord final {
 
 struct MeshCommandResult final {
     std::vector<VertexId> touchedVertices;
+    std::vector<EdgeId> touchedEdges;
+    std::vector<FaceId> touchedFaces;
     std::optional<FaceExtrudeResult> extrusion;
 };
 
@@ -101,6 +115,32 @@ public:
 
 private:
     std::vector<VertexPositionTarget> targets_;
+};
+
+class SetEdgeSharpCommand final : public MeshCommand {
+public:
+    SetEdgeSharpCommand(const EdgeId edgeId, const bool sharp) noexcept : edgeId_(edgeId), sharp_(sharp) {}
+
+    [[nodiscard]] std::string_view name() const noexcept override { return "Set Edge Sharp"; }
+    [[nodiscard]] bool undoable() const noexcept override { return true; }
+    [[nodiscard]] std::optional<MeshCommandExecution> apply(EditableMesh& mesh) override;
+
+private:
+    EdgeId edgeId_;
+    bool sharp_ = false;
+};
+
+class SetFaceSharpCommand final : public MeshCommand {
+public:
+    SetFaceSharpCommand(const FaceId faceId, const bool sharp) noexcept : faceId_(faceId), sharp_(sharp) {}
+
+    [[nodiscard]] std::string_view name() const noexcept override { return "Set Face Sharp"; }
+    [[nodiscard]] bool undoable() const noexcept override { return true; }
+    [[nodiscard]] std::optional<MeshCommandExecution> apply(EditableMesh& mesh) override;
+
+private:
+    FaceId faceId_;
+    bool sharp_ = true;
 };
 
 class ExtrudeFaceCommand final : public MeshCommand {

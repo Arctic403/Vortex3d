@@ -83,6 +83,7 @@ CachedEvaluationResult EvaluationCache::evaluate(
     if (!evaluated || !evaluated.mesh.has_value()) {
         result.error = evaluated.error;
         result.modifierError = evaluated.modifierError;
+        result.normalError = evaluated.normalError;
         result.modifierIndex = evaluated.modifierIndex;
         return result;
     }

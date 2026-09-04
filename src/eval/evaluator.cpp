@@ -55,6 +55,13 @@ template <typename IdType>
     return result;
 }
 
+[[nodiscard]] MeshEvaluationResult failNormals(const NormalGenerationError normalError) {
+    MeshEvaluationResult result;
+    result.error = MeshEvaluationError::NormalGenerationFailed;
+    result.normalError = normalError;
+    return result;
+}
+
 void mixRevisionByte(std::uint64_t& hash, const std::uint8_t value) noexcept {
     constexpr std::uint64_t fnvPrime = 1099511628211ULL;
     hash ^= value;
@@ -207,6 +214,11 @@ MeshEvaluationResult MeshEvaluator::evaluate(
         if (!modifierResult) {
             return failModifier(MeshEvaluationError::ModifierFailed, modifierResult.error, index);
         }
+    }
+
+    const NormalGenerationResult normalResult = DerivedNormalsGenerator::generate(evaluated);
+    if (!normalResult) {
+        return failNormals(normalResult.error);
     }
 
     MeshEvaluationResult result;
