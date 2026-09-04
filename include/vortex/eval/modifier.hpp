@@ -4,17 +4,22 @@
 
 #include <cstdint>
 #include <string_view>
+#include <vector>
 
 namespace vortex {
 
 enum class MeshModifierType : std::uint8_t {
     Transform = 1,
+    Mirror = 2,
 };
 
 enum class ModifierApplyError : std::uint8_t {
     None,
     MissingPositionAttribute,
     InvalidTransform,
+    InvalidMirror,
+    GeneratedTopologyOverflow,
+    AttributeCopyFailed,
 };
 
 struct ModifierApplyResult final {
@@ -35,6 +40,10 @@ public:
 
 protected:
     [[nodiscard]] static AttributeSet& mutableAttributes(EvaluatedMesh& mesh) noexcept;
+    [[nodiscard]] static std::vector<EvaluatedVertex>& mutableVertices(EvaluatedMesh& mesh) noexcept;
+    [[nodiscard]] static std::vector<EvaluatedEdge>& mutableEdges(EvaluatedMesh& mesh) noexcept;
+    [[nodiscard]] static std::vector<EvaluatedFace>& mutableFaces(EvaluatedMesh& mesh) noexcept;
+    [[nodiscard]] static std::vector<EvaluatedCorner>& mutableCorners(EvaluatedMesh& mesh) noexcept;
 };
 
 class TransformModifier final : public MeshModifier {
@@ -58,6 +67,30 @@ private:
     Vec3 translation_;
     Vec3 rotationRadians_;
     Vec3 scale_;
+};
+
+enum class MirrorAxis : std::uint8_t {
+    X,
+    Y,
+    Z,
+};
+
+class MirrorModifier final : public MeshModifier {
+public:
+    explicit MirrorModifier(const MirrorAxis axis = MirrorAxis::X, const float planeOffset = 0.0F) noexcept
+        : axis_(axis), planeOffset_(planeOffset) {}
+
+    [[nodiscard]] std::string_view name() const noexcept override { return "Mirror"; }
+    [[nodiscard]] MeshModifierType type() const noexcept override { return MeshModifierType::Mirror; }
+    [[nodiscard]] std::uint64_t revisionToken() const noexcept override;
+    [[nodiscard]] ModifierApplyResult apply(EvaluatedMesh& mesh) const override;
+
+    [[nodiscard]] MirrorAxis axis() const noexcept { return axis_; }
+    [[nodiscard]] float planeOffset() const noexcept { return planeOffset_; }
+
+private:
+    MirrorAxis axis_;
+    float planeOffset_ = 0.0F;
 };
 
 } // namespace vortex
