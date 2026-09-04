@@ -77,12 +77,49 @@ void testMoveUndoRedo() {
     assert(mesh.position(v1)->x == 2.0F);
     assert(mesh.validate());
 
-    // Diverging after an undo clears the redo branch.
     assert(history.undo(mesh));
     vortex::MoveVerticesCommand divergent({{v0, {-3.0F, 0.0F, -1.0F}}});
     assert(history.execute(mesh, divergent));
     assert(history.redoCount() == 0);
     assert(mesh.position(v0)->x == -3.0F);
+}
+
+void testLongMoveRewind() {
+    vortex::VertexId v0;
+    vortex::VertexId v1;
+    vortex::VertexId v2;
+    vortex::VertexId v3;
+    vortex::FaceId face;
+    auto mesh = makeQuad(v0, v1, v2, v3, face);
+    (void)v1;
+    (void)v2;
+    (void)v3;
+    (void)face;
+
+    vortex::MeshHistory history(1024U * 1024U);
+    for (int step = 0; step < 128; ++step) {
+        const float x = -1.0F - static_cast<float>(step + 1) * 0.01F;
+        vortex::MoveVerticesCommand move({{v0, {x, 0.0F, -1.0F}}});
+        assert(history.execute(mesh, move));
+    }
+    assert(history.undoCount() == 128);
+    const float finalX = mesh.position(v0)->x;
+
+    for (int step = 0; step < 128; ++step) {
+        assert(history.undo(mesh));
+        assert(mesh.validate());
+    }
+    assert(history.undoCount() == 0);
+    assert(history.redoCount() == 128);
+    assert(mesh.position(v0)->x == -1.0F);
+
+    for (int step = 0; step < 128; ++step) {
+        assert(history.redo(mesh));
+        assert(mesh.validate());
+    }
+    assert(history.redoCount() == 0);
+    assert(history.undoCount() == 128);
+    assert(mesh.position(v0)->x == finalX);
 }
 
 void testInvalidMoveIsAtomic() {
@@ -133,7 +170,6 @@ void testMemoryBudget() {
     assert(history.undoCount() > 0);
     assert(history.undoCount() < 100);
 
-    // A step larger than the allowed budget is rewound instead of becoming permanent.
     const auto before = mesh.position(v0);
     vortex::MeshHistory tinyHistory(1);
     vortex::MoveVerticesCommand oversized({{v0, {-99.0F, 0.0F, -1.0F}}});
@@ -215,6 +251,17 @@ void testExtrudeUndoRedoExactIds() {
         assert(mesh.hasVertex(vertex));
     }
     assert(mesh.validate());
+
+    for (int cycle = 0; cycle < 32; ++cycle) {
+        assert(history.undo(mesh));
+        assert(mesh.hasFace(face));
+        assert(faceCorners(mesh, face) == originalCorners);
+        assert(mesh.validate());
+        assert(history.redo(mesh));
+        assert(!mesh.hasFace(face));
+        assert(mesh.hasFace(firstResult.capFace));
+        assert(mesh.validate());
+    }
 }
 
 void testMixedMoveExtrudeHistory() {
@@ -290,6 +337,7 @@ void testExtrudeOverBudgetRewinds() {
 
 int main() {
     testMoveUndoRedo();
+    testLongMoveRewind();
     testInvalidMoveIsAtomic();
     testMemoryBudget();
     testExtrudeUndoRedoExactIds();
