@@ -13,7 +13,6 @@ EditableMesh::EditableMesh() {
     (void)attributes_.create<bool>("seam", AttributeDomain::Edge, false);
     (void)attributes_.create<std::int32_t>("material_index", AttributeDomain::Face, 0);
     (void)attributes_.create<Vec2>("uv:Map", AttributeDomain::Corner, Vec2{});
-    (void)attributes_.create<Vec3>("normal", AttributeDomain::Corner, Vec3{});
 }
 
 VertexId EditableMesh::addVertex(const Vec3 positionValue) {
