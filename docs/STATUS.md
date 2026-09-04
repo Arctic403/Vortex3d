@@ -96,6 +96,8 @@ Coverage includes authored topology, deliberate corruption, command/history repl
 - zero-budget operation,
 - authored-revision cache invalidation,
 - old snapshot survival across edits and eviction,
+- no standard authored Corner normal bootstrap on new meshes,
+- evaluated Corner normal materialization,
 - flat and reversed-winding normals,
 - fully smooth cube angle-weighted fans,
 - sharp-edge fan splitting,
@@ -139,6 +141,8 @@ bucket pointer           8 bytes
 ```
 
 The first derived-normal Release smoke on the GitHub runner measured 250 smooth quads / 1,000 corners at approximately **0.062 ms**, with the completed evaluated snapshot estimating about **85.8 KB** retained bytes. This is a regression baseline for that runner, not a cross-device performance guarantee.
+
+The final v0.1 normal-memory pass removes the standard authored Corner-normal bootstrap for new meshes, computes corner-angle weights on demand, reuses one face-cycle scratch vector, and reuses the final Corner-normal storage for smooth-fan accumulation instead of retaining a second Vec3-per-corner output buffer.
 
 These measurements make corner/hash-heavy authored storage a future optimization candidate, but they do not justify a container rewrite by themselves.
 
@@ -196,10 +200,12 @@ Standard `normal` is a **final derived Corner attribute**, not a normal modifier
 - non-manifold edges stop smoothing,
 - Edge `sharp` and Face `sharp_face` changes use compact reversible mesh commands,
 - shading command revisions invalidate the normal evaluation cache automatically,
+- new authored meshes do not allocate standard Corner normals,
 - only final Corner normals remain in the immutable snapshot; temporary face/fan arrays are released,
+- the final Corner-normal buffer doubles as smooth-fan accumulation storage,
 - structured errors reject non-finite/degenerate/invalid geometry instead of generating NaNs.
 
-The early authored Corner `normal` bootstrap layer is currently tolerated but overwritten during final evaluation. Future authored custom split normals must use an explicit separate semantic such as `custom_normal`.
+Legacy/imported authored Corner `normal` data is tolerated for compatibility but is not authoritative; final evaluation overwrites the evaluated copy in place. Future authored custom split normals must use an explicit separate semantic such as `custom_normal`.
 
 See `docs/EVALUATION.md`, `docs/SHADING_NORMALS.md`, and `docs/OWNERSHIP.md`.
 
@@ -216,7 +222,7 @@ Normal Core CI has **8 jobs**:
 7. Android ARM64 cross-compile,
 8. Release core + evaluation benchmark smoke/artifact.
 
-PR #10 is the Derived Shading Normals v0.1 gate. It must pass all eight before merge.
+Derived shading changes are not merge-ready until all eight jobs pass on the exact patch head.
 
 ## Deferred intentionally
 
