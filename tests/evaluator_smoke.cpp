@@ -68,7 +68,8 @@ int main() {
     assert(oldPosition->x == 0.0F);
 
     MeshHistory history;
-    MoveVerticesCommand move(std::vector<VertexPositionTarget>{{a, {2.0F, 0.0F, 0.0F}}});
+    // Keep the polygon geometrically valid so the derived-normal stage has a real surface.
+    MoveVerticesCommand move(std::vector<VertexPositionTarget>{{a, {-1.0F, 0.0F, 0.0F}}});
     assert(document.executeMeshCommand(meshId, history, move));
 
     source = document.mesh(meshId);
@@ -82,7 +83,7 @@ int main() {
 
     const auto newPosition = second.position(0);
     assert(newPosition.has_value());
-    assert(newPosition->x == 2.0F);
+    assert(newPosition->x == -1.0F);
 
     const auto preservedOldPosition = first.position(0);
     assert(preservedOldPosition.has_value());
