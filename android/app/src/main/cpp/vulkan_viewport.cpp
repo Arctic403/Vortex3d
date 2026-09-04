@@ -52,6 +52,10 @@ bool VulkanViewport::attach(ANativeWindow* window) {
         return false;
     }
 
+    if (!createGeometryResources()) {
+        shutdown();
+        return false;
+    }
     if (!createSwapchain()) {
         destroySwapchain();
         destroySurface();
@@ -128,7 +132,6 @@ bool VulkanViewport::render() {
     }
 
     VkPresentInfoKHR presentInfo{};
-
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     presentInfo.waitSemaphoreCount = 1U;
     presentInfo.pWaitSemaphores = &renderFinished_;
@@ -157,6 +160,9 @@ std::string VulkanViewport::info() const {
     if (swapchain_ != VK_NULL_HANDLE) {
         stream << " | " << swapchainExtent_.width << 'x' << swapchainExtent_.height;
     }
+    if (graphicsPipeline_ != VK_NULL_HANDLE && depthView_ != VK_NULL_HANDLE && indexCount_ != 0U) {
+        stream << " | Stage1 mesh+depth";
+    }
     return stream.str();
 }
 
@@ -174,6 +180,7 @@ void VulkanViewport::destroySurface() noexcept {
 void VulkanViewport::shutdown() noexcept {
     detach();
     if (device_ != VK_NULL_HANDLE) {
+        destroyGeometry();
         if (frameFence_ != VK_NULL_HANDLE) {
             vkDestroyFence(device_, frameFence_, nullptr);
         }
