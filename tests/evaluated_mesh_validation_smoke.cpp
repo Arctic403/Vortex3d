@@ -1,4 +1,5 @@
 #include "vortex/core/document.hpp"
+#include "vortex/eval/evaluation_cache.hpp"
 #include "vortex/eval/evaluator.hpp"
 #include "vortex/eval/modifier.hpp"
 #include "vortex/eval/validator.hpp"
@@ -220,6 +221,16 @@ void testEvaluatorRejectsSuccessfulButCorruptModifier() {
     assert(result.modifierIndex.has_value() && *result.modifierIndex == 0U);
     assert(result.evaluatedValidationCode.has_value());
     assert(*result.evaluatedValidationCode == vortex::EvaluatedMeshValidationCode::InvalidEdgeEndpoints);
+
+    vortex::EvaluationCache cache;
+    const vortex::CachedEvaluationResult cached = cache.evaluate(*source, stack);
+    assert(!cached);
+    assert(!cached.cacheHit);
+    assert(cached.error == vortex::MeshEvaluationError::ModifierFailed);
+    assert(cached.modifierError == vortex::ModifierApplyError::GeneratedTopologyInvalid);
+    assert(cached.modifierIndex.has_value() && *cached.modifierIndex == 0U);
+    assert(cached.evaluatedValidationCode.has_value());
+    assert(*cached.evaluatedValidationCode == vortex::EvaluatedMeshValidationCode::InvalidEdgeEndpoints);
 }
 
 } // namespace
