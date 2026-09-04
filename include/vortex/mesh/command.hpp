@@ -27,7 +27,41 @@ struct VertexPositionHistory final {
     std::vector<VertexPositionChange> changes;
 };
 
-using MeshHistoryPayload = std::variant<VertexPositionHistory>;
+struct VertexTopologySnapshot final {
+    MeshVertex data;
+    std::size_t packedIndex = 0;
+    AttributeRow attributes;
+};
+
+struct EdgeTopologySnapshot final {
+    MeshEdge data;
+    std::size_t packedIndex = 0;
+    AttributeRow attributes;
+};
+
+struct FaceTopologySnapshot final {
+    MeshFace data;
+    std::size_t packedIndex = 0;
+    AttributeRow attributes;
+};
+
+struct CornerTopologySnapshot final {
+    MeshCorner data;
+    std::size_t packedIndex = 0;
+    AttributeRow attributes;
+};
+
+struct FaceExtrudeHistory final {
+    FaceExtrudeResult result;
+    FaceTopologySnapshot sourceFace;
+    std::vector<CornerTopologySnapshot> sourceCorners;
+    std::vector<VertexTopologySnapshot> createdVertices;
+    std::vector<EdgeTopologySnapshot> createdEdges;
+    std::vector<FaceTopologySnapshot> createdFaces;
+    std::vector<CornerTopologySnapshot> createdCorners;
+};
+
+using MeshHistoryPayload = std::variant<VertexPositionHistory, FaceExtrudeHistory>;
 
 struct MeshHistoryRecord final {
     std::string name;
@@ -72,10 +106,7 @@ public:
     ExtrudeFaceCommand(FaceId faceId, Vec3 offset) : faceId_(faceId), offset_(offset) {}
 
     [[nodiscard]] std::string_view name() const noexcept override { return "Extrude Face"; }
-
-    // Execution is command-routed already, but topology history is not compact yet.
-    // MeshHistory refuses this command until a topology delta record is implemented.
-    [[nodiscard]] bool undoable() const noexcept override { return false; }
+    [[nodiscard]] bool undoable() const noexcept override { return true; }
     [[nodiscard]] std::optional<MeshCommandExecution> apply(EditableMesh& mesh) override;
 
 private:
