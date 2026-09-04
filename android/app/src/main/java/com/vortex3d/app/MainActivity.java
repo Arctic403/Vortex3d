@@ -9,6 +9,7 @@ import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.TextView;
@@ -17,6 +18,10 @@ public final class MainActivity extends Activity {
     static {
         System.loadLibrary("vortex_android");
     }
+
+    private static final int TWO_FINGER_UNDECIDED = 0;
+    private static final int TWO_FINGER_PAN = 1;
+    private static final int TWO_FINGER_ZOOM = 2;
 
     private static native String engineVersion();
     private static native long nativeCreateRenderer();
@@ -36,11 +41,16 @@ public final class MainActivity extends Activity {
     private TextView statusView;
 
     private int gesturePointerCount;
+    private int twoFingerMode = TWO_FINGER_UNDECIDED;
+    private float touchSlop;
     private float lastTouchX;
     private float lastTouchY;
     private float lastCentroidX;
     private float lastCentroidY;
     private float lastSpan;
+    private float twoFingerStartCentroidX;
+    private float twoFingerStartCentroidY;
+    private float twoFingerStartSpan;
 
     private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
         @Override
@@ -62,6 +72,7 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         rendererHandle = nativeCreateRenderer();
+        touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
 
         FrameLayout root = new FrameLayout(this);
         SurfaceView viewport = new SurfaceView(this);
@@ -156,6 +167,7 @@ public final class MainActivity extends Activity {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 gesturePointerCount = 1;
+                twoFingerMode = TWO_FINGER_UNDECIDED;
                 lastTouchX = event.getX(0);
                 lastTouchY = event.getY(0);
                 return true;
@@ -175,10 +187,13 @@ public final class MainActivity extends Activity {
                 return true;
 
             case MotionEvent.ACTION_POINTER_UP:
-                // Pointer indices are about to change. Re-anchor on the next MOVE instead of
-                // injecting a jump into the orbit gesture.
+                // End the two-finger mode completely. Pointer indices are about to change,
+                // so the remaining finger is re-anchored on its next MOVE rather than
+                // injecting a jump into orbit.
                 gesturePointerCount = 0;
+                twoFingerMode = TWO_FINGER_UNDECIDED;
                 lastSpan = 0.0f;
+                twoFingerStartSpan = 0.0f;
                 return true;
 
             case MotionEvent.ACTION_UP:
@@ -207,9 +222,17 @@ public final class MainActivity extends Activity {
         float y0 = event.getY(0);
         float x1 = event.getX(1);
         float y1 = event.getY(1);
-        lastCentroidX = (x0 + x1) * 0.5f;
-        lastCentroidY = (y0 + y1) * 0.5f;
-        lastSpan = distance(x0, y0, x1, y1);
+        float centroidX = (x0 + x1) * 0.5f;
+        float centroidY = (y0 + y1) * 0.5f;
+        float span = distance(x0, y0, x1, y1);
+
+        lastCentroidX = centroidX;
+        lastCentroidY = centroidY;
+        lastSpan = span;
+        twoFingerStartCentroidX = centroidX;
+        twoFingerStartCentroidY = centroidY;
+        twoFingerStartSpan = span;
+        twoFingerMode = TWO_FINGER_UNDECIDED;
         gesturePointerCount = 2;
     }
 
@@ -222,8 +245,37 @@ public final class MainActivity extends Activity {
         float centroidY = (y0 + y1) * 0.5f;
         float span = distance(x0, y0, x1, y1);
 
-        if (gesturePointerCount == 2) {
+        if (gesturePointerCount != 2) {
+            beginTwoFingerGesture(event);
+            return;
+        }
+
+        if (twoFingerMode == TWO_FINGER_UNDECIDED) {
+            float centroidTravel = distance(
+                twoFingerStartCentroidX,
+                twoFingerStartCentroidY,
+                centroidX,
+                centroidY);
+            float spanTravel = Math.abs(span - twoFingerStartSpan);
+
+            // Gesture arbitration: do not pan and zoom in the same gesture. Wait until
+            // movement exceeds touch slop, then lock to whichever signal is dominant.
+            // A small bias toward pinch prevents ordinary finger-spacing noise from
+            // stealing a deliberate pan, while still making pinch engage promptly.
+            if (centroidTravel >= touchSlop || spanTravel >= touchSlop) {
+                twoFingerMode = spanTravel > centroidTravel * 1.15f
+                    ? TWO_FINGER_ZOOM
+                    : TWO_FINGER_PAN;
+
+                // Re-anchor at the lock point so crossing the threshold cannot cause a jump.
+                lastCentroidX = centroidX;
+                lastCentroidY = centroidY;
+                lastSpan = span;
+                return;
+            }
+        } else if (twoFingerMode == TWO_FINGER_PAN) {
             nativePanCamera(rendererHandle, centroidX - lastCentroidX, centroidY - lastCentroidY);
+        } else if (twoFingerMode == TWO_FINGER_ZOOM) {
             if (lastSpan > 1.0f && span > 1.0f) {
                 nativeZoomCamera(rendererHandle, span / lastSpan);
             }
@@ -232,7 +284,6 @@ public final class MainActivity extends Activity {
         lastCentroidX = centroidX;
         lastCentroidY = centroidY;
         lastSpan = span;
-        gesturePointerCount = 2;
     }
 
     private static float distance(float x0, float y0, float x1, float y1) {
@@ -243,7 +294,9 @@ public final class MainActivity extends Activity {
 
     private void resetGestureState() {
         gesturePointerCount = 0;
+        twoFingerMode = TWO_FINGER_UNDECIDED;
         lastSpan = 0.0f;
+        twoFingerStartSpan = 0.0f;
     }
 
     private void startFrameLoop() {
