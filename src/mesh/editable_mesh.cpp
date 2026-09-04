@@ -361,6 +361,10 @@ std::optional<EdgeSplitResult> EditableMesh::splitEdge(const EdgeId id, const fl
         return std::nullopt;
     }
 
+    const std::size_t vertexAIndex = vertexAIndexIt->second;
+    const std::size_t vertexBIndex = vertexBIndexIt->second;
+    const std::size_t originalEdgeIndex = originalEdgeIndexIt->second;
+
     std::vector<CornerId> affectedCorners;
     for (const CornerId cornerId : cornerOrder_) {
         const MeshCorner* cornerData = corner(cornerId);
@@ -387,8 +391,8 @@ std::optional<EdgeSplitResult> EditableMesh::splitEdge(const EdgeId id, const fl
     const std::size_t newVertexIndex = vertexIndex_.at(newVertex);
     (void)attributes_.interpolateDomainIndex(
         AttributeDomain::Vertex,
-        vertexAIndexIt->second,
-        vertexBIndexIt->second,
+        vertexAIndex,
+        vertexBIndex,
         newVertexIndex,
         factor);
 
@@ -397,7 +401,7 @@ std::optional<EdgeSplitResult> EditableMesh::splitEdge(const EdgeId id, const fl
         return std::nullopt;
     }
     const std::size_t newEdgeIndex = edgeIndex_.at(newEdge);
-    (void)attributes_.copyDomainIndex(AttributeDomain::Edge, originalEdgeIndexIt->second, newEdgeIndex);
+    (void)attributes_.copyDomainIndex(AttributeDomain::Edge, originalEdgeIndex, newEdgeIndex);
 
     MeshEdge& retainedEdge = edges_.at(id);
     retainedEdge.vertexB = newVertex;
