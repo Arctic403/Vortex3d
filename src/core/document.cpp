@@ -13,7 +13,7 @@ MeshBlock::MeshBlock(
     std::string meshName,
     std::unique_ptr<EditableMesh> mesh,
     const std::uint64_t meshRevision)
-    : id(meshId), name(std::move(meshName)), authoredMesh(std::move(mesh)), revision(meshRevision) {}
+    : id(meshId), name(std::move(meshName)), revision(meshRevision), authoredMesh_(std::move(mesh)) {}
 
 MeshBlock::~MeshBlock() = default;
 MeshBlock::MeshBlock(MeshBlock&&) noexcept = default;
@@ -105,10 +105,10 @@ const ObjectBlock* Document::object(const ObjectId id) const noexcept {
 
 const EditableMesh* Document::authoredMesh(const MeshId id) const noexcept {
     const auto it = meshes_.find(id);
-    if (it == meshes_.end() || !it->second.authoredMesh) {
+    if (it == meshes_.end() || !it->second.authoredMesh_) {
         return nullptr;
     }
-    return it->second.authoredMesh.get();
+    return it->second.authoredMesh_.get();
 }
 
 bool Document::renameScene(const SceneId sceneId, std::string name) {
@@ -218,12 +218,12 @@ MeshId Document::makeObjectMeshUnique(const ObjectId objectId) {
     }
 
     const auto sourceIt = meshes_.find(sourceId);
-    if (sourceIt == meshes_.end() || !sourceIt->second.authoredMesh) {
+    if (sourceIt == meshes_.end() || !sourceIt->second.authoredMesh_) {
         return {};
     }
 
     const MeshId cloneId = allocateId<MeshId>();
-    auto authoredClone = std::make_unique<EditableMesh>(*sourceIt->second.authoredMesh);
+    auto authoredClone = std::make_unique<EditableMesh>(*sourceIt->second.authoredMesh_);
     MeshBlock clone{cloneId, sourceIt->second.name, std::move(authoredClone), 1};
     meshes_.emplace(cloneId, std::move(clone));
 
@@ -241,11 +241,11 @@ bool Document::executeMeshCommand(
     MeshCommand& command,
     MeshCommandResult* result) {
     const auto meshIt = meshes_.find(meshId);
-    if (meshIt == meshes_.end() || !meshIt->second.authoredMesh || !history.bindToDocumentMesh(*this, meshId)) {
+    if (meshIt == meshes_.end() || !meshIt->second.authoredMesh_ || !history.bindToDocumentMesh(*this, meshId)) {
         return false;
     }
 
-    if (!history.execute(*meshIt->second.authoredMesh, command, result)) {
+    if (!history.execute(*meshIt->second.authoredMesh_, command, result)) {
         return false;
     }
 
@@ -256,11 +256,11 @@ bool Document::executeMeshCommand(
 
 bool Document::undoMeshCommand(const MeshId meshId, MeshHistory& history) {
     const auto meshIt = meshes_.find(meshId);
-    if (meshIt == meshes_.end() || !meshIt->second.authoredMesh || !history.bindToDocumentMesh(*this, meshId)) {
+    if (meshIt == meshes_.end() || !meshIt->second.authoredMesh_ || !history.bindToDocumentMesh(*this, meshId)) {
         return false;
     }
 
-    if (!history.undo(*meshIt->second.authoredMesh)) {
+    if (!history.undo(*meshIt->second.authoredMesh_)) {
         return false;
     }
 
@@ -271,11 +271,11 @@ bool Document::undoMeshCommand(const MeshId meshId, MeshHistory& history) {
 
 bool Document::redoMeshCommand(const MeshId meshId, MeshHistory& history) {
     const auto meshIt = meshes_.find(meshId);
-    if (meshIt == meshes_.end() || !meshIt->second.authoredMesh || !history.bindToDocumentMesh(*this, meshId)) {
+    if (meshIt == meshes_.end() || !meshIt->second.authoredMesh_ || !history.bindToDocumentMesh(*this, meshId)) {
         return false;
     }
 
-    if (!history.redo(*meshIt->second.authoredMesh)) {
+    if (!history.redo(*meshIt->second.authoredMesh_)) {
         return false;
     }
 
@@ -447,7 +447,7 @@ bool Document::validate() const noexcept {
     }
 
     for (const auto& [meshId, mesh] : meshes_) {
-        if (!meshId || mesh.id != meshId || !mesh.authoredMesh || !mesh.authoredMesh->validate()) {
+        if (!meshId || mesh.id != meshId || !mesh.authoredMesh_ || !mesh.authoredMesh_->validate()) {
             return false;
         }
     }
