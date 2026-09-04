@@ -104,4 +104,12 @@ if(VORTEX_BUILD_TESTS)
     target_compile_features(vortex_mesh_command_smoke PRIVATE cxx_std_20)
 
     add_test(NAME vortex.mesh.command.smoke COMMAND vortex_mesh_command_smoke)
+
+    add_executable(vortex_mesh_topology_history_smoke
+        tests/mesh_topology_history_smoke.cpp
+    )
+    target_link_libraries(vortex_mesh_topology_history_smoke PRIVATE Vortex3D::core)
+    target_compile_features(vortex_mesh_topology_history_smoke PRIVATE cxx_std_20)
+
+    add_test(NAME vortex.mesh.topology.history.smoke COMMAND vortex_mesh_topology_history_smoke)
 endif()
