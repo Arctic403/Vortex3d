@@ -54,10 +54,10 @@ void testIsolatedQuadExtrude() {
     // Source corner UVs are inherited by the new cap before the side-wall policy is applied.
     const auto* extrudedUvs = mesh.attributes().values<vortex::Vec2>("uv:Map", vortex::AttributeDomain::Corner);
     assert(extrudedUvs != nullptr && extrudedUvs->size() == 20);
-    assert((*extrudedUvs)[0] == vortex::Vec2{0.0F, 0.0F});
-    assert((*extrudedUvs)[1] == vortex::Vec2{1.0F, 0.0F});
-    assert((*extrudedUvs)[2] == vortex::Vec2{1.0F, 1.0F});
-    assert((*extrudedUvs)[3] == vortex::Vec2{0.0F, 1.0F});
+    assert(((*extrudedUvs)[0] == vortex::Vec2{0.0F, 0.0F}));
+    assert(((*extrudedUvs)[1] == vortex::Vec2{1.0F, 0.0F}));
+    assert(((*extrudedUvs)[2] == vortex::Vec2{1.0F, 1.0F}));
+    assert(((*extrudedUvs)[3] == vortex::Vec2{0.0F, 1.0F}));
 }
 
 void testAttachedCubeFaceExtrude() {
