@@ -173,28 +173,29 @@ public:
     [[nodiscard]] std::size_t retainedBytes() const noexcept { return retainedBytes_; }
     [[nodiscard]] std::size_t undoCount() const noexcept { return undo_.size(); }
     [[nodiscard]] std::size_t redoCount() const noexcept { return redo_.size(); }
+    [[nodiscard]] RuntimeDocumentId ownerDocumentRuntimeId() const noexcept { return ownerDocumentRuntimeId_; }
     [[nodiscard]] MeshId ownerMeshId() const noexcept { return ownerMeshId_; }
 
 private:
     friend class Document;
 
     [[nodiscard]] bool bindToDocumentMesh(const Document& document, const MeshId meshId) noexcept {
-        if (!meshId) {
+        if (!meshId || !document.runtimeId()) {
             return false;
         }
-        if (ownerDocument_ == nullptr) {
-            ownerDocument_ = &document;
+        if (!ownerDocumentRuntimeId_) {
+            ownerDocumentRuntimeId_ = document.runtimeId();
             ownerMeshId_ = meshId;
             return true;
         }
-        return ownerDocument_ == &document && ownerMeshId_ == meshId;
+        return ownerDocumentRuntimeId_ == document.runtimeId() && ownerMeshId_ == meshId;
     }
 
     [[nodiscard]] bool applyRecord(EditableMesh& mesh, const MeshHistoryRecord& record, bool forward);
     void clearRedo() noexcept;
     void enforceBudget() noexcept;
 
-    const Document* ownerDocument_ = nullptr;
+    RuntimeDocumentId ownerDocumentRuntimeId_;
     MeshId ownerMeshId_;
     std::size_t budgetBytes_ = 0;
     std::size_t retainedBytes_ = 0;
