@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`EditableMesh` is durable authored state. `EvaluatedMesh` is rebuildable generated state for modifiers, derived geometry, and rendering.
+`EditableMesh` is durable authored state. `EvaluatedMesh` is rebuildable generated state for modifiers, derived geometry, caching, and rendering.
 
 ```text
 Document / MeshBlock
@@ -14,6 +14,9 @@ EditableMesh          durable authored topology
 vortex_eval
         |
         v
+EvaluationCache       optional bounded reuse
+        |
+        v
 EvaluatedMesh         generated topology/attributes
         |
         v
@@ -22,10 +25,11 @@ ordered modifier stack
         +--> Transform
         +--> Mirror / Weld
         +--> Triangulate
+        +--> future Recalculate Normals
         +--> future renderer upload
 ```
 
-Nothing in `vortex_core` depends on the evaluator or renderer.
+Nothing in `vortex_core` depends on the evaluator, cache, or renderer.
 
 ## Current evaluated representation
 
@@ -60,7 +64,15 @@ Evaluated record
 
 Modifiers receive controlled internal mutation access through the evaluation layer only. Editor operations still modify authored data exclusively through commands/history.
 
-An older evaluated snapshot remains valid as its own value until discarded; later authored edits or modifier evaluations do not silently mutate it.
+An older evaluated snapshot remains valid as its own immutable value. Later authored edits, modifier evaluations, cache eviction, or cache clearing do not silently mutate a snapshot still held by a consumer.
+
+## Authored revision discipline
+
+Evaluation identity depends on `MeshBlock::revision`, so authored geometry must not be mutated without advancing that revision.
+
+`MeshBlock` therefore keeps its owning `std::unique_ptr<EditableMesh>` private and exposes only `const EditableMesh* authoredMesh() const`. Const datablock access now propagates constness to the authored payload. Normal mutation remains behind `Document` mesh command/history operations, which advance mesh/document revisions.
+
+This rule prevents stale cache hits caused by untracked authored mutation.
 
 ## Modifier stack
 
@@ -124,7 +136,7 @@ Triangulate currently assumes a simple polygon boundary. Broad support for self-
 
 #### Attribute remapping
 
-Topology-generating evaluation now uses `AttributeSet::remapDomain()` for Face and Corner domains. The operation copies attribute storage directly from source-index mappings layer-by-layer instead of materializing one heavyweight `AttributeRow` object per generated corner.
+Topology-generating evaluation uses `AttributeSet::remapDomain()` for Face and Corner domains. The operation copies attribute storage directly from source-index mappings layer-by-layer instead of materializing one heavyweight `AttributeRow` object per generated corner.
 
 This keeps the generic attribute system intact while reducing temporary memory pressure for large generated meshes, particularly on 32-bit Android.
 
@@ -136,7 +148,7 @@ Modifier failures additionally report `ModifierApplyError` and the failing stack
 
 The evaluator intentionally avoids an exception-heavy result architecture.
 
-## Revision and cache contract
+## Revision and cache identity
 
 Every evaluated snapshot exposes:
 
@@ -156,7 +168,51 @@ Consequences:
 - Mirror weld setting/tolerance changes => different key,
 - adding/removing/reordering Triangulate => different key.
 
-`EvaluationCacheKeyHash` exists for a future cache. **No retained evaluation cache exists yet.** Cache lifetime and byte budgets will be designed explicitly for 32-bit Android.
+`MeshEvaluator::cacheKeyFor()` computes this identity without first constructing an `EvaluatedMesh`.
+
+## Evaluation Cache v0.1
+
+`EvaluationCache` retains immutable evaluated snapshots under an explicit byte budget. The default budget is **16 MiB** and callers may set a different value appropriate to device class/session policy.
+
+### Retention rules
+
+- cache entries are keyed by `EvaluationCacheKey`,
+- exact-key hits return the same retained `shared_ptr<const EvaluatedMesh>`,
+- misses evaluate normally and may retain the result,
+- results larger than the entire cache budget are still returned to the caller but are not retained,
+- a zero-byte budget disables retention while leaving evaluation functional,
+- lowering the budget immediately evicts entries until retained bytes fit,
+- `eraseMesh(MeshId)` releases every retained revision/modifier result for that authored mesh,
+- `clear()` releases all cache-owned evaluated snapshots,
+- hit, miss, and budget-eviction counters are exposed for diagnostics/benchmarking.
+
+### Deterministic eviction
+
+v0.1 uses deterministic least-recently-used eviction. Entries carry a monotonic use serial; the smallest serial is evicted first.
+
+The cache intentionally uses a small `std::vector<Entry>` with linear key lookup instead of adding another hash table plus linked-list allocation graph. Under a strict byte budget, evaluated snapshots are expected to dominate memory and entry counts are expected to remain small. This can be revisited only with benchmark evidence.
+
+### Byte accounting
+
+`EvaluatedMesh::estimatedRetainedBytes()` includes:
+
+- the `EvaluatedMesh` object,
+- Vertex/Edge/Face/Corner vector capacities,
+- dynamic generic attribute storage.
+
+Arithmetic saturates at `std::numeric_limits<std::size_t>::max()`. The estimate is intentionally allocator-agnostic and conservative; it is a stable budgeting metric, not a claim of allocator-exact heap telemetry.
+
+### Cache ownership
+
+The cache stores `std::shared_ptr<const EvaluatedMesh>` deliberately. This is one of the few places where shared ownership is appropriate: a renderer/export reader may still be consuming an immutable snapshot when the cache decides to evict it.
+
+Eviction releases **only cache ownership**. A reader that already holds the snapshot remains valid.
+
+The cache byte budget therefore bounds memory retained by the cache itself. It cannot bound memory that other subsystems intentionally pin through their own shared references. Renderer/export layers must keep their own in-flight snapshot counts bounded.
+
+### Threading
+
+Evaluation and `EvaluationCache` are single-threaded in v0.1. No method promises concurrent mutation safety. Parallel/background evaluation remains deferred until deterministic invalidation and ownership behavior have been proven further.
 
 ## Modifier roadmap
 
@@ -170,21 +226,25 @@ Consequences:
 
 Topology-generating modifiers must preserve meaningful source mappings and must never write generated topology back into authored meshes.
 
-Do not add parallel evaluation until deterministic dependency and invalidation behavior is proven single-threaded.
-
 ## Testing gate
 
-Evaluation coverage now proves authored/evaluated separation, source mappings, packed generated topology, Transform behavior, modifier ordering/cache identity, Mirror no-weld/weld behavior, and Triangulate behavior including:
+Evaluation coverage proves authored/evaluated separation, source mappings, packed generated topology, Transform behavior, modifier ordering/cache identity, Mirror no-weld/weld behavior, Triangulate behavior, and cache behavior including:
 
+- exact-key cache hits,
+- modifier-configuration separation,
+- deterministic LRU eviction,
+- explicit retained-byte budget enforcement,
+- oversized-result non-retention,
+- zero-budget operation,
+- authored-revision invalidation after a mesh command,
+- immutable old snapshots after authored edits,
+- cache clear/per-mesh invalidation while externally held snapshots remain valid,
+- invalid modifier diagnostics,
 - concave n-gon ear clipping,
 - exact `n - 2` triangle count,
-- triangle area coverage of a concave polygon,
 - Face/Corner source mappings,
 - material and UV remapping,
 - intentionally source-less generated diagonals,
-- stable already-triangular input,
-- `Transform -> Mirror Weld -> Triangulate`,
-- authored n-gon/quad preservation,
-- explicit degenerate-polygon failure.
+- `Transform -> Mirror Weld -> Triangulate`.
 
-The evaluator target is compiled by GCC, Clang, Android ARMv7, and Android ARM64 and is exercised under ASan/UBSan and clang-tidy through normal CI.
+The evaluator/cache target is compiled by GCC, Clang, Android ARMv7, and Android ARM64 and is exercised under ASan/UBSan and clang-tidy through normal CI.
