@@ -1,5 +1,6 @@
 #pragma once
 
+#include "vortex/core/document.hpp"
 #include "vortex/mesh/editable_mesh.hpp"
 
 #include <cstddef>
@@ -11,8 +12,6 @@
 #include <vector>
 
 namespace vortex {
-
-class Document;
 
 struct VertexPositionTarget final {
     VertexId vertexId;
