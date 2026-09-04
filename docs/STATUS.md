@@ -4,9 +4,9 @@ Last updated: 2026-09-04
 
 ## Current engineering focus
 
-**Phase 4 is active: deterministic evaluated geometry, modifier stacks, then topology-generating modifiers and cache invalidation.**
+**Phase 4 is active: topology-generating modifiers, explicit Mirror welding rules, then Triangulate and bounded evaluation caching.**
 
-The portable foundation is now strong enough to build upward from without rewriting the authoring kernel. Document ownership/history, mesh topology, Android dual-ABI compilation, static analysis, sanitizer coverage, performance instrumentation, deliberate corruption testing, authored-to-evaluated conversion, and the first non-destructive modifier stack are all live.
+The portable foundation is now strong enough to build upward from without rewriting the authoring kernel. Document ownership/history, mesh topology, Android dual-ABI compilation, static analysis, sanitizer coverage, performance instrumentation, deliberate corruption testing, authored-to-evaluated conversion, ordered modifier evaluation, Transform, and Mirror v0.1 are all live.
 
 ## Foundation state
 
@@ -59,7 +59,7 @@ Whole meshes are not retained as normal undo steps. Some complex topology operat
 
 ### Validation hardening
 
-CTest now registers **13 native suites**, including evaluator and modifier-stack coverage.
+CTest now registers **14 native suites**, including evaluator, modifier-stack, and Mirror generated-topology coverage.
 
 Coverage includes valid and deliberately malformed topology plus evaluated/modifier behavior:
 
@@ -81,7 +81,15 @@ Coverage includes valid and deliberately malformed topology plus evaluated/modif
 - Transform source immutability,
 - modifier ordering,
 - modifier cache-key invalidation,
-- invalid/null modifier diagnostics.
+- invalid/null modifier diagnostics,
+- Mirror axis and plane offset,
+- mirrored source-ID mapping,
+- reversed mirrored face cycles,
+- mirrored face-edge continuity,
+- rebuilt mirrored radial rings,
+- reflected normal data,
+- no-weld mirror-plane behavior,
+- invalid Mirror diagnostics.
 
 Private corruption access exists only in test builds through `VORTEX_ENABLE_TEST_HOOKS`.
 
@@ -132,17 +140,26 @@ A separate portable `vortex_eval` target is live.
 
 Persistent authored IDs remain 64-bit. The 32-bit evaluated indices are rebuildable implementation detail and are never persistent identity.
 
-`MeshModifier` now defines the ordered non-destructive modifier contract. `TransformModifier` is the first implementation and supports translation, XYZ rotation, and non-uniform scale while keeping authored geometry unchanged.
+`MeshModifier` defines the ordered non-destructive modifier contract.
 
-Normals are transformed with inverse scale plus rotation and normalization. Invalid/non-finite transforms fail with structured diagnostics.
+Implemented modifiers:
 
-Every evaluated snapshot now carries an `EvaluationCacheKey`:
+1. `TransformModifier` — translation, XYZ rotation, and non-uniform scale.
+2. `MirrorModifier` v0.1 — X/Y/Z mirror axis plus plane offset, generated topology duplication, reversed winding, rebuilt mirrored radial rings, and reflected normal data.
+
+Mirror operates on the current evaluated input and never writes generated topology into the authored `EditableMesh`.
+
+Mirrored generated elements preserve the stable source IDs they derive from. This deliberately allows multiple generated elements to map back to one authored identity.
+
+**Mirror v0.1 does not weld vertices on the mirror plane.** Even an exactly-on-plane vertex is duplicated. Welding is deferred until merge tolerance, collapsed topology, corner attributes, source mappings, and non-manifold outcomes have explicit tested rules.
+
+Every evaluated snapshot carries an `EvaluationCacheKey`:
 
 ```text
 MeshId + authored Mesh revision + ordered modifier-stack revision
 ```
 
-Same inputs produce the same key; authored edits, modifier configuration changes, or modifier reordering change it. Hash support exists for future caches, but **no retained evaluation cache is introduced yet**.
+Same inputs produce the same key; authored edits, modifier configuration changes, modifier axis/offset changes, or modifier reordering change it. Hash support exists for future caches, but **no retained evaluation cache is introduced yet**.
 
 See `docs/EVALUATION.md`.
 
@@ -159,7 +176,7 @@ Normal Core CI has **8 jobs**:
 7. Android ARM64 cross-compile,
 8. Release benchmark smoke + artifact.
 
-The modifier-stack PR passed all eight gates before merge.
+Mirror PR #6 passed all eight gates before merge, including the 32-bit ARMv7 compile and the dedicated generated-topology test.
 
 ## Deferred intentionally
 
@@ -173,15 +190,16 @@ Still deliberately deferred:
 - exception-heavy result architecture,
 - renderer ownership of authored data,
 - retained evaluation caches without explicit memory budgets,
-- parallel evaluation before deterministic invalidation exists.
+- parallel evaluation before deterministic invalidation exists,
+- hidden Mirror weld epsilon.
 
 ## Next engineering target
 
-1. Implement **Mirror** as the first topology-generating modifier.
-2. Preserve source mappings across generated mirrored topology.
-3. Define deterministic welding/merge behavior at the mirror plane rather than hiding tolerance rules.
+1. Define and implement **Mirror weld/merge v0.2** with explicit tolerance and deterministic collapse rules.
+2. Preserve source mappings and corner-domain attributes through welded mirror seams.
+3. Add seam/non-manifold fixtures before enabling welding by default anywhere.
 4. Implement **Triangulate** downstream while preserving authored n-gons.
-5. Add an explicitly budgeted evaluation cache only after modifier invalidation behavior is proven.
+5. Add an explicitly budgeted evaluation cache only after topology-generating modifier invalidation behavior is proven.
 6. Keep storage optimization separate and evidence-driven from benchmark results.
 
 No renderer or Android UI code should bypass the evaluator boundary.
@@ -204,4 +222,4 @@ Launch native APK
 -> Re-import and validate
 ```
 
-The native engine now owns authored mesh state, exact command/history replay, immutable evaluated snapshots, ordered modifier evaluation, and Transform. The next missing operation in that product chain is Mirror.
+The headless engine can now execute the **Add Mirror modifier** step non-destructively. The next architectural decision is deterministic mirror welding, followed by triangulation/render-oriented derived geometry.
