@@ -160,6 +160,11 @@ if(VORTEX_BUILD_TESTS)
     target_link_libraries(vortex_modifier_smoke PRIVATE Vortex3D::eval)
     target_compile_features(vortex_modifier_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.eval.modifier.smoke COMMAND vortex_modifier_smoke)
+
+    add_executable(vortex_mirror_modifier_smoke tests/mirror_modifier_smoke.cpp)
+    target_link_libraries(vortex_mirror_modifier_smoke PRIVATE Vortex3D::eval)
+    target_compile_features(vortex_mirror_modifier_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.eval.mirror.smoke COMMAND vortex_mirror_modifier_smoke)
 endif()
 
 if(VORTEX_BUILD_BENCHMARKS)
