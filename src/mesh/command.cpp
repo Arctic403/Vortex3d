@@ -1,6 +1,7 @@
 #include "vortex/mesh/command.hpp"
 
 #include <algorithm>
+#include <span>
 #include <type_traits>
 #include <unordered_set>
 #include <utility>
@@ -25,6 +26,30 @@ std::size_t estimatedSnapshotVectorBytes(const std::vector<Snapshot>& snapshots)
     return bytes;
 }
 
+template <typename IdType>
+[[nodiscard]] std::optional<std::size_t> packedIndexOf(const std::span<const IdType> ids, const IdType id) noexcept {
+    for (std::size_t index = 0; index < ids.size(); ++index) {
+        if (ids[index] == id) {
+            return index;
+        }
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::vector<bool>* ensureBoolAttribute(
+    EditableMesh& mesh,
+    const std::string_view name,
+    const AttributeDomain domain,
+    const bool defaultValue) {
+    AttributeSet& attributes = mesh.attributes();
+    if (!attributes.contains(name, domain)) {
+        if (!attributes.create<bool>(std::string{name}, domain, defaultValue)) {
+            return nullptr;
+        }
+    }
+    return attributes.values<bool>(name, domain);
+}
+
 } // namespace
 
 std::size_t MeshHistoryRecord::estimatedBytes() const noexcept {
@@ -34,6 +59,8 @@ std::size_t MeshHistoryRecord::estimatedBytes() const noexcept {
         if constexpr (std::is_same_v<Payload, VertexPositionHistory>) {
             bytes += sizeof(VertexPositionHistory);
             bytes += payload.changes.capacity() * sizeof(VertexPositionChange);
+        } else if constexpr (std::is_same_v<Payload, EdgeSharpHistory> || std::is_same_v<Payload, FaceSharpHistory>) {
+            bytes += sizeof(Payload);
         } else if constexpr (std::is_same_v<Payload, FaceExtrudeHistory>) {
             bytes += sizeof(FaceExtrudeHistory);
             bytes += estimatedAttributeRowBytes(payload.sourceFace.attributes);
@@ -102,6 +129,64 @@ std::optional<MeshCommandExecution> MoveVerticesCommand::apply(EditableMesh& mes
     if (!history.changes.empty()) {
         execution.history = MeshHistoryRecord{std::string{name()}, MeshHistoryPayload{std::move(history)}};
     }
+    return execution;
+}
+
+std::optional<MeshCommandExecution> SetEdgeSharpCommand::apply(EditableMesh& mesh) {
+    if (!edgeId_ || !mesh.hasEdge(edgeId_) || !mesh.validate()) {
+        return std::nullopt;
+    }
+
+    const auto packedIndex = packedIndexOf<EdgeId>(mesh.edgeIds(), edgeId_);
+    auto* sharpValues = ensureBoolAttribute(mesh, "sharp", AttributeDomain::Edge, false);
+    if (!packedIndex || sharpValues == nullptr || *packedIndex >= sharpValues->size()) {
+        return std::nullopt;
+    }
+
+    const bool before = static_cast<bool>((*sharpValues)[*packedIndex]);
+    MeshCommandExecution execution;
+    if (before == sharp_) {
+        return execution;
+    }
+
+    (*sharpValues)[*packedIndex] = sharp_;
+    if (!mesh.validate()) {
+        (*sharpValues)[*packedIndex] = before;
+        return std::nullopt;
+    }
+
+    execution.result.touchedEdges.push_back(edgeId_);
+    execution.history = MeshHistoryRecord{
+        std::string{name()}, MeshHistoryPayload{EdgeSharpHistory{edgeId_, before, sharp_}}};
+    return execution;
+}
+
+std::optional<MeshCommandExecution> SetFaceSharpCommand::apply(EditableMesh& mesh) {
+    if (!faceId_ || !mesh.hasFace(faceId_) || !mesh.validate()) {
+        return std::nullopt;
+    }
+
+    const auto packedIndex = packedIndexOf<FaceId>(mesh.faceIds(), faceId_);
+    auto* sharpValues = ensureBoolAttribute(mesh, "sharp_face", AttributeDomain::Face, true);
+    if (!packedIndex || sharpValues == nullptr || *packedIndex >= sharpValues->size()) {
+        return std::nullopt;
+    }
+
+    const bool before = static_cast<bool>((*sharpValues)[*packedIndex]);
+    MeshCommandExecution execution;
+    if (before == sharp_) {
+        return execution;
+    }
+
+    (*sharpValues)[*packedIndex] = sharp_;
+    if (!mesh.validate()) {
+        (*sharpValues)[*packedIndex] = before;
+        return std::nullopt;
+    }
+
+    execution.result.touchedFaces.push_back(faceId_);
+    execution.history = MeshHistoryRecord{
+        std::string{name()}, MeshHistoryPayload{FaceSharpHistory{faceId_, before, sharp_}}};
     return execution;
 }
 
@@ -333,6 +418,40 @@ bool MeshHistory::applyRecord(EditableMesh& mesh, const MeshHistoryRecord& recor
                 for (auto it = applied.rbegin(); it != applied.rend(); ++it) {
                     (void)mesh.setPosition(it->vertexId, it->before);
                 }
+                return false;
+            }
+            return true;
+        } else if constexpr (std::is_same_v<Payload, EdgeSharpHistory>) {
+            if (!mesh.hasEdge(payload.edgeId)) {
+                return false;
+            }
+            const auto packedIndex = packedIndexOf<EdgeId>(mesh.edgeIds(), payload.edgeId);
+            auto* sharpValues = ensureBoolAttribute(mesh, "sharp", AttributeDomain::Edge, false);
+            if (!packedIndex || sharpValues == nullptr || *packedIndex >= sharpValues->size()) {
+                return false;
+            }
+            const bool target = forward ? payload.after : payload.before;
+            const bool rollback = static_cast<bool>((*sharpValues)[*packedIndex]);
+            (*sharpValues)[*packedIndex] = target;
+            if (!mesh.validate()) {
+                (*sharpValues)[*packedIndex] = rollback;
+                return false;
+            }
+            return true;
+        } else if constexpr (std::is_same_v<Payload, FaceSharpHistory>) {
+            if (!mesh.hasFace(payload.faceId)) {
+                return false;
+            }
+            const auto packedIndex = packedIndexOf<FaceId>(mesh.faceIds(), payload.faceId);
+            auto* sharpValues = ensureBoolAttribute(mesh, "sharp_face", AttributeDomain::Face, true);
+            if (!packedIndex || sharpValues == nullptr || *packedIndex >= sharpValues->size()) {
+                return false;
+            }
+            const bool target = forward ? payload.after : payload.before;
+            const bool rollback = static_cast<bool>((*sharpValues)[*packedIndex]);
+            (*sharpValues)[*packedIndex] = target;
+            if (!mesh.validate()) {
+                (*sharpValues)[*packedIndex] = rollback;
                 return false;
             }
             return true;
