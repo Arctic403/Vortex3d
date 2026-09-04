@@ -118,7 +118,6 @@ using namespace vortex;
 int main() {
     using namespace vortex;
 
-    // Manifold seam fixture. Two source vertices are within tolerance but not exactly on the plane.
     EditableMesh authored;
     const VertexId a = authored.addVertex({0.0005F, 0.0F, 0.0F});
     const VertexId b = authored.addVertex({-0.0004F, 1.0F, 0.0F});
@@ -177,7 +176,6 @@ int main() {
     assert(mirroredC->x == -1.0F);
     assert(welded.vertices()[3].sourceId == welded.vertices()[2].sourceId);
 
-    // Welding only affects evaluated output; authored coordinates remain unchanged.
     assert(source->authoredMesh->position(a)->x == 0.0005F);
     assert(source->authoredMesh->position(b)->x == -0.0004F);
 
@@ -191,13 +189,12 @@ int main() {
     assert(weldedMaterials != nullptr && weldedMaterials->size() == 2U);
     assert((*weldedMaterials)[0] == 7 && (*weldedMaterials)[1] == 7);
     assert(weldedUvs != nullptr && weldedUvs->size() == 6U);
-    assert((*weldedUvs)[3] == Vec2{0.0F, 0.0F});
-    assert((*weldedUvs)[4] == Vec2{0.0F, 1.0F});
-    assert((*weldedUvs)[5] == Vec2{1.0F, 0.0F});
+    assert((*weldedUvs)[3].x == 0.0F && (*weldedUvs)[3].y == 0.0F);
+    assert((*weldedUvs)[4].x == 0.0F && (*weldedUvs)[4].y == 1.0F);
+    assert((*weldedUvs)[5].x == 1.0F && (*weldedUvs)[5].y == 0.0F);
     assert(weldedNormals != nullptr && weldedNormals->size() == 6U);
     assert((*weldedNormals)[3].x == -1.0F);
 
-    // Weld settings are part of deterministic evaluation identity.
     MirrorModifier noWeld(MirrorAxis::X, 0.0F);
     const MeshModifier* noWeldStack[] = {&noWeld};
     MeshEvaluationResult noWeldResult = MeshEvaluator::evaluate(*source, noWeldStack);
@@ -212,7 +209,6 @@ int main() {
     assert(exactOnlyResult.mesh->vertexCount() == 6U);
     assert(exactOnlyResult.mesh->cacheKey() != welded.cacheKey());
 
-    // A face fully contained in the weld plane is not duplicated back onto itself.
     EditableMesh planarAuthored;
     const VertexId p0 = planarAuthored.addVertex({0.0F, 0.0F, 0.0F});
     const VertexId p1 = planarAuthored.addVertex({0.0F, 1.0F, 0.0F});
@@ -229,7 +225,6 @@ int main() {
     assert(planarResult.mesh->cornerCount() == 3U);
     assert(validateGeneratedTopology(*planarResult.mesh));
 
-    // A shared seam edge may legitimately become a 4-use non-manifold radial ring.
     EditableMesh nonManifoldAuthored;
     const VertexId n0 = nonManifoldAuthored.addVertex({0.0F, 0.0F, 0.0F});
     const VertexId n1 = nonManifoldAuthored.addVertex({0.0F, 1.0F, 0.0F});
