@@ -30,6 +30,7 @@ public:
     MeshBlock& operator=(const MeshBlock&) = delete;
 
     [[nodiscard]] const EditableMesh* authoredMesh() const noexcept { return authoredMesh_.get(); }
+    [[nodiscard]] RuntimeDocumentId ownerDocumentRuntimeId() const noexcept { return ownerDocumentRuntimeId_; }
 
     MeshId id;
     std::string name;
@@ -38,6 +39,14 @@ public:
 private:
     friend class Document;
 
+    MeshBlock(
+        RuntimeDocumentId ownerDocumentRuntimeId,
+        MeshId id,
+        std::string name,
+        std::unique_ptr<EditableMesh> authoredMesh,
+        std::uint64_t revision = 1);
+
+    RuntimeDocumentId ownerDocumentRuntimeId_;
     std::unique_ptr<EditableMesh> authoredMesh_;
 };
 
@@ -93,11 +102,12 @@ public:
     Document();
     ~Document() = default;
 
-    Document(Document&&) noexcept = default;
-    Document& operator=(Document&&) noexcept = default;
+    Document(Document&& other) noexcept;
+    Document& operator=(Document&& other) noexcept;
     Document(const Document&) = delete;
     Document& operator=(const Document&) = delete;
 
+    [[nodiscard]] RuntimeDocumentId runtimeId() const noexcept { return runtimeId_; }
     [[nodiscard]] DocumentId id() const noexcept { return id_; }
     [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
 
@@ -161,10 +171,12 @@ private:
         return IdType{nextId_++};
     }
 
+    void resetMovedFrom() noexcept;
     void markChanged(DataKind dataKind, ChangeKind changeKind, std::uint64_t entityId);
     [[nodiscard]] bool wouldCreateParentCycle(ObjectId objectId, ObjectId parentId) const noexcept;
     [[nodiscard]] bool collectionBelongsToScene(CollectionId collectionId, SceneId sceneId) const noexcept;
 
+    RuntimeDocumentId runtimeId_;
     DocumentId id_;
     std::uint64_t nextId_ = 1;
     std::uint64_t revision_ = 0;
