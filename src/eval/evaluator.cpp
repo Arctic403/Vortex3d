@@ -89,20 +89,43 @@ void mixRevisionValue(std::uint64_t& hash, const std::uint64_t value) noexcept {
 
 } // namespace
 
-MeshEvaluationResult MeshEvaluator::evaluate(
+MeshEvaluationKeyResult MeshEvaluator::cacheKeyFor(
     const MeshBlock& source,
-    const std::span<const MeshModifier* const> modifiers) {
-    if (!source.authoredMesh) {
-        return fail(MeshEvaluationError::MissingAuthoredMesh);
+    const std::span<const MeshModifier* const> modifiers) noexcept {
+    MeshEvaluationKeyResult result;
+    if (source.authoredMesh() == nullptr) {
+        result.error = MeshEvaluationError::MissingAuthoredMesh;
+        return result;
     }
 
     std::size_t nullModifierIndex = 0;
     const auto stackRevision = modifierStackRevision(modifiers, nullModifierIndex);
     if (!stackRevision) {
-        return failModifier(MeshEvaluationError::NullModifier, ModifierApplyError::None, nullModifierIndex);
+        result.error = MeshEvaluationError::NullModifier;
+        result.modifierIndex = nullModifierIndex;
+        return result;
     }
 
-    const EditableMesh& authored = *source.authoredMesh;
+    result.key = EvaluationCacheKey{source.id, source.revision, *stackRevision};
+    return result;
+}
+
+MeshEvaluationResult MeshEvaluator::evaluate(
+    const MeshBlock& source,
+    const std::span<const MeshModifier* const> modifiers) {
+    const MeshEvaluationKeyResult keyResult = cacheKeyFor(source, modifiers);
+    if (!keyResult) {
+        MeshEvaluationResult result;
+        result.error = keyResult.error;
+        result.modifierIndex = keyResult.modifierIndex;
+        return result;
+    }
+
+    const EditableMesh* authoredMesh = source.authoredMesh();
+    if (authoredMesh == nullptr) {
+        return fail(MeshEvaluationError::MissingAuthoredMesh);
+    }
+    const EditableMesh& authored = *authoredMesh;
     if (!authored.validate()) {
         return fail(MeshEvaluationError::InvalidSourceMesh);
     }
@@ -117,7 +140,7 @@ MeshEvaluationResult MeshEvaluator::evaluate(
     const IndexMap<CornerId> cornerIndex = buildIndexMap<CornerId>(authored.cornerIds());
 
     EvaluatedMesh evaluated;
-    evaluated.cacheKey_ = EvaluationCacheKey{source.id, source.revision, *stackRevision};
+    evaluated.cacheKey_ = *keyResult.key;
     evaluated.attributes_ = authored.attributes();
 
     evaluated.vertices_.reserve(authored.vertexCount());

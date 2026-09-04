@@ -10,11 +10,12 @@ namespace {
 
 std::size_t estimatedMeshBlockDynamicBytes(const MeshBlock& mesh) noexcept {
     std::size_t bytes = mesh.name.capacity();
-    if (!mesh.authoredMesh) {
+    const EditableMesh* authoredMesh = mesh.authoredMesh();
+    if (authoredMesh == nullptr) {
         return bytes;
     }
 
-    const EditableMesh& authored = *mesh.authoredMesh;
+    const EditableMesh& authored = *authoredMesh;
     bytes += sizeof(EditableMesh);
     bytes += authored.attributes().estimatedDynamicBytes();
 

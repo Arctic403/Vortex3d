@@ -142,10 +142,10 @@ int main() {
     const MeshId meshId = document.createMesh("Mirror Weld Fixture", std::move(authored));
     assert(meshId);
     const MeshBlock* source = document.mesh(meshId);
-    assert(source != nullptr && source->authoredMesh != nullptr);
+    assert(source != nullptr && source->authoredMesh() != nullptr);
 
-    const auto sourceA = source->authoredMesh->position(a);
-    const auto sourceB = source->authoredMesh->position(b);
+    const auto sourceA = source->authoredMesh()->position(a);
+    const auto sourceB = source->authoredMesh()->position(b);
     assert(sourceA.has_value() && sourceB.has_value());
     assert(sourceA->x == 0.0005F);
     assert(sourceB->x == -0.0004F);
@@ -176,8 +176,8 @@ int main() {
     assert(mirroredC->x == -1.0F);
     assert(welded.vertices()[3].sourceId == welded.vertices()[2].sourceId);
 
-    assert(source->authoredMesh->position(a)->x == 0.0005F);
-    assert(source->authoredMesh->position(b)->x == -0.0004F);
+    assert(source->authoredMesh()->position(a)->x == 0.0005F);
+    assert(source->authoredMesh()->position(b)->x == -0.0004F);
 
     const EvaluatedMesh::Index seamEdge = edgeBetween(welded, 0U, 1U);
     assert(seamEdge != std::numeric_limits<EvaluatedMesh::Index>::max());

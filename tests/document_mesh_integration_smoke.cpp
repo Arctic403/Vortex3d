@@ -4,12 +4,14 @@
 
 #include <cassert>
 #include <iostream>
-#include <memory>
 #include <type_traits>
+#include <utility>
 
 int main() {
     static_assert(!std::is_copy_constructible_v<vortex::Document>);
-    static_assert(std::is_same_v<decltype(vortex::MeshBlock::authoredMesh), std::unique_ptr<vortex::EditableMesh>>);
+    static_assert(std::is_same_v<
+        decltype(std::declval<const vortex::MeshBlock&>().authoredMesh()),
+        const vortex::EditableMesh*>);
 
     vortex::EditableMesh authored;
     const auto v0 = authored.addVertex({-1.0F, 0.0F, -1.0F});

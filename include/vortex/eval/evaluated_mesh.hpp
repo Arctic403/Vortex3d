@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <span>
 #include <vector>
@@ -82,6 +83,41 @@ public:
     [[nodiscard]] std::size_t cornerCount() const noexcept { return corners_.size(); }
 
     [[nodiscard]] const AttributeSet& attributes() const noexcept { return attributes_; }
+
+    // Conservative retained-memory estimate for cache budgeting. It includes this value,
+    // vector capacities, and AttributeSet's dynamic-memory estimate. It is intentionally
+    // allocator-agnostic rather than pretending to be an exact heap measurement.
+    [[nodiscard]] std::size_t estimatedRetainedBytes() const noexcept {
+        constexpr std::size_t maximum = std::numeric_limits<std::size_t>::max();
+        std::size_t bytes = sizeof(EvaluatedMesh);
+
+        const auto addBytes = [&bytes](const std::size_t amount) noexcept {
+            constexpr std::size_t maxValue = std::numeric_limits<std::size_t>::max();
+            if (amount > maxValue - bytes) {
+                bytes = maxValue;
+                return;
+            }
+            bytes += amount;
+        };
+        const auto addCapacity = [&addBytes](const std::size_t capacity, const std::size_t elementBytes) noexcept {
+            constexpr std::size_t maxValue = std::numeric_limits<std::size_t>::max();
+            if (elementBytes != 0U && capacity > maxValue / elementBytes) {
+                addBytes(maxValue);
+                return;
+            }
+            addBytes(capacity * elementBytes);
+        };
+
+        addBytes(attributes_.estimatedDynamicBytes());
+        if (bytes == maximum) {
+            return maximum;
+        }
+        addCapacity(vertices_.capacity(), sizeof(EvaluatedVertex));
+        addCapacity(edges_.capacity(), sizeof(EvaluatedEdge));
+        addCapacity(faces_.capacity(), sizeof(EvaluatedFace));
+        addCapacity(corners_.capacity(), sizeof(EvaluatedCorner));
+        return bytes;
+    }
 
     [[nodiscard]] std::optional<Vec3> position(const Index index) const noexcept {
         const auto* positions = attributes_.values<Vec3>("position", AttributeDomain::Vertex);
