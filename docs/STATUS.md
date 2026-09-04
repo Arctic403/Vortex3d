@@ -4,9 +4,9 @@ Last updated: 2026-09-04
 
 ## Current engineering focus
 
-**Phase 4 is active: topology-generating modifiers are live; next is Triangulate, then bounded evaluation caching.**
+**Phase 4 is active: the evaluated modifier chain now reaches render-oriented triangles; next is an explicitly byte-budgeted evaluation cache, then derived normals.**
 
-The portable foundation is now strong enough to build upward from without rewriting the authoring kernel. Document ownership/history, mesh topology, Android dual-ABI compilation, static analysis, sanitizer coverage, performance instrumentation, deliberate corruption testing, authored-to-evaluated conversion, ordered modifier evaluation, Transform, Mirror, and explicit Mirror seam welding are all live.
+The portable foundation is strong enough to build upward from without rewriting the authoring kernel. Document ownership/history, mesh topology, Android dual-ABI compilation, static analysis, sanitizer coverage, performance instrumentation, deliberate corruption testing, authored-to-evaluated conversion, ordered modifier evaluation, Transform, Mirror, Mirror welding, and non-destructive Triangulate are all live.
 
 ## Foundation state
 
@@ -59,7 +59,7 @@ Whole meshes are not retained as normal undo steps. Some complex topology operat
 
 ### Validation and evaluation coverage
 
-CTest now registers **15 native suites**.
+CTest now registers **16 native suites**.
 
 Coverage includes authored topology, deliberate corruption, command/history replay, evaluation, and modifier-generated topology:
 
@@ -76,19 +76,17 @@ Coverage includes authored topology, deliberate corruption, command/history repl
 - illegal deletion order,
 - authored-to-evaluated conversion and revision behavior,
 - Transform source immutability and cache invalidation,
-- Mirror axis / plane offset / source mappings,
-- reversed mirrored face cycles and face-edge continuity,
-- rebuilt mirrored radial rings,
-- reflected normal data,
-- no-weld Mirror behavior,
-- explicit Mirror weld tolerance and exact-only tolerance,
-- seam projection without authored mutation,
-- seam-edge reuse,
-- fully planar face suppression,
-- reversed Corner/UV attribute mapping,
-- two-use manifold welded seams,
-- four-use non-manifold welded seams,
-- invalid weld diagnostics.
+- Mirror no-weld and explicit weld behavior,
+- seam projection / edge reuse / planar face suppression,
+- manifold and non-manifold welded seams,
+- concave n-gon ear clipping,
+- exact `n - 2` generated triangle count,
+- generated Face/Corner source mapping,
+- material and UV remapping through triangulation,
+- source-less generated diagonal edge identity,
+- `Transform -> Mirror Weld -> Triangulate`,
+- authored n-gon preservation,
+- explicit degenerate-polygon triangulation failure.
 
 Private corruption access exists only in test builds through `VORTEX_ENABLE_TEST_HOOKS`.
 
@@ -132,13 +130,14 @@ Persistent authored IDs remain 64-bit. Generated connectivity uses checked packe
 Implemented modifiers:
 
 1. `TransformModifier` — translation, XYZ rotation, non-uniform scale.
-2. `MirrorModifier` v0.2 — X/Y/Z axis, plane offset, no-weld duplication, plus optional explicit seam welding.
+2. `MirrorModifier` v0.2 — X/Y/Z axis, plane offset, no-weld duplication, optional explicit seam welding.
+3. `TriangulateModifier` v0.1 — deterministic evaluated-only triangulation with concave n-gon support.
 
-Mirror welding uses `MirrorWeldSettings { enabled, tolerance }`. There is **no hidden epsilon**. `distance <= tolerance` welds; `tolerance == 0` means exact-only welding.
+Triangulate uses deterministic ear clipping after dominant-axis projection from a Newell face normal. Authored n-gons are not changed.
 
-The deterministic survivor is the source evaluated vertex. It is projected exactly onto the mirror plane in evaluated output only. Seam edges are reused when both endpoints weld; fully seam faces are not duplicated; mirrored Corner attributes follow reversed source-corner order; radial rings are rebuilt globally and may form supported non-manifold rings.
+Generated triangle faces retain their source `FaceId`; generated corners retain their source `CornerId`. Existing boundary edges retain source `EdgeId` mappings. New diagonal edges intentionally have an invalid source `EdgeId` because there is no corresponding authored edge.
 
-Authored `EditableMesh` remains unchanged throughout evaluation.
+`AttributeSet::remapDomain()` now rebuilds generated Face/Corner attribute storage directly from source-index mappings, avoiding per-corner `AttributeRow` materialization during topology-generating evaluation.
 
 Every evaluated snapshot carries:
 
@@ -146,7 +145,7 @@ Every evaluated snapshot carries:
 MeshId + authored Mesh revision + ordered modifier-stack revision
 ```
 
-Mirror axis, offset, weld enablement, and weld tolerance participate in evaluation identity. No retained evaluation cache exists yet.
+Transform/Mirror/Triangulate stack identity participates in this key. No retained evaluation cache exists yet.
 
 See `docs/EVALUATION.md`.
 
@@ -163,7 +162,7 @@ Normal Core CI has **8 jobs**:
 7. Android ARM64 cross-compile,
 8. Release benchmark smoke + artifact.
 
-Mirror weld PR #7 passed all eight gates before merge, including the dedicated seam/non-manifold suite under sanitizers and the ARMv7 32-bit build.
+Triangulate PR #8 passed all eight gates before merge, including the concave/stacked triangulation suite under sanitizers and both Android ABIs.
 
 ## Deferred intentionally
 
@@ -178,14 +177,14 @@ Still deliberately deferred:
 - renderer ownership of authored data,
 - retained evaluation caches without explicit memory budgets,
 - parallel evaluation before deterministic invalidation exists,
-- broad spatial welding/deduplication unrelated to the configured Mirror seam.
+- broad self-intersecting polygon triangulation guarantees.
 
 ## Next engineering target
 
-1. Implement **Triangulate** as derived evaluated topology while preserving authored n-gons.
-2. Define deterministic source mappings for generated triangles/corners.
-3. Add concave n-gon and modifier-stack fixtures (`Transform -> Mirror Weld -> Triangulate`).
-4. Add an explicitly byte-budgeted evaluation cache after topology-generating invalidation is proven.
+1. Add an explicitly **byte-budgeted evaluated-mesh cache** keyed by the existing `EvaluationCacheKey`.
+2. Define deterministic cache eviction and ownership suitable for 32-bit Android.
+3. Add cache hit/miss/invalidation tests across authored edits and modifier changes.
+4. Implement **Recalculate Normals** as derived evaluated attributes.
 5. Keep storage optimization separate and evidence-driven from benchmark results.
 
 No renderer or Android UI code should bypass the evaluator boundary.
@@ -208,4 +207,4 @@ Launch native APK
 -> Re-import and validate
 ```
 
-The headless engine now has deterministic no-weld and welded Mirror behavior. The next derived-geometry step is Triangulate, which will prepare evaluated topology for render/export consumers without destroying authored n-gons.
+The headless engine can now produce deterministic welded mirrored **triangles** downstream while keeping the editable source as n-gons. The next infrastructure step is bounded reuse of those evaluated results without letting generated geometry consume unbounded ARMv7 memory.
