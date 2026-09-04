@@ -5,7 +5,9 @@
 
 #include <cassert>
 #include <iostream>
+#include <random>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -102,6 +104,66 @@ void testMakeUniqueHistoryMovesOwnership() {
     assert(document.validate());
 }
 
+
+void testRandomizedUndoRedoCycles() {
+    vortex::Document document;
+    const auto meshA = document.createMesh("A");
+    const auto meshB = document.createMesh("B");
+    const auto parentA = document.createObject("Parent A", meshA);
+    const auto parentB = document.createObject("Parent B", meshB);
+    const auto child = document.createObject("Child", meshA);
+    assert(meshA && meshB && parentA && parentB && child);
+
+    const std::string baselineName = document.object(child)->name;
+    const vortex::ObjectId baselineParent = document.object(child)->parentId;
+    const vortex::MeshId baselineMesh = document.object(child)->meshId;
+
+    vortex::DocumentHistory history(2U * 1024U * 1024U);
+    std::mt19937 rng(0x50334834U);
+    std::size_t applied = 0;
+
+    for (std::size_t step = 0; step < 160U; ++step) {
+        const std::uint32_t action = rng() % 3U;
+        bool ok = false;
+        if (action == 0U) {
+            vortex::RenameObjectCommand command{child, "Child-" + std::to_string(step)};
+            ok = history.execute(document, command);
+        } else if (action == 1U) {
+            const vortex::ObjectId target = (rng() & 1U) != 0U ? parentA : parentB;
+            vortex::SetObjectParentCommand command{child, target};
+            ok = history.execute(document, command);
+        } else {
+            const vortex::MeshId target = (rng() & 1U) != 0U ? meshA : meshB;
+            vortex::SetObjectMeshCommand command{child, target};
+            ok = history.execute(document, command);
+        }
+        assert(ok);
+        assert(document.validate());
+        applied = history.undoCount();
+    }
+
+    assert(applied >= 100U);
+    const std::string finalName = document.object(child)->name;
+    const vortex::ObjectId finalParent = document.object(child)->parentId;
+    const vortex::MeshId finalMesh = document.object(child)->meshId;
+
+    while (history.undoCount() != 0U) {
+        assert(history.undo(document));
+        assert(document.validate());
+    }
+    assert(document.object(child)->name == baselineName);
+    assert(document.object(child)->parentId == baselineParent);
+    assert(document.object(child)->meshId == baselineMesh);
+
+    while (history.redoCount() != 0U) {
+        assert(history.redo(document));
+        assert(document.validate());
+    }
+    assert(document.object(child)->name == finalName);
+    assert(document.object(child)->parentId == finalParent);
+    assert(document.object(child)->meshId == finalMesh);
+}
+
 void testHistoryIsBoundToDocumentInstance() {
     vortex::Document first;
     vortex::Document second;
@@ -124,6 +186,7 @@ int main() {
     testMetadataHistoryAndBudget();
     testMakeUniqueHistoryMovesOwnership();
     testHistoryIsBoundToDocumentInstance();
+    testRandomizedUndoRedoCycles();
     std::cout << "Vortex3D Document history smoke test passed\n";
     return 0;
 }

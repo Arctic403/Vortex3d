@@ -11,7 +11,8 @@ Post-audit hardening status:
 - [x] Phase 1 — runtime Document identity and cross-Document cache/history safety.
 - [x] Phase 2 — authored/evaluated validator hardening merged and regression-covered.
 - [x] Phase 3 — bounded change journal, mesh evaluation-revision split, and no-op mutation cleanup implemented and regression-covered.
-- [ ] Phases 4-6 remain separate patches; fuzz/tooling expansion, unified editor history, and repository protection are not mixed into Phase 3.
+- [x] Phase 4 — deterministic randomized history/evaluation stress coverage and audit documentation added without changing authored/evaluated ownership rules.
+- [ ] Phases 5-6 remain separate patches; unified editor history and repository protection are not mixed into Phase 4.
 
 ## Foundation state
 
@@ -131,7 +132,7 @@ See `docs/VALIDATION.md` for the exact invariant and diagnostic contract.
 
 ## Validation and evaluation coverage
 
-CTest registers **22 native suites** after Phase 3.
+CTest registers **23 native suites** after the Phase 4 hardening audit.
 
 Coverage includes:
 
@@ -164,7 +165,8 @@ Coverage includes:
 - derived flat/smooth Corner normals and shading boundaries,
 - deliberate evaluated edge/face/radial/attribute/orphan-corner corruption,
 - rejection of a modifier that returns success with invalid generated topology,
-- identical structured validation diagnostics through direct evaluation and `EvaluationCache`.
+- identical structured validation diagnostics through direct evaluation and `EvaluationCache`,
+- 200 deterministic randomized Transform/Mirror/Triangulate evaluation stacks proving repeated-evaluation equivalence and authored-source immutability.
 
 Private corruption access exists only in test builds through `VORTEX_ENABLE_TEST_HOOKS`.
 

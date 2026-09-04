@@ -210,6 +210,11 @@ if(VORTEX_BUILD_TESTS)
     target_link_libraries(vortex_evaluated_mesh_validation_smoke PRIVATE Vortex3D::eval)
     target_compile_features(vortex_evaluated_mesh_validation_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.eval.validation.smoke COMMAND vortex_evaluated_mesh_validation_smoke)
+
+    add_executable(vortex_evaluation_randomized_smoke tests/evaluation_randomized_smoke.cpp)
+    target_link_libraries(vortex_evaluation_randomized_smoke PRIVATE Vortex3D::eval)
+    target_compile_features(vortex_evaluation_randomized_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.eval.randomized.smoke COMMAND vortex_evaluation_randomized_smoke)
 endif()
 
 if(VORTEX_BUILD_BENCHMARKS)
