@@ -4,9 +4,9 @@ Last updated: 2026-09-04
 
 ## Current engineering focus
 
-**Phase 4 is active: the evaluated modifier chain now reaches render-oriented triangles; next is an explicitly byte-budgeted evaluation cache, then derived normals.**
+**Phase 4 is active: bounded evaluated-geometry reuse is live; next is Recalculate Normals, then renderer-facing snapshot/upload preparation.**
 
-The portable foundation is strong enough to build upward from without rewriting the authoring kernel. Document ownership/history, mesh topology, Android dual-ABI compilation, static analysis, sanitizer coverage, performance instrumentation, deliberate corruption testing, authored-to-evaluated conversion, ordered modifier evaluation, Transform, Mirror, Mirror welding, and non-destructive Triangulate are all live.
+The portable foundation is strong enough to build upward from without rewriting the authoring kernel. Document ownership/history, mesh topology, Android dual-ABI compilation, static analysis, sanitizer coverage, performance instrumentation, deliberate corruption testing, authored-to-evaluated conversion, ordered modifier evaluation, Transform, Mirror, Mirror welding, non-destructive Triangulate, and a byte-budgeted evaluation cache are all live.
 
 ## Foundation state
 
@@ -28,7 +28,8 @@ The portable foundation is strong enough to build upward from without rewriting 
 - [x] shared mesh instances through `MeshId` references.
 - [x] explicit Make Unique behavior.
 - [x] move-only `Document`.
-- [x] `MeshBlock` uniquely owns authored `EditableMesh` data.
+- [x] `MeshBlock` uniquely owns authored `EditableMesh` data through a private `unique_ptr`.
+- [x] const `MeshBlock` access propagates constness to authored geometry.
 - [x] ordinary Document undo uses reversible deltas rather than retained whole-Document snapshots.
 - [x] global Document history has an explicit retained-byte budget.
 
@@ -59,9 +60,9 @@ Whole meshes are not retained as normal undo steps. Some complex topology operat
 
 ### Validation and evaluation coverage
 
-CTest now registers **16 native suites**.
+CTest now registers **17 native suites**.
 
-Coverage includes authored topology, deliberate corruption, command/history replay, evaluation, and modifier-generated topology:
+Coverage includes authored topology, deliberate corruption, command/history replay, evaluation, modifier-generated topology, and bounded evaluated-result reuse:
 
 - triangle / quad / n-gon / cube,
 - shared and non-manifold radial edges,
@@ -86,7 +87,15 @@ Coverage includes authored topology, deliberate corruption, command/history repl
 - source-less generated diagonal edge identity,
 - `Transform -> Mirror Weld -> Triangulate`,
 - authored n-gon preservation,
-- explicit degenerate-polygon triangulation failure.
+- explicit degenerate-polygon triangulation failure,
+- evaluation cache hit/miss behavior,
+- deterministic LRU eviction,
+- cache retained-byte budget enforcement,
+- oversized result non-retention,
+- zero-budget operation,
+- authored-revision cache invalidation,
+- old snapshot survival across edits and eviction,
+- per-mesh explicit cache invalidation.
 
 Private corruption access exists only in test builds through `VORTEX_ENABLE_TEST_HOOKS`.
 
@@ -121,7 +130,7 @@ bucket pointer           8 bytes
 
 These measurements make corner/hash-heavy storage a future optimization candidate, but they do not justify a container rewrite by themselves.
 
-## Evaluated geometry and modifiers
+## Evaluated geometry, modifiers, and cache
 
 A separate portable `vortex_eval` target owns rebuildable generated geometry.
 
@@ -137,7 +146,7 @@ Triangulate uses deterministic ear clipping after dominant-axis projection from 
 
 Generated triangle faces retain their source `FaceId`; generated corners retain their source `CornerId`. Existing boundary edges retain source `EdgeId` mappings. New diagonal edges intentionally have an invalid source `EdgeId` because there is no corresponding authored edge.
 
-`AttributeSet::remapDomain()` now rebuilds generated Face/Corner attribute storage directly from source-index mappings, avoiding per-corner `AttributeRow` materialization during topology-generating evaluation.
+`AttributeSet::remapDomain()` rebuilds generated Face/Corner attribute storage directly from source-index mappings, avoiding per-corner `AttributeRow` materialization during topology-generating evaluation.
 
 Every evaluated snapshot carries:
 
@@ -145,9 +154,27 @@ Every evaluated snapshot carries:
 MeshId + authored Mesh revision + ordered modifier-stack revision
 ```
 
-Transform/Mirror/Triangulate stack identity participates in this key. No retained evaluation cache exists yet.
+### Evaluation Cache v0.1
 
-See `docs/EVALUATION.md`.
+`EvaluationCache` retains immutable `EvaluatedMesh` snapshots under an explicit byte budget.
+
+- default budget: **16 MiB**,
+- caller-configurable budget,
+- deterministic LRU eviction,
+- exact-key hit reuse,
+- zero budget disables retention but not evaluation,
+- oversized evaluated results are returned but not cached,
+- `eraseMesh(MeshId)` invalidates all retained revisions/stacks for one authored mesh,
+- externally held `shared_ptr<const EvaluatedMesh>` snapshots remain valid after cache eviction,
+- budget accounting covers cache-retained ownership only,
+- `EvaluatedMesh::estimatedRetainedBytes()` uses topology capacities + attribute dynamic storage with saturating `size_t` arithmetic,
+- hit/miss/eviction counters are available for diagnostics.
+
+The cache is intentionally single-threaded in v0.1.
+
+The cache patch also hardened authored ownership: callers can no longer obtain mutable geometry through a `const MeshBlock` and bypass revision advancement.
+
+See `docs/EVALUATION.md` and `docs/OWNERSHIP.md`.
 
 ## Current CI gate
 
@@ -162,7 +189,7 @@ Normal Core CI has **8 jobs**:
 7. Android ARM64 cross-compile,
 8. Release benchmark smoke + artifact.
 
-Triangulate PR #8 passed all eight gates before merge, including the concave/stacked triangulation suite under sanitizers and both Android ABIs.
+Evaluation Cache PR #9 passed all eight gates before merge, including suite #17 under sanitizers, clang-tidy, and both Android ABIs.
 
 ## Deferred intentionally
 
@@ -175,16 +202,17 @@ Still deliberately deferred:
 - storage rewrite without larger benchmark evidence,
 - exception-heavy result architecture,
 - renderer ownership of authored data,
-- retained evaluation caches without explicit memory budgets,
-- parallel evaluation before deterministic invalidation exists,
+- parallel evaluation/cache mutation before a deterministic concurrency model exists,
+- allocator-exact cache telemetry,
+- unbounded renderer/export snapshot pinning,
 - broad self-intersecting polygon triangulation guarantees.
 
 ## Next engineering target
 
-1. Add an explicitly **byte-budgeted evaluated-mesh cache** keyed by the existing `EvaluationCacheKey`.
-2. Define deterministic cache eviction and ownership suitable for 32-bit Android.
-3. Add cache hit/miss/invalidation tests across authored edits and modifier changes.
-4. Implement **Recalculate Normals** as derived evaluated attributes.
+1. Implement **Recalculate Normals** as derived evaluated attributes.
+2. Define explicit flat versus smooth normal policy rather than inheriting accidental authored data.
+3. Add cube, mirrored seam, non-manifold, and triangulated normal fixtures.
+4. Prepare a narrow renderer-facing immutable evaluated snapshot/upload contract.
 5. Keep storage optimization separate and evidence-driven from benchmark results.
 
 No renderer or Android UI code should bypass the evaluator boundary.
@@ -207,4 +235,4 @@ Launch native APK
 -> Re-import and validate
 ```
 
-The headless engine can now produce deterministic welded mirrored **triangles** downstream while keeping the editable source as n-gons. The next infrastructure step is bounded reuse of those evaluated results without letting generated geometry consume unbounded ARMv7 memory.
+The headless engine can now produce deterministic welded mirrored triangles and reuse them under a bounded memory policy while keeping the editable source as n-gons. The next derived-geometry step is trustworthy generated normals for render/export consumers.
