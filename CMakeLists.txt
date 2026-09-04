@@ -14,6 +14,7 @@ add_library(vortex_core STATIC
     src/core/document.cpp
     src/mesh/editable_mesh.cpp
     src/mesh/extrude.cpp
+    src/mesh/command.cpp
 )
 
 add_library(Vortex3D::core ALIAS vortex_core)
@@ -95,4 +96,12 @@ if(VORTEX_BUILD_TESTS)
     target_compile_features(vortex_donor_contract_smoke PRIVATE cxx_std_20)
 
     add_test(NAME vortex.donor.contract.smoke COMMAND vortex_donor_contract_smoke)
+
+    add_executable(vortex_mesh_command_smoke
+        tests/mesh_command_smoke.cpp
+    )
+    target_link_libraries(vortex_mesh_command_smoke PRIVATE Vortex3D::core)
+    target_compile_features(vortex_mesh_command_smoke PRIVATE cxx_std_20)
+
+    add_test(NAME vortex.mesh.command.smoke COMMAND vortex_mesh_command_smoke)
 endif()
