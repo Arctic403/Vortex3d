@@ -1,4 +1,6 @@
+#include "vortex/core/command.hpp"
 #include "vortex/core/document.hpp"
+#include "vortex/core/document_commands.hpp"
 #include "vortex/eval/evaluation_cache.hpp"
 #include "vortex/eval/modifier.hpp"
 #include "vortex/mesh/command.hpp"
@@ -8,19 +10,20 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <utility>
 #include <vector>
 
 namespace {
 
-vortex::MeshId createQuad(vortex::Document& document) {
+vortex::MeshId createQuad(vortex::Document& document, const float xOffset = 0.0F) {
     using namespace vortex;
 
     EditableMesh mesh;
-    const VertexId a = mesh.addVertex({0.0F, 0.0F, 0.0F});
-    const VertexId b = mesh.addVertex({1.0F, 0.0F, 0.0F});
-    const VertexId c = mesh.addVertex({1.0F, 1.0F, 0.0F});
-    const VertexId d = mesh.addVertex({0.0F, 1.0F, 0.0F});
+    const VertexId a = mesh.addVertex({xOffset + 0.0F, 0.0F, 0.0F});
+    const VertexId b = mesh.addVertex({xOffset + 1.0F, 0.0F, 0.0F});
+    const VertexId c = mesh.addVertex({xOffset + 1.0F, 1.0F, 0.0F});
+    const VertexId d = mesh.addVertex({xOffset + 0.0F, 1.0F, 0.0F});
     const FaceId face = mesh.addFace({a, b, c, d});
     assert(face);
     assert(mesh.validate());
@@ -35,16 +38,56 @@ int main() {
     Document document;
     const MeshId meshId = createQuad(document);
     assert(meshId);
+    assert(document.runtimeId());
 
     const MeshBlock* source = document.mesh(meshId);
     assert(source != nullptr);
+    assert(source->ownerDocumentRuntimeId() == document.runtimeId());
 
     MeshEvaluationResult baseline = MeshEvaluator::evaluate(*source);
     assert(baseline);
     assert(baseline.mesh.has_value());
+    assert(baseline.mesh->sourceDocumentRuntimeId() == document.runtimeId());
     const std::size_t oneSnapshotBytes = baseline.mesh->estimatedRetainedBytes();
     assert(oneSnapshotBytes > 0U);
-    assert(oneSnapshotBytes <= std::numeric_limits<std::size_t>::max() / 2U);
+    assert(oneSnapshotBytes <= std::numeric_limits<std::size_t>::max() / 4U);
+
+    // Two Documents intentionally overlap in numeric MeshId and revision. Runtime Document
+    // identity must keep their cache entries distinct even when one cache serves both.
+    Document otherDocument;
+    const MeshId otherMeshId = createQuad(otherDocument, 10.0F);
+    assert(otherMeshId == meshId);
+    assert(otherDocument.runtimeId() != document.runtimeId());
+    const MeshBlock* otherSource = otherDocument.mesh(otherMeshId);
+    assert(otherSource != nullptr);
+    assert(otherSource->revision == source->revision);
+    assert(otherSource->ownerDocumentRuntimeId() == otherDocument.runtimeId());
+
+    EvaluationCache crossDocumentCache(oneSnapshotBytes * 4U);
+    CachedEvaluationResult documentAFirst = crossDocumentCache.evaluate(*source);
+    assert(documentAFirst);
+    assert(!documentAFirst.cacheHit);
+    CachedEvaluationResult documentBFirst = crossDocumentCache.evaluate(*otherSource);
+    assert(documentBFirst);
+    assert(!documentBFirst.cacheHit);
+    assert(documentAFirst.mesh->cacheKey() != documentBFirst.mesh->cacheKey());
+    assert(documentAFirst.mesh->sourceMeshId() == documentBFirst.mesh->sourceMeshId());
+    assert(documentAFirst.mesh->sourceRevision() == documentBFirst.mesh->sourceRevision());
+    assert(documentAFirst.mesh->sourceDocumentRuntimeId() != documentBFirst.mesh->sourceDocumentRuntimeId());
+    const auto documentBPosition = documentBFirst.mesh->position(0);
+    assert(documentBPosition.has_value());
+    assert(documentBPosition->x == 10.0F);
+    CachedEvaluationResult documentASecond = crossDocumentCache.evaluate(*source);
+    assert(documentASecond.cacheHit);
+    assert(documentASecond.mesh == documentAFirst.mesh);
+    assert(crossDocumentCache.entryCount() == 2U);
+
+    // A manually detached MeshBlock has no owning Document runtime identity and cannot enter
+    // the evaluator/cache identity space accidentally.
+    MeshBlock detachedBlock(MeshId{999}, "Detached", std::make_unique<EditableMesh>());
+    const MeshEvaluationKeyResult detachedKey = MeshEvaluator::cacheKeyFor(detachedBlock);
+    assert(!detachedKey);
+    assert(detachedKey.error == MeshEvaluationError::InvalidSourceIdentity);
 
     EvaluationCache cache(oneSnapshotBytes * 2U);
 
@@ -136,6 +179,7 @@ int main() {
     MeshHistory history;
     MoveVerticesCommand move({VertexPositionTarget{originalVertexId, {4.0F, 0.0F, 0.0F}}});
     assert(document.executeMeshCommand(meshId, history, move));
+    assert(history.ownerDocumentRuntimeId() == document.runtimeId());
 
     source = document.mesh(meshId);
     assert(source != nullptr);
@@ -170,6 +214,85 @@ int main() {
     assert(invalid.error == MeshEvaluationError::NullModifier);
     assert(invalid.modifierIndex.has_value());
     assert(*invalid.modifierIndex == 0U);
+
+    // Runtime identity follows move construction, so existing cache and MeshHistory state
+    // continues to address the moved-to Document rather than its old object address.
+    EvaluationCache moveCache(oneSnapshotBytes * 2U);
+    source = document.mesh(meshId);
+    assert(source != nullptr);
+    CachedEvaluationResult beforeDocumentMove = moveCache.evaluate(*source);
+    assert(beforeDocumentMove);
+    assert(!beforeDocumentMove.cacheHit);
+    const RuntimeDocumentId originalRuntimeId = document.runtimeId();
+
+    Document movedDocument = std::move(document);
+    assert(movedDocument.runtimeId() == originalRuntimeId);
+    assert(document.runtimeId() != originalRuntimeId);
+    assert(document.validate());
+    assert(movedDocument.validate());
+
+    source = movedDocument.mesh(meshId);
+    assert(source != nullptr);
+    assert(source->ownerDocumentRuntimeId() == originalRuntimeId);
+    CachedEvaluationResult afterDocumentMove = moveCache.evaluate(*source);
+    assert(afterDocumentMove.cacheHit);
+    assert(afterDocumentMove.mesh == beforeDocumentMove.mesh);
+    assert(movedDocument.undoMeshCommand(meshId, history));
+
+    // The moved-from Document is reset as a fresh valid lineage. It may reuse the same numeric
+    // MeshId, but neither cache identity nor MeshHistory binding can mistake it for the old one.
+    const MeshId movedFromMeshId = createQuad(document, 20.0F);
+    assert(movedFromMeshId == meshId);
+    const MeshBlock* movedFromSource = document.mesh(movedFromMeshId);
+    assert(movedFromSource != nullptr);
+    CachedEvaluationResult movedFromEvaluation = moveCache.evaluate(*movedFromSource);
+    assert(movedFromEvaluation);
+    assert(!movedFromEvaluation.cacheHit);
+    assert(movedFromEvaluation.mesh->sourceDocumentRuntimeId() == document.runtimeId());
+    const EditableMesh* movedFromAuthored = document.authoredMesh(movedFromMeshId);
+    assert(movedFromAuthored != nullptr);
+    const VertexId movedFromVertexId = movedFromAuthored->vertexIds().front();
+    MoveVerticesCommand wrongDocumentMove({VertexPositionTarget{movedFromVertexId, {25.0F, 0.0F, 0.0F}}});
+    assert(!document.executeMeshCommand(movedFromMeshId, history, wrongDocumentMove));
+
+    // Move assignment transfers the same lineage too; the already-bound MeshHistory can redo
+    // against the assigned-to object and rejects the freshly reset moved-from object.
+    const RuntimeDocumentId moveAssignedRuntimeId = movedDocument.runtimeId();
+    Document assignedDocument;
+    assignedDocument = std::move(movedDocument);
+    assert(assignedDocument.runtimeId() == moveAssignedRuntimeId);
+    assert(movedDocument.runtimeId() != moveAssignedRuntimeId);
+    assert(assignedDocument.redoMeshCommand(meshId, history));
+    assert(!movedDocument.redoMeshCommand(meshId, history));
+
+    // DocumentHistory uses the same runtime lineage identity rather than a Document address.
+    Document metadataDocument;
+    const MeshId metadataMeshId = createQuad(metadataDocument, 30.0F);
+    const ObjectId metadataObjectId = metadataDocument.createObject("Before", metadataMeshId);
+    assert(metadataObjectId);
+    DocumentHistory documentHistory;
+    RenameObjectCommand rename(metadataObjectId, "After");
+    assert(documentHistory.execute(metadataDocument, rename));
+    const RuntimeDocumentId metadataRuntimeId = metadataDocument.runtimeId();
+    assert(documentHistory.ownerDocumentRuntimeId() == metadataRuntimeId);
+
+    Document movedMetadataDocument = std::move(metadataDocument);
+    assert(movedMetadataDocument.runtimeId() == metadataRuntimeId);
+    assert(metadataDocument.runtimeId() != metadataRuntimeId);
+    assert(documentHistory.undo(movedMetadataDocument));
+    const ObjectBlock* beforeRename = movedMetadataDocument.object(metadataObjectId);
+    assert(beforeRename != nullptr);
+    assert(beforeRename->name == "Before");
+
+    Document assignedMetadataDocument;
+    assignedMetadataDocument = std::move(movedMetadataDocument);
+    assert(assignedMetadataDocument.runtimeId() == metadataRuntimeId);
+    assert(movedMetadataDocument.runtimeId() != metadataRuntimeId);
+    assert(documentHistory.redo(assignedMetadataDocument));
+    const ObjectBlock* afterRename = assignedMetadataDocument.object(metadataObjectId);
+    assert(afterRename != nullptr);
+    assert(afterRename->name == "After");
+    assert(!documentHistory.undo(movedMetadataDocument));
 
     return 0;
 }
