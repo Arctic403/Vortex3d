@@ -25,6 +25,7 @@ private:
     value_type value_ = 0;
 };
 
+struct RuntimeDocumentTag;
 struct DocumentTag;
 struct SceneTag;
 struct ObjectTag;
@@ -37,6 +38,9 @@ struct EdgeTag;
 struct FaceTag;
 struct CornerTag;
 
+// Process-local identity for one live Document lineage. It is never serialized and exists
+// specifically to disambiguate otherwise-overlapping stable IDs from different Documents.
+using RuntimeDocumentId = Id<RuntimeDocumentTag>;
 using DocumentId = Id<DocumentTag>;
 using SceneId = Id<SceneTag>;
 using ObjectId = Id<ObjectTag>;

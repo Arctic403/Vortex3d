@@ -38,9 +38,24 @@ Nothing in `vortex_core` depends on the evaluator, cache, or renderer.
 
 ## Current evaluated representation
 
-Evaluation starts with a deterministic one-to-one conversion from a validated `EditableMesh` and preserves source `MeshId`, source mesh revision, source Vertex/Edge/Face/Corner IDs, generic attribute layers, authored n-gon boundaries, face cycles, and radial edge topology.
+Evaluation starts with a deterministic one-to-one conversion from a validated `EditableMesh` and preserves source runtime Document lineage, source `MeshId`, source mesh revision, source Vertex/Edge/Face/Corner IDs, generic attribute layers, authored n-gon boundaries, face cycles, and radial edge topology.
 
 Generated topology is independent from authored container addresses and hash nodes.
+
+## Runtime Document identity
+
+Stable IDs are scoped to one authored `Document`; separate Documents may legitimately contain the same numeric `MeshId`, revision, or element IDs. Evaluation therefore also carries a process-local `RuntimeDocumentId` identifying the live Document lineage that owns a `MeshBlock`.
+
+`RuntimeDocumentId` is runtime-only state:
+
+- it is never serialized into a project,
+- every newly constructed live Document receives a distinct non-zero value,
+- move construction and move assignment transfer the lineage identity with the authored state,
+- the moved-from Document is reset to a fresh valid empty lineage,
+- a resident `MeshBlock` must carry the same runtime lineage as its owning Document,
+- manually detached `MeshBlock` values without an owning runtime identity are rejected by evaluation rather than entering cache identity accidentally.
+
+This prevents a cache shared by multiple open Documents from treating otherwise identical `{MeshId, revision, modifiers}` tuples as the same authored source.
 
 ## Stable identity versus packed generated indices
 
@@ -69,7 +84,7 @@ Evaluated record
 
 Modifiers and final derived stages receive controlled internal mutation access through the evaluation layer only. Editor operations still modify authored data exclusively through commands/history.
 
-An older evaluated snapshot remains valid as its own immutable value. Later authored edits, modifier evaluations, cache eviction, or cache clearing do not silently mutate a snapshot still held by a consumer.
+An older evaluated snapshot remains valid as its own immutable value. Later authored edits, modifier evaluations, cache eviction, cache clearing, or moving the owning Document do not silently mutate a snapshot still held by a consumer.
 
 ## Authored revision discipline
 
@@ -174,7 +189,7 @@ See `docs/SHADING_NORMALS.md` for the complete normal/shading contract and memor
 
 ## Error model
 
-Evaluation reports focused structured errors such as missing/invalid authored geometry, generated index overflow, missing topology references, null modifiers, modifier failure, and derived-normal generation failure.
+Evaluation reports focused structured errors such as missing/invalid authored geometry, invalid source runtime identity, generated index overflow, missing topology references, null modifiers, modifier failure, and derived-normal generation failure.
 
 Modifier failures additionally report `ModifierApplyError` and the failing stack index. Current structured modifier failures include invalid transforms, invalid Mirror/weld settings, invalid generated topology, generated-topology overflow, missing position data, attribute-copy failure, and `TriangulationFailed`.
 
@@ -187,20 +202,24 @@ The evaluator intentionally avoids an exception-heavy result architecture.
 Every evaluated snapshot exposes:
 
 ```text
-source MeshId
+source RuntimeDocumentId
++ source MeshId
 + source MeshBlock revision
 + ordered modifier-stack revision
 ```
 
-The modifier-stack revision hashes stable modifier type and configuration in stack order.
+The runtime Document identity disambiguates different open Documents that can legally reuse the same numeric stable IDs. The modifier-stack revision hashes stable modifier type and configuration in stack order.
 
 Consequences:
 
-- same authored revision + same ordered modifiers => same key,
+- same live Document lineage + same authored revision + same ordered modifiers => same key,
+- same numeric MeshId/revision in a different Document => different key,
 - authored geometry or shading changes => different key,
 - modifier setting changes => different key,
 - Mirror weld setting/tolerance changes => different key,
-- adding/removing/reordering Triangulate => different key.
+- adding/removing/reordering Triangulate => different key,
+- moving a Document preserves the key because runtime lineage moves with the authored state,
+- reusing a moved-from Document produces a fresh lineage and therefore cannot impersonate the moved state.
 
 `MeshEvaluator::cacheKeyFor()` computes this identity without first constructing an `EvaluatedMesh`.
 
@@ -216,7 +235,7 @@ Consequences:
 - results larger than the entire cache budget are still returned to the caller but are not retained,
 - a zero-byte budget disables retention while leaving evaluation functional,
 - lowering the budget immediately evicts entries until retained bytes fit,
-- `eraseMesh(MeshId)` releases every retained revision/modifier result for one authored mesh,
+- `eraseMesh(RuntimeDocumentId, MeshId)` releases every retained revision/modifier result for exactly one authored mesh in one live Document lineage,
 - `clear()` releases all cache-owned evaluated snapshots,
 - hit, miss, and budget-eviction counters are exposed for diagnostics/benchmarking.
 
@@ -246,7 +265,7 @@ The cache byte budget therefore bounds memory retained by the cache itself. It c
 
 ### Threading
 
-Evaluation and `EvaluationCache` are single-threaded in v0.1. No method promises concurrent mutation safety. Parallel/background evaluation remains deferred until deterministic invalidation and ownership behavior have been proven further.
+Evaluation and `EvaluationCache` are single-threaded in v0.1. Runtime Document identity allocation follows the same current single-threaded authoring contract. No method promises concurrent mutation safety. Parallel/background evaluation remains deferred until deterministic invalidation and ownership behavior have been proven further.
 
 ## Modifier roadmap
 
@@ -263,9 +282,13 @@ Topology-generating modifiers must preserve meaningful source mappings and must 
 
 ## Testing and performance gate
 
-Evaluation coverage proves authored/evaluated separation, source mappings, packed generated topology, Transform behavior, modifier ordering/cache identity, Mirror no-weld/weld behavior, Triangulate behavior, bounded cache behavior, and derived shading normals including:
+Evaluation coverage proves authored/evaluated separation, source mappings, packed generated topology, Transform behavior, modifier ordering/cache identity, Mirror no-weld/weld behavior, Triangulate behavior, bounded cache behavior, runtime Document identity separation, Document move lineage behavior, and derived shading normals including:
 
 - exact-key cache hits,
+- same-numbered MeshIds/revisions from different Documents remaining distinct,
+- detached MeshBlocks without an owning runtime identity being rejected,
+- runtime identity following Document move construction and move assignment,
+- DocumentHistory and MeshHistory following moved authored state while rejecting unrelated/moved-from lineages,
 - modifier-configuration separation,
 - deterministic LRU eviction,
 - explicit retained-byte budget enforcement,

@@ -14,6 +14,7 @@
 namespace vortex {
 
 struct EvaluationCacheKey final {
+    RuntimeDocumentId sourceDocumentRuntimeId;
     MeshId sourceMeshId;
     std::uint64_t sourceRevision = 0;
     std::uint64_t modifierStackRevision = 0;
@@ -23,11 +24,12 @@ struct EvaluationCacheKey final {
 
 struct EvaluationCacheKeyHash final {
     [[nodiscard]] std::size_t operator()(const EvaluationCacheKey& key) const noexcept {
-        std::size_t hash = IdHash<MeshId>{}(key.sourceMeshId);
+        std::size_t hash = IdHash<RuntimeDocumentId>{}(key.sourceDocumentRuntimeId);
         const auto mix = [&hash](const std::uint64_t value) {
             const std::size_t folded = static_cast<std::size_t>(value ^ (value >> 32U));
             hash ^= folded + std::size_t{0x9e3779b9U} + (hash << 6U) + (hash >> 2U);
         };
+        mix(key.sourceMeshId.value());
         mix(key.sourceRevision);
         mix(key.modifierStackRevision);
         return hash;
@@ -68,6 +70,7 @@ class EvaluatedMesh final {
 public:
     using Index = std::uint32_t;
 
+    [[nodiscard]] RuntimeDocumentId sourceDocumentRuntimeId() const noexcept { return cacheKey_.sourceDocumentRuntimeId; }
     [[nodiscard]] MeshId sourceMeshId() const noexcept { return cacheKey_.sourceMeshId; }
     [[nodiscard]] std::uint64_t sourceRevision() const noexcept { return cacheKey_.sourceRevision; }
     [[nodiscard]] std::uint64_t modifierStackRevision() const noexcept { return cacheKey_.modifierStackRevision; }

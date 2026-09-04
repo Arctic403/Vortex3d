@@ -15,9 +15,13 @@ Ordinary scene/document edits produce compact deltas:
 - mesh assignment -> previous/new MeshIds,
 - Make Unique -> source/new MeshIds plus ownership transfer of the created MeshBlock while undone.
 
-`DocumentHistory` owns undo/redo records and a configurable retained-byte budget. It is bound to one live Document instance so records cannot be replayed against unrelated state.
+`DocumentHistory` owns undo/redo records and a configurable retained-byte budget. It binds to one process-local `RuntimeDocumentId` lineage so records cannot be replayed against unrelated Documents, while still following the authored state through normal Document move construction/assignment.
+
+`RuntimeDocumentId` is never serialized. It is runtime lifetime identity only; persistent project identity continues to use the normal typed stable IDs.
 
 The old whole-`Document snapshot_` transaction model has been removed. `Transaction` now stores only command deltas for atomic rollback. If an uncommitted transaction rolls back, its revision/change-log side effects are removed as well.
+
+`Transaction` holds a direct `Document&` for its short synchronous scope. Do not move that Document while the Transaction is active; finish the transaction by commit, rollback, or destruction first. History objects may outlive and follow a later Document move because they bind by runtime lineage rather than C++ object address.
 
 ## Mesh commands
 
@@ -26,7 +30,7 @@ The old whole-`Document snapshot_` transaction model has been removed. `Transact
 - a `MeshCommandResult` describing affected/new stable IDs for selection/editor repair,
 - an optional reversible `MeshHistoryRecord`.
 
-`MeshHistory` is also bound to one live EditableMesh instance after its first retained edit. Cross-mesh replay is rejected.
+When used through `Document`, `MeshHistory` binds to one `{RuntimeDocumentId, MeshId}` pair after its first attempted edit. Cross-Document and cross-mesh replay are rejected even when two Documents happen to reuse the same numeric MeshId. The runtime lineage follows a normal Document move, so existing history continues to target the moved-to authored state and rejects the freshly reset moved-from Document.
 
 ### Pure value edits
 
@@ -70,6 +74,8 @@ They should be removed only when benchmark/profiling evidence and local rollback
 
 Undo/redo never treats packed indices as external identity. Restored topology receives the exact stable IDs owned by its history patch. Normal allocation remains monotonic; rolled-back/deleted IDs are not silently rebound to unrelated elements.
 
+Runtime Document lineage is separate from those persistent IDs. Its only job is to prevent lifetime/cache/history aliasing between different live Documents that can legitimately reuse the same numeric stable IDs.
+
 ## Test gates
 
 History changes must preserve:
@@ -78,6 +84,8 @@ History changes must preserve:
 - exact topology IDs where promised,
 - failed-command atomicity,
 - bounded retained bytes,
+- cross-Document replay rejection,
+- history continuity across supported Document moves,
 - GCC and Clang builds,
 - ASan/UBSan,
-- Android/32-bit compile compatibility once the Android CI gate is active.
+- Android ARMv7 32-bit and ARM64 compile compatibility.

@@ -75,6 +75,7 @@ public:
     [[nodiscard]] std::size_t retainedBytes() const noexcept { return retainedBytes_; }
     [[nodiscard]] std::size_t undoCount() const noexcept { return undo_.size(); }
     [[nodiscard]] std::size_t redoCount() const noexcept { return redo_.size(); }
+    [[nodiscard]] RuntimeDocumentId ownerDocumentRuntimeId() const noexcept { return ownerDocumentRuntimeId_; }
 
 private:
     friend class Transaction;
@@ -85,7 +86,7 @@ private:
     void recalculateRetainedBytes() noexcept;
     void enforceBudget() noexcept;
 
-    const Document* ownerDocument_ = nullptr;
+    RuntimeDocumentId ownerDocumentRuntimeId_;
     std::size_t budgetBytes_ = 0;
     std::size_t retainedBytes_ = 0;
     std::deque<DocumentHistoryRecord> undo_;

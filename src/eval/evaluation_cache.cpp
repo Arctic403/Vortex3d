@@ -118,10 +118,13 @@ void EvaluationCache::clear() noexcept {
     retainedBytes_ = 0;
 }
 
-void EvaluationCache::eraseMesh(const MeshId sourceMeshId) noexcept {
+void EvaluationCache::eraseMesh(
+    const RuntimeDocumentId sourceDocumentRuntimeId,
+    const MeshId sourceMeshId) noexcept {
     std::size_t index = 0;
     while (index < entries_.size()) {
-        if (entries_[index].key.sourceMeshId == sourceMeshId) {
+        if (entries_[index].key.sourceDocumentRuntimeId == sourceDocumentRuntimeId &&
+            entries_[index].key.sourceMeshId == sourceMeshId) {
             eraseIndex(index);
             continue;
         }
