@@ -256,6 +256,7 @@ bool VulkanViewport::recordCommandBuffers() {
 
     const float aspect = static_cast<float>(swapchainExtent_.width) /
                          static_cast<float>(swapchainExtent_.height);
+    const CameraPushConstants cameraPush = cameraPushConstants(aspect);
 
     for (std::size_t index = 0; index < commandBuffers_.size(); ++index) {
         VkCommandBufferBeginInfo beginInfo{};
@@ -289,10 +290,20 @@ bool VulkanViewport::recordCommandBuffers() {
         VkRect2D scissor{{0, 0}, swapchainExtent_};
         vkCmdSetScissor(commandBuffers_[index], 0U, 1U, &scissor);
 
-        vkCmdBindPipeline(commandBuffers_[index], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline_);
         vkCmdPushConstants(
-            commandBuffers_[index], pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0U, sizeof(float), &aspect);
+            commandBuffers_[index],
+            pipelineLayout_,
+            VK_SHADER_STAGE_VERTEX_BIT,
+            0U,
+            sizeof(CameraPushConstants),
+            &cameraPush);
+
         const VkDeviceSize vertexOffset = 0U;
+        vkCmdBindPipeline(commandBuffers_[index], VK_PIPELINE_BIND_POINT_GRAPHICS, gridPipeline_);
+        vkCmdBindVertexBuffers(commandBuffers_[index], 0U, 1U, &gridVertexBuffer_, &vertexOffset);
+        vkCmdDraw(commandBuffers_[index], gridVertexCount_, 1U, 0U, 0U);
+
+        vkCmdBindPipeline(commandBuffers_[index], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline_);
         vkCmdBindVertexBuffers(commandBuffers_[index], 0U, 1U, &vertexBuffer_, &vertexOffset);
         vkCmdBindIndexBuffer(commandBuffers_[index], indexBuffer_, 0U, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(commandBuffers_[index], indexCount_, 1U, 0U, 0, 0U);
@@ -321,6 +332,10 @@ void VulkanViewport::destroySwapchain() noexcept {
     }
     framebuffers_.clear();
 
+    if (gridPipeline_ != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device_, gridPipeline_, nullptr);
+        gridPipeline_ = VK_NULL_HANDLE;
+    }
     if (graphicsPipeline_ != VK_NULL_HANDLE) {
         vkDestroyPipeline(device_, graphicsPipeline_, nullptr);
         graphicsPipeline_ = VK_NULL_HANDLE;
