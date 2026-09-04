@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -94,6 +95,17 @@ struct AttributeLayer final {
     AttributeStorage storage = std::vector<float>{};
 };
 
+struct AttributeRowValue final {
+    AttributeKey key;
+    AttributeType type = AttributeType::Float;
+    AttributeScalar value = 0.0F;
+};
+
+struct AttributeRow final {
+    AttributeDomain domain = AttributeDomain::Vertex;
+    std::vector<AttributeRowValue> values;
+};
+
 class AttributeSet final {
 public:
     template <typename T>
@@ -160,6 +172,86 @@ public:
                 }
             }, layer.storage);
         }
+    }
+
+    [[nodiscard]] std::optional<AttributeRow> captureDomainIndex(
+        const AttributeDomain domain,
+        const std::size_t index) const {
+        if (index >= domainSize(domain)) {
+            return std::nullopt;
+        }
+
+        AttributeRow row;
+        row.domain = domain;
+        for (const auto& [key, layer] : layers_) {
+            (void)key;
+            if (layer.key.domain != domain) {
+                continue;
+            }
+
+            AttributeRowValue rowValue;
+            rowValue.key = layer.key;
+            rowValue.type = layer.type;
+            std::visit([&](const auto& storage) {
+                using Vector = std::decay_t<decltype(storage)>;
+                using Value = typename Vector::value_type;
+                if constexpr (std::is_same_v<Value, bool>) {
+                    rowValue.value = static_cast<bool>(storage[index]);
+                } else {
+                    rowValue.value = storage[index];
+                }
+            }, layer.storage);
+            row.values.push_back(std::move(rowValue));
+        }
+        return row;
+    }
+
+    [[nodiscard]] bool insertDomainIndex(
+        const AttributeDomain domain,
+        const std::size_t index,
+        const AttributeRow& row) {
+        const std::size_t currentSize = domainSize(domain);
+        if (row.domain != domain || index > currentSize) {
+            return false;
+        }
+
+        for (auto& [key, layer] : layers_) {
+            (void)key;
+            if (layer.key.domain != domain) {
+                continue;
+            }
+
+            const AttributeRowValue* stored = nullptr;
+            for (const AttributeRowValue& candidate : row.values) {
+                if (candidate.key == layer.key && candidate.type == layer.type) {
+                    stored = &candidate;
+                    break;
+                }
+            }
+
+            std::visit([&](auto& storage) {
+                using Vector = std::decay_t<decltype(storage)>;
+                using Value = typename Vector::value_type;
+
+                Value value{};
+                if (const auto* defaultValue = std::get_if<Value>(&layer.defaultValue)) {
+                    value = *defaultValue;
+                }
+                if (stored != nullptr) {
+                    if (const auto* captured = std::get_if<Value>(&stored->value)) {
+                        value = *captured;
+                    }
+                }
+                storage.insert(storage.begin() + static_cast<std::ptrdiff_t>(index), value);
+            }, layer.storage);
+        }
+
+        domainSizes_[domainIndex(domain)] = currentSize + 1;
+        return true;
+    }
+
+    [[nodiscard]] bool appendDomainRow(const AttributeDomain domain, const AttributeRow& row) {
+        return insertDomainIndex(domain, domainSize(domain), row);
     }
 
     [[nodiscard]] bool eraseDomainIndex(const AttributeDomain domain, const std::size_t index) {
