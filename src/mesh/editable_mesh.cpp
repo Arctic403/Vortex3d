@@ -1,5 +1,6 @@
 #include "vortex/mesh/editable_mesh.hpp"
 
+#include <algorithm>
 #include <unordered_set>
 #include <utility>
 
@@ -36,14 +37,18 @@ EdgeId EditableMesh::findEdge(const VertexId vertexA, const VertexId vertexB) co
         if (it == edges_.end()) {
             continue;
         }
-        const MeshEdge& edge = it->second;
-        const bool same = edge.vertexA == vertexA && edge.vertexB == vertexB;
-        const bool reverse = edge.vertexA == vertexB && edge.vertexB == vertexA;
+        const MeshEdge& edgeData = it->second;
+        const bool same = edgeData.vertexA == vertexA && edgeData.vertexB == vertexB;
+        const bool reverse = edgeData.vertexA == vertexB && edgeData.vertexB == vertexA;
         if (same || reverse) {
             return edgeId;
         }
     }
     return {};
+}
+
+EdgeId EditableMesh::edgeBetween(const VertexId vertexA, const VertexId vertexB) const noexcept {
+    return findEdge(vertexA, vertexB);
 }
 
 EdgeId EditableMesh::addEdge(const VertexId vertexA, const VertexId vertexB) {
@@ -117,6 +122,31 @@ FaceId EditableMesh::addFace(const std::vector<VertexId>& vertices) {
     return faceId;
 }
 
+std::vector<CornerId> EditableMesh::faceCorners(const FaceId faceId) const {
+    std::vector<CornerId> result;
+    const MeshFace* faceData = face(faceId);
+    if (faceData == nullptr || !faceData->firstCorner) {
+        return result;
+    }
+
+    result.reserve(faceData->cornerCount);
+    CornerId cursor = faceData->firstCorner;
+    for (std::uint32_t index = 0; index < faceData->cornerCount; ++index) {
+        const MeshCorner* cornerData = corner(cursor);
+        if (cornerData == nullptr) {
+            result.clear();
+            return result;
+        }
+        result.push_back(cursor);
+        cursor = cornerData->next;
+    }
+
+    if (cursor != faceData->firstCorner) {
+        result.clear();
+    }
+    return result;
+}
+
 void EditableMesh::attachCornerToRadialCycle(const EdgeId edgeId, const CornerId cornerId) {
     MeshEdge& edgeData = edges_.at(edgeId);
     MeshCorner& newCorner = corners_.at(cornerId);
@@ -134,6 +164,314 @@ void EditableMesh::attachCornerToRadialCycle(const EdgeId edgeId, const CornerId
     newCorner.radialPrev = previous.id;
     previous.radialNext = newCorner.id;
     anchor.radialPrev = newCorner.id;
+}
+
+void EditableMesh::rebuildRadialCycle(const EdgeId edgeId) {
+    const auto edgeIt = edges_.find(edgeId);
+    if (edgeIt == edges_.end()) {
+        return;
+    }
+
+    std::vector<CornerId> radialCorners;
+    for (const CornerId cornerId : cornerOrder_) {
+        const auto cornerIt = corners_.find(cornerId);
+        if (cornerIt != corners_.end() && cornerIt->second.edgeId == edgeId) {
+            radialCorners.push_back(cornerId);
+        }
+    }
+
+    if (radialCorners.empty()) {
+        edgeIt->second.anyCorner = {};
+        return;
+    }
+
+    edgeIt->second.anyCorner = radialCorners.front();
+    for (std::size_t index = 0; index < radialCorners.size(); ++index) {
+        MeshCorner& cornerData = corners_.at(radialCorners[index]);
+        cornerData.radialNext = radialCorners[(index + 1) % radialCorners.size()];
+        cornerData.radialPrev = radialCorners[(index + radialCorners.size() - 1) % radialCorners.size()];
+    }
+}
+
+void EditableMesh::rebuildVertexIndex() {
+    vertexIndex_.clear();
+    for (std::size_t index = 0; index < vertexOrder_.size(); ++index) {
+        vertexIndex_.emplace(vertexOrder_[index], index);
+    }
+}
+
+void EditableMesh::rebuildEdgeIndex() {
+    edgeIndex_.clear();
+    for (std::size_t index = 0; index < edgeOrder_.size(); ++index) {
+        edgeIndex_.emplace(edgeOrder_[index], index);
+    }
+}
+
+void EditableMesh::rebuildFaceIndex() {
+    faceIndex_.clear();
+    for (std::size_t index = 0; index < faceOrder_.size(); ++index) {
+        faceIndex_.emplace(faceOrder_[index], index);
+    }
+}
+
+void EditableMesh::rebuildCornerIndex() {
+    cornerIndex_.clear();
+    for (std::size_t index = 0; index < cornerOrder_.size(); ++index) {
+        cornerIndex_.emplace(cornerOrder_[index], index);
+    }
+}
+
+bool EditableMesh::removeFace(const FaceId id, const bool removeUnusedEdges) {
+    if (!hasFace(id) || !validate()) {
+        return false;
+    }
+
+    const std::vector<CornerId> faceCornerIds = faceCorners(id);
+    const MeshFace* faceData = face(id);
+    if (faceData == nullptr || faceCornerIds.size() != faceData->cornerCount) {
+        return false;
+    }
+
+    std::unordered_set<EdgeId, IdHash<EdgeId>> affectedEdges;
+    std::vector<std::pair<std::size_t, CornerId>> cornerRemovals;
+    cornerRemovals.reserve(faceCornerIds.size());
+    for (const CornerId cornerId : faceCornerIds) {
+        const MeshCorner* cornerData = corner(cornerId);
+        const auto indexIt = cornerIndex_.find(cornerId);
+        if (cornerData == nullptr || indexIt == cornerIndex_.end()) {
+            return false;
+        }
+        affectedEdges.insert(cornerData->edgeId);
+        cornerRemovals.emplace_back(indexIt->second, cornerId);
+    }
+
+    std::sort(cornerRemovals.begin(), cornerRemovals.end(), [](const auto& left, const auto& right) {
+        return left.first > right.first;
+    });
+
+    for (const auto& [index, cornerId] : cornerRemovals) {
+        if (!attributes_.eraseDomainIndex(AttributeDomain::Corner, index)) {
+            return false;
+        }
+        cornerOrder_.erase(cornerOrder_.begin() + static_cast<std::ptrdiff_t>(index));
+        corners_.erase(cornerId);
+    }
+    rebuildCornerIndex();
+
+    const auto faceIndexIt = faceIndex_.find(id);
+    if (faceIndexIt == faceIndex_.end()) {
+        return false;
+    }
+    const std::size_t removedFaceIndex = faceIndexIt->second;
+    if (!attributes_.eraseDomainIndex(AttributeDomain::Face, removedFaceIndex)) {
+        return false;
+    }
+    faceOrder_.erase(faceOrder_.begin() + static_cast<std::ptrdiff_t>(removedFaceIndex));
+    faces_.erase(id);
+    rebuildFaceIndex();
+
+    for (const EdgeId edgeId : affectedEdges) {
+        rebuildRadialCycle(edgeId);
+    }
+
+    if (removeUnusedEdges) {
+        std::vector<EdgeId> unusedEdges;
+        for (const EdgeId edgeId : affectedEdges) {
+            if (hasEdge(edgeId) && radialCornerCount(edgeId) == 0) {
+                unusedEdges.push_back(edgeId);
+            }
+        }
+        for (const EdgeId edgeId : unusedEdges) {
+            if (!removeEdge(edgeId)) {
+                return false;
+            }
+        }
+    }
+
+    return static_cast<bool>(validate());
+}
+
+bool EditableMesh::removeEdge(const EdgeId id) {
+    if (!hasEdge(id) || !validate()) {
+        return false;
+    }
+
+    for (const CornerId cornerId : cornerOrder_) {
+        const MeshCorner* cornerData = corner(cornerId);
+        if (cornerData != nullptr && cornerData->edgeId == id) {
+            return false;
+        }
+    }
+
+    const auto indexIt = edgeIndex_.find(id);
+    if (indexIt == edgeIndex_.end()) {
+        return false;
+    }
+    const std::size_t index = indexIt->second;
+    if (!attributes_.eraseDomainIndex(AttributeDomain::Edge, index)) {
+        return false;
+    }
+    edgeOrder_.erase(edgeOrder_.begin() + static_cast<std::ptrdiff_t>(index));
+    edgeIndex_.erase(id);
+    edges_.erase(id);
+    rebuildEdgeIndex();
+    return static_cast<bool>(validate());
+}
+
+bool EditableMesh::removeVertex(const VertexId id) {
+    if (!hasVertex(id) || !validate()) {
+        return false;
+    }
+
+    for (const EdgeId edgeId : edgeOrder_) {
+        const MeshEdge* edgeData = edge(edgeId);
+        if (edgeData != nullptr && (edgeData->vertexA == id || edgeData->vertexB == id)) {
+            return false;
+        }
+    }
+
+    const auto indexIt = vertexIndex_.find(id);
+    if (indexIt == vertexIndex_.end()) {
+        return false;
+    }
+    const std::size_t index = indexIt->second;
+    if (!attributes_.eraseDomainIndex(AttributeDomain::Vertex, index)) {
+        return false;
+    }
+    vertexOrder_.erase(vertexOrder_.begin() + static_cast<std::ptrdiff_t>(index));
+    vertexIndex_.erase(id);
+    vertices_.erase(id);
+    rebuildVertexIndex();
+    return static_cast<bool>(validate());
+}
+
+std::optional<EdgeSplitResult> EditableMesh::splitEdge(const EdgeId id, const float factor) {
+    if (!hasEdge(id) || factor <= 0.0F || factor >= 1.0F || !validate()) {
+        return std::nullopt;
+    }
+
+    const MeshEdge originalEdge = edges_.at(id);
+    const auto positionA = position(originalEdge.vertexA);
+    const auto positionB = position(originalEdge.vertexB);
+    const auto vertexAIndexIt = vertexIndex_.find(originalEdge.vertexA);
+    const auto vertexBIndexIt = vertexIndex_.find(originalEdge.vertexB);
+    const auto originalEdgeIndexIt = edgeIndex_.find(id);
+    if (!positionA || !positionB || vertexAIndexIt == vertexIndex_.end() ||
+        vertexBIndexIt == vertexIndex_.end() || originalEdgeIndexIt == edgeIndex_.end()) {
+        return std::nullopt;
+    }
+
+    std::vector<CornerId> affectedCorners;
+    for (const CornerId cornerId : cornerOrder_) {
+        const MeshCorner* cornerData = corner(cornerId);
+        if (cornerData != nullptr && cornerData->edgeId == id) {
+            const MeshCorner* nextData = corner(cornerData->next);
+            if (nextData == nullptr) {
+                return std::nullopt;
+            }
+            const bool forward = cornerData->vertexId == originalEdge.vertexA && nextData->vertexId == originalEdge.vertexB;
+            const bool reverse = cornerData->vertexId == originalEdge.vertexB && nextData->vertexId == originalEdge.vertexA;
+            if (!forward && !reverse) {
+                return std::nullopt;
+            }
+            affectedCorners.push_back(cornerId);
+        }
+    }
+
+    const Vec3 splitPosition{
+        positionA->x + (positionB->x - positionA->x) * factor,
+        positionA->y + (positionB->y - positionA->y) * factor,
+        positionA->z + (positionB->z - positionA->z) * factor};
+
+    const VertexId newVertex = addVertex(splitPosition);
+    const std::size_t newVertexIndex = vertexIndex_.at(newVertex);
+    (void)attributes_.interpolateDomainIndex(
+        AttributeDomain::Vertex,
+        vertexAIndexIt->second,
+        vertexBIndexIt->second,
+        newVertexIndex,
+        factor);
+
+    const EdgeId newEdge = addEdge(newVertex, originalEdge.vertexB);
+    if (!newEdge) {
+        return std::nullopt;
+    }
+    const std::size_t newEdgeIndex = edgeIndex_.at(newEdge);
+    (void)attributes_.copyDomainIndex(AttributeDomain::Edge, originalEdgeIndexIt->second, newEdgeIndex);
+
+    MeshEdge& retainedEdge = edges_.at(id);
+    retainedEdge.vertexB = newVertex;
+
+    struct CornerInterpolation final {
+        CornerId source;
+        CornerId destinationEndpoint;
+        CornerId inserted;
+        float factor = 0.5F;
+    };
+    std::vector<CornerInterpolation> interpolationJobs;
+    interpolationJobs.reserve(affectedCorners.size());
+
+    for (const CornerId cornerId : affectedCorners) {
+        const MeshCorner currentBefore = corners_.at(cornerId);
+        const MeshCorner nextBefore = corners_.at(currentBefore.next);
+        const bool forward = currentBefore.vertexId == originalEdge.vertexA;
+        const float localFactor = forward ? factor : 1.0F - factor;
+
+        const CornerId insertedCornerId = allocateId<CornerId>();
+        const EdgeId currentEdgeId = forward ? id : newEdge;
+        const EdgeId insertedEdgeId = forward ? newEdge : id;
+
+        const std::size_t insertedIndex = cornerOrder_.size();
+        cornerOrder_.push_back(insertedCornerId);
+        cornerIndex_.emplace(insertedCornerId, insertedIndex);
+        corners_.emplace(
+            insertedCornerId,
+            MeshCorner{
+                insertedCornerId,
+                currentBefore.faceId,
+                newVertex,
+                insertedEdgeId,
+                currentBefore.next,
+                currentBefore.id,
+                {},
+                {}});
+
+        MeshCorner& current = corners_.at(currentBefore.id);
+        MeshCorner& next = corners_.at(nextBefore.id);
+        current.edgeId = currentEdgeId;
+        current.next = insertedCornerId;
+        next.prev = insertedCornerId;
+        ++faces_.at(currentBefore.faceId).cornerCount;
+
+        interpolationJobs.push_back(CornerInterpolation{
+            currentBefore.id,
+            nextBefore.id,
+            insertedCornerId,
+            localFactor});
+    }
+
+    attributes_.setDomainSize(AttributeDomain::Corner, cornerOrder_.size());
+    for (const CornerInterpolation& job : interpolationJobs) {
+        (void)attributes_.interpolateDomainIndex(
+            AttributeDomain::Corner,
+            cornerIndex_.at(job.source),
+            cornerIndex_.at(job.destinationEndpoint),
+            cornerIndex_.at(job.inserted),
+            job.factor);
+    }
+
+    rebuildRadialCycle(id);
+    rebuildRadialCycle(newEdge);
+
+    if (!validate()) {
+        return std::nullopt;
+    }
+
+    return EdgeSplitResult{
+        newVertex,
+        id,
+        newEdge,
+        static_cast<std::uint32_t>(affectedCorners.size())};
 }
 
 bool EditableMesh::hasVertex(const VertexId id) const noexcept { return id && vertices_.contains(id); }
@@ -159,6 +497,21 @@ const MeshFace* EditableMesh::face(const FaceId id) const noexcept {
 const MeshCorner* EditableMesh::corner(const CornerId id) const noexcept {
     const auto it = corners_.find(id);
     return it == corners_.end() ? nullptr : &it->second;
+}
+
+std::size_t EditableMesh::radialCornerCount(const EdgeId id) const noexcept {
+    if (!hasEdge(id)) {
+        return 0;
+    }
+
+    std::size_t count = 0;
+    for (const CornerId cornerId : cornerOrder_) {
+        const MeshCorner* cornerData = corner(cornerId);
+        if (cornerData != nullptr && cornerData->edgeId == id) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 std::optional<Vec3> EditableMesh::position(const VertexId id) const noexcept {
@@ -209,6 +562,11 @@ MeshValidationResult EditableMesh::validate() const {
             issue(MeshValidationCode::InvalidEdgeEndpoints, id.value(), "Edge endpoints are missing or identical");
         }
 
+        const std::size_t expectedRadialCount = radialCornerCount(id);
+        if (!edgeData->anyCorner && expectedRadialCount != 0) {
+            issue(MeshValidationCode::BrokenRadialCycle, id.value(), "Edge has corners but no radial anchor");
+        }
+
         if (edgeData->anyCorner) {
             const MeshCorner* start = corner(edgeData->anyCorner);
             if (start == nullptr) {
@@ -235,6 +593,9 @@ MeshValidationResult EditableMesh::validate() const {
             }
             if (cursor != start->id) {
                 issue(MeshValidationCode::BrokenRadialCycle, id.value(), "Radial cycle did not close on its anchor");
+            }
+            if (visited.size() != expectedRadialCount) {
+                issue(MeshValidationCode::BrokenRadialCycle, id.value(), "Radial cycle does not cover every corner using the edge");
             }
         }
     }
@@ -272,8 +633,13 @@ MeshValidationResult EditableMesh::validate() const {
             const MeshEdge* edgeData = edge(current->edgeId);
             if (edgeData == nullptr || !hasVertex(current->vertexId)) {
                 issue(MeshValidationCode::MissingElement, current->id.value(), "Corner references a missing vertex or edge");
-            } else if (edgeData->vertexA != current->vertexId && edgeData->vertexB != current->vertexId) {
-                issue(MeshValidationCode::CornerEdgeMismatch, current->id.value(), "Corner vertex is not an endpoint of its edge");
+            } else {
+                const bool startsOnEdge = edgeData->vertexA == current->vertexId || edgeData->vertexB == current->vertexId;
+                const bool endsOnEdge = edgeData->vertexA == next->vertexId || edgeData->vertexB == next->vertexId;
+                const bool connectsBoundary = startsOnEdge && endsOnEdge && current->vertexId != next->vertexId;
+                if (!connectsBoundary) {
+                    issue(MeshValidationCode::CornerEdgeMismatch, current->id.value(), "Corner edge does not connect this corner to the next face corner");
+                }
             }
             cursor = current->next;
         }
