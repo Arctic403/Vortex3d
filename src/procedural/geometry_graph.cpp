@@ -6,7 +6,7 @@ namespace vortex {
 
 DependencyNodeId GeometryGraph::addNode(GeometryNodePayload payload) {
     const DependencyNodeId id = graph_.addNode("geometry");
-    nodes_.emplace(id, GeometryNode{id, std::move(payload)});
+    nodes_.emplace(id, GeometryNode{id, payload});
     if (output_ == 0U) {
         output_ = id;
     }
