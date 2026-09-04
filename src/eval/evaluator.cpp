@@ -93,7 +93,7 @@ MeshEvaluationKeyResult MeshEvaluator::cacheKeyFor(
     const MeshBlock& source,
     const std::span<const MeshModifier* const> modifiers) noexcept {
     MeshEvaluationKeyResult result;
-    if (!source.authoredMesh) {
+    if (source.authoredMesh() == nullptr) {
         result.error = MeshEvaluationError::MissingAuthoredMesh;
         return result;
     }
@@ -121,7 +121,11 @@ MeshEvaluationResult MeshEvaluator::evaluate(
         return result;
     }
 
-    const EditableMesh& authored = *source.authoredMesh;
+    const EditableMesh* authoredMesh = source.authoredMesh();
+    if (authoredMesh == nullptr) {
+        return fail(MeshEvaluationError::MissingAuthoredMesh);
+    }
+    const EditableMesh& authored = *authoredMesh;
     if (!authored.validate()) {
         return fail(MeshEvaluationError::InvalidSourceMesh);
     }
