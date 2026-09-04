@@ -81,7 +81,7 @@ jobs:
           mapfile -t SOURCES < <(find src -name '*.cpp' -print | sort)
           clang-tidy "${SOURCES[@]}" -p build-tidy --quiet --warnings-as-errors='bugprone-*,performance-*,portability-*'
 
-  android-core:
+  android-engine-shell:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -99,7 +99,7 @@ jobs:
           echo "Using NDK: $ANDROID_NDK_LATEST_HOME"
       - name: Configure ${{ matrix.abi }}
         run: >-
-          cmake -S . -B build-android-${{ matrix.abi }}
+          cmake -S android/app/src/main/cpp -B build-android-${{ matrix.abi }}
           -DCMAKE_BUILD_TYPE=Debug
           -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake"
           -DANDROID_ABI=${{ matrix.abi }}
@@ -107,8 +107,8 @@ jobs:
           -DVORTEX_BUILD_TESTS=OFF
           -DVORTEX_WARNINGS_AS_ERRORS=ON
           -DVORTEX_EXPECT_POINTER_BITS=${{ matrix.pointer_bits }}
-      - name: Build ${{ matrix.abi }}
-        run: cmake --build build-android-${{ matrix.abi }} --parallel
+      - name: Build engine + JNI shell ${{ matrix.abi }}
+        run: cmake --build build-android-${{ matrix.abi }} --target vortex_android --parallel
 
   performance-smoke:
     runs-on: ubuntu-latest

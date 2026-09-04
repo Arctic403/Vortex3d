@@ -23,23 +23,23 @@ This repository is the clean C++ foundation for Vortex3D Native. The previous `V
 ```text
 Android / Desktop Host
         |
-Editor + Tool Controllers
+EditorContext + Tools + Operators
         |
-Commands + Transactions
+Unified EditorHistory
         |
-Document + Scene DAG
+Document + EditableMesh authored truth
         |
-Editable Mesh Kernel
+GeometryOperations
         |
-Mesh Evaluator
+DependencyGraph / GeometryGraph
         |
-Transform -> Mirror/Weld -> Triangulate
+MeshEvaluator + Modifiers
         |
-Derived Corner Normals
+Derived Corner Normals + Evaluation Cache
         |
-Bounded Evaluation Cache
+RenderExtractor
         |
-future render-vertex packing / Vulkan backend
+future Vulkan backend
 ```
 
 Persistent authoring state never depends on Vulkan, Android, WebView, Three.js, WASM, OPFS, DOM APIs, platform event loops, or filesystem UI.
@@ -69,7 +69,7 @@ Current capabilities include:
 - Android NDK cross-compilation for ARMv7 32-bit and ARM64 with explicit pointer-width validation.
 - separate core and evaluation performance/memory benchmarks with 10k / 100k / 1M requested profiles where practical.
 
-The next architectural feature is a **narrow renderer-facing immutable snapshot/upload contract**. Storage/allocator changes remain evidence-driven and are not being performed simply because a newer container pattern exists.
+The v0.2 architecture stack is now implemented above the hardened core: geometry operations, editor context, operators/tools, dependency graph, procedural geometry graph, renderer-facing extraction, exact-ID project serialization, extensibility registries/properties, and an Android JNI host shell. Production modeling breadth, Vulkan rendering, touch UI, assets/materials, and advanced procedural features remain product work rather than core rewrites.
 
 ## Repository layout
 
@@ -78,11 +78,19 @@ include/vortex/      Public portable C++ headers
 src/core/            Document / command implementation
 src/mesh/            Modeling kernel implementation
 src/eval/            Evaluated geometry, modifiers, cache, derived shading
+src/editor/          Editor context and operators
+src/geometry/        Reusable geometry operations
+src/graph/           Dependency graph infrastructure
+src/procedural/      Geometry-node composition
+src/project/         Native authored-project codec
+src/viewport/        Evaluated -> viewport extraction
+src/ext/             Registries and extension infrastructure
+src/tool/            Interactive tool sessions
 tests/               Native correctness and corruption tests
 benchmarks/          Core + evaluation performance measurement harnesses
 docs/                Architecture, decisions, roadmap, research
 scripts/             Portability/tooling checks
-android/             Future Android host; platform code stays outside the core
+android/             Android APK/JNI host; platform code stays outside the engine
 ```
 
 ## Build and test
@@ -93,7 +101,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-The current test build registers 18 native suites on the Derived Shading Normals patch.
+The current test build registers 26 native suites, including v0.2 architecture and project-format round-trip coverage.
 
 ## Benchmarks
 
@@ -113,6 +121,7 @@ GitHub Actions provides explicit 10k, 100k, and 1M requested benchmark profiles.
 ## Engineering documents
 
 - [Architecture](docs/ARCHITECTURE.md)
+- [v0.2 Architecture Stack](docs/V02_ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Current Status](docs/STATUS.md)
 - [Foundation Rules](docs/FOUNDATION_RULES.md)

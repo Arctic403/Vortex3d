@@ -50,6 +50,16 @@ struct EdgeSplitResult final {
     std::uint32_t insertedCornerCount = 0;
 };
 
+
+struct EditableMeshSerializedState final {
+    std::uint64_t nextElementId = 1;
+    AttributeSet attributes;
+    std::vector<MeshVertex> vertices;
+    std::vector<MeshEdge> edges;
+    std::vector<MeshFace> faces;
+    std::vector<MeshCorner> corners;
+};
+
 struct FaceExtrudeResult final {
     FaceId sourceFace;
     FaceId capFace;
@@ -137,10 +147,14 @@ public:
     // and duplicate undirected-edge detection. Evaluation/import boundaries should use this form.
     [[nodiscard]] MeshValidationResult validateStrict() const;
 
+    [[nodiscard]] EditableMeshSerializedState serializedState() const;
+    [[nodiscard]] static std::optional<EditableMesh> fromSerializedState(EditableMeshSerializedState state);
+
+
 private:
     friend class ExtrudeFaceCommand;
     friend class MeshHistory;
-#ifdef VORTEX_ENABLE_TEST_HOOKS
+    #ifdef VORTEX_ENABLE_TEST_HOOKS
     friend struct MeshValidationTestAccess;
 #endif
 

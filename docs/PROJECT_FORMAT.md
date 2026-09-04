@@ -1,5 +1,7 @@
 # Native Project Format Contract
 
+> **Implemented preview:** schema v1 is now live through `ProjectCodec`. It is a deterministic binary authored-state container with exact stable IDs, generic attributes, hierarchy/shared-mesh references, bounded decoding, payload length, and integrity checksum. Runtime identity, undo history, evaluated data, and caches remain non-persistent. The schema is still pre-1.0 and may migrate.
+
 ## Purpose
 
 A Vortex project file preserves editable authoring state. It is not merely an exported runtime mesh container.
@@ -46,7 +48,7 @@ References must be validated on load. Invalid or cyclic references should produc
 
 ## Container strategy
 
-The exact binary/container technology is intentionally not locked in Phase 0. Candidate designs must be evaluated against:
+Schema v1 currently uses a compact custom binary container. Future container changes remain possible through schema migration and must continue to be evaluated against:
 
 - fast incremental/atomic save behavior,
 - schema migration,

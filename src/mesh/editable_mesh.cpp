@@ -664,3 +664,63 @@ MeshValidationResult EditableMesh::validate() const {
 }
 
 } // namespace vortex
+
+namespace vortex {
+
+EditableMeshSerializedState EditableMesh::serializedState() const {
+    EditableMeshSerializedState state;
+    state.nextElementId = nextElementId_;
+    state.attributes = attributes_;
+    state.vertices.reserve(vertexOrder_.size());
+    state.edges.reserve(edgeOrder_.size());
+    state.faces.reserve(faceOrder_.size());
+    state.corners.reserve(cornerOrder_.size());
+    for (const VertexId id : vertexOrder_) state.vertices.push_back(vertices_.at(id));
+    for (const EdgeId id : edgeOrder_) state.edges.push_back(edges_.at(id));
+    for (const FaceId id : faceOrder_) state.faces.push_back(faces_.at(id));
+    for (const CornerId id : cornerOrder_) state.corners.push_back(corners_.at(id));
+    return state;
+}
+
+std::optional<EditableMesh> EditableMesh::fromSerializedState(EditableMeshSerializedState state) {
+    EditableMesh mesh;
+    mesh.nextElementId_ = state.nextElementId;
+    mesh.attributes_ = std::move(state.attributes);
+    mesh.vertexOrder_.clear();
+    mesh.edgeOrder_.clear();
+    mesh.faceOrder_.clear();
+    mesh.cornerOrder_.clear();
+    mesh.vertices_.clear();
+    mesh.edges_.clear();
+    mesh.faces_.clear();
+    mesh.corners_.clear();
+
+    for (const MeshVertex& value : state.vertices) {
+        if (!value.id || mesh.vertices_.contains(value.id)) return std::nullopt;
+        mesh.vertexOrder_.push_back(value.id);
+        mesh.vertices_.emplace(value.id, value);
+    }
+    for (const MeshEdge& value : state.edges) {
+        if (!value.id || mesh.edges_.contains(value.id)) return std::nullopt;
+        mesh.edgeOrder_.push_back(value.id);
+        mesh.edges_.emplace(value.id, value);
+    }
+    for (const MeshFace& value : state.faces) {
+        if (!value.id || mesh.faces_.contains(value.id)) return std::nullopt;
+        mesh.faceOrder_.push_back(value.id);
+        mesh.faces_.emplace(value.id, value);
+    }
+    for (const MeshCorner& value : state.corners) {
+        if (!value.id || mesh.corners_.contains(value.id)) return std::nullopt;
+        mesh.cornerOrder_.push_back(value.id);
+        mesh.corners_.emplace(value.id, value);
+    }
+    mesh.rebuildVertexIndex();
+    mesh.rebuildEdgeIndex();
+    mesh.rebuildFaceIndex();
+    mesh.rebuildCornerIndex();
+    if (!mesh.validateStrict()) return std::nullopt;
+    return mesh;
+}
+
+} // namespace vortex

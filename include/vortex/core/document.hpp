@@ -13,6 +13,8 @@
 
 namespace vortex {
 
+class ProjectCodec;
+
 class EditableMesh;
 class MeshCommand;
 class MeshHistory;
@@ -44,6 +46,7 @@ public:
 private:
     friend class Document;
     friend class EditorHistory;
+    friend class ProjectCodec;
 
     MeshBlock(
         RuntimeDocumentId ownerDocumentRuntimeId,
@@ -196,6 +199,7 @@ public:
 private:
     friend class DocumentHistory;
     friend class EditorHistory;
+    friend class ProjectCodec;
     friend class Transaction;
 
     template <typename IdType>

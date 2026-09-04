@@ -12,6 +12,7 @@ enum class MeshModifierType : std::uint8_t {
     Transform = 1,
     Mirror = 2,
     Triangulate = 3,
+    SimpleDeformTwist = 4,
 };
 
 enum class ModifierApplyError : std::uint8_t {
@@ -24,6 +25,7 @@ enum class ModifierApplyError : std::uint8_t {
     GeneratedTopologyInvalid,
     TriangulationFailed,
     AttributeCopyFailed,
+    InvalidSimpleDeform,
 };
 
 struct ModifierApplyResult final {
@@ -107,6 +109,24 @@ private:
     MirrorAxis axis_;
     float planeOffset_ = 0.0F;
     MirrorWeldSettings weld_;
+};
+
+class SimpleDeformTwistModifier final : public MeshModifier {
+public:
+    explicit SimpleDeformTwistModifier(float radiansPerUnit = 0.0F, float originZ = 0.0F) noexcept
+        : radiansPerUnit_(radiansPerUnit), originZ_(originZ) {}
+
+    [[nodiscard]] std::string_view name() const noexcept override { return "Simple Deform Twist"; }
+    [[nodiscard]] MeshModifierType type() const noexcept override { return MeshModifierType::SimpleDeformTwist; }
+    [[nodiscard]] std::uint64_t revisionToken() const noexcept override;
+    [[nodiscard]] ModifierApplyResult apply(EvaluatedMesh& mesh) const override;
+
+    [[nodiscard]] float radiansPerUnit() const noexcept { return radiansPerUnit_; }
+    [[nodiscard]] float originZ() const noexcept { return originZ_; }
+
+private:
+    float radiansPerUnit_ = 0.0F;
+    float originZ_ = 0.0F;
 };
 
 class TriangulateModifier final : public MeshModifier {

@@ -15,6 +15,7 @@
 
 namespace vortex {
 
+
 struct Vec2 final {
     float x = 0.0F;
     float y = 0.0F;
@@ -380,6 +381,45 @@ public:
 
         domainSizes_[domainIndex(domain)] = sourceIndices.size();
         return true;
+    }
+
+
+    [[nodiscard]] std::vector<AttributeLayer> layersSnapshot() const {
+        std::vector<AttributeLayer> result;
+        result.reserve(layers_.size());
+        for (const auto& [key, layer] : layers_) {
+            (void)key;
+            result.push_back(layer);
+        }
+        std::sort(result.begin(), result.end(), [](const AttributeLayer& a, const AttributeLayer& b) {
+            if (a.key.domain != b.key.domain) {
+                return a.key.domain < b.key.domain;
+            }
+            return a.key.name < b.key.name;
+        });
+        return result;
+    }
+
+    [[nodiscard]] bool replaceSerializedLayers(
+        const std::array<std::size_t, 4>& domainSizes,
+        std::vector<AttributeLayer> layers) {
+        std::unordered_map<AttributeKey, AttributeLayer, AttributeKeyHash> rebuilt;
+        for (AttributeLayer& layer : layers) {
+            const std::size_t expected = domainSizes[domainIndex(layer.key.domain)];
+            const bool sizeMatches = std::visit([expected](const auto& storage) { return storage.size() == expected; }, layer.storage);
+            const bool typeMatches = std::visit([&layer](const auto& storage) {
+                using Vector = std::decay_t<decltype(storage)>;
+                using Value = typename Vector::value_type;
+                return layer.type == AttributeTypeOf<Value>::value;
+            }, layer.storage);
+            if (!sizeMatches || !typeMatches || rebuilt.contains(layer.key)) {
+                return false;
+            }
+            rebuilt.emplace(layer.key, std::move(layer));
+        }
+        domainSizes_ = domainSizes;
+        layers_ = std::move(rebuilt);
+        return validateSizes();
     }
 
     [[nodiscard]] std::size_t domainSize(const AttributeDomain domain) const noexcept {

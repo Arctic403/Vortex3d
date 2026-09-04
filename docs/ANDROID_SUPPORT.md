@@ -13,7 +13,7 @@ A feature is not Android-ready if it only compiles on ARM64 without an explicit 
 
 ## CI compile gate
 
-GitHub Actions cross-compiles `vortex_core` with the Android NDK for both required ABIs. The matrix also passes `VORTEX_EXPECT_POINTER_BITS=32` for `armeabi-v7a` and `64` for `arm64-v8a`; CMake fails configuration if the selected toolchain does not match the expected pointer width.
+GitHub Actions cross-compiles the Android JNI shell and therefore the complete `Vortex3D::engine` dependency graph with the Android NDK for both required ABIs. The matrix also passes `VORTEX_EXPECT_POINTER_BITS=32` for `armeabi-v7a` and `64` for `arm64-v8a`; CMake fails configuration if the selected toolchain does not match the expected pointer width.
 
 The CI build uses the latest NDK installed by the GitHub-hosted runner rather than embedding Android framework code in the core. Release/application builds may pin a tested NDK version separately.
 
@@ -22,7 +22,7 @@ The current compile baseline uses API level 26. Changing that baseline is a prod
 ## Android architecture
 
 ```text
-Kotlin / Android host
+Java/Kotlin / Android host
   - Activity/lifecycle
   - Storage Access Framework
   - IME/keyboard
@@ -71,3 +71,7 @@ The engine sees portable services/data rather than Android `Uri`, Activity, Surf
 ## Lifecycle requirements
 
 The eventual Android host must survive surface recreation, rotation/resizing, background/foreground, activity recreation, process recovery, interrupted save/autosave, and low-memory signals. Project correctness must not depend on a Vulkan surface remaining alive.
+
+## Current host implementation
+
+`android/app` is live in v0.2. The launcher Activity loads `libvortex_android`, calls a narrow JNI engine-version handshake, and links `Vortex3D::engine`. The UI is intentionally only a host proof; lifecycle/storage/input/Vulkan ownership will grow here rather than inside portable engine targets.

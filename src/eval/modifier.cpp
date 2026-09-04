@@ -559,4 +559,31 @@ ModifierApplyResult MirrorModifier::apply(EvaluatedMesh& mesh) const {
     return {};
 }
 
+std::uint64_t SimpleDeformTwistModifier::revisionToken() const noexcept {
+    constexpr std::uint64_t fnvOffset = 1469598103934665603ULL;
+    std::uint64_t hash = mixByte(fnvOffset, static_cast<std::uint8_t>(MeshModifierType::SimpleDeformTwist));
+    hash = mixFloat(hash, radiansPerUnit_);
+    return mixFloat(hash, originZ_);
+}
+
+ModifierApplyResult SimpleDeformTwistModifier::apply(EvaluatedMesh& mesh) const {
+    if (!std::isfinite(radiansPerUnit_) || !std::isfinite(originZ_)) {
+        return {ModifierApplyError::InvalidSimpleDeform};
+    }
+    auto* positions = mutableAttributes(mesh).values<Vec3>("position", AttributeDomain::Vertex);
+    if (positions == nullptr || positions->size() != mesh.vertexCount()) {
+        return {ModifierApplyError::MissingPositionAttribute};
+    }
+    for (Vec3& position : *positions) {
+        const float angle = (position.z - originZ_) * radiansPerUnit_;
+        const float sine = std::sin(angle);
+        const float cosine = std::cos(angle);
+        const float x = position.x;
+        const float y = position.y;
+        position.x = x * cosine - y * sine;
+        position.y = x * sine + y * cosine;
+    }
+    return {};
+}
+
 } // namespace vortex

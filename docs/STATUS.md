@@ -4,7 +4,7 @@ Last updated: 2026-09-04
 
 ## Current engineering focus
 
-Vortex3D remains in the evaluated-geometry/product-foundation stage. The portable authoring kernel, command/history model, modifier pipeline, bounded evaluation cache, and derived shading normals are live. The current post-audit hardening pass is strengthening correctness boundaries before renderer and Android product layers build on them.
+The hardened v0.1 core is frozen as the authoring/evaluation foundation. v0.2 now builds the application architecture above it: reusable geometry operations, editor context + tools/operators, dependency/procedural graphs, viewport extraction, exact-ID project serialization, extension registries/properties, and the Android JNI host shell.
 
 Post-audit hardening status:
 
@@ -14,6 +14,22 @@ Post-audit hardening status:
 - [x] Phase 4 — deterministic randomized history/evaluation stress coverage and audit documentation added without changing authored/evaluated ownership rules.
 - [x] Phase 5 — unified editor history provides one runtime-lineage-bound, byte-budgeted chronological undo/redo timeline across Document and Mesh commands.
 - [x] Phase 6 — in-tree repository protection adds read-only CI permissions, CODEOWNERS, repository-policy checks, and an explicit GitHub branch/ruleset contract.
+
+
+## v0.2 application architecture
+
+- [x] GeometryOperations topology queries + split/extrude/inset/translate foundation.
+- [x] EditorContext keeps mode/selection/active-object state out of Document.
+- [x] Operator and interactive tool-session boundaries commit through unified EditorHistory.
+- [x] DependencyGraph cycle rejection, dirty propagation, deterministic topological ordering.
+- [x] GeometryGraph reuses the production modifier/evaluator path.
+- [x] Simple Deform Twist modifier expands the non-destructive stack.
+- [x] RenderExtractor produces renderer-facing triangulated snapshots from EvaluatedMesh only.
+- [x] ProjectCodec schema v1 round-trips exact authored IDs, topology, hierarchy, sharing, revisions, and generic attributes with integrity checking.
+- [x] PropertySchema/PropertyBag plus operator/modifier/node/project-adapter registries.
+- [x] Android APK/JNI shell links the complete engine for ARMv7 + ARM64 without platform leakage into portable code.
+
+See `docs/V02_ARCHITECTURE.md`.
 
 ## Foundation state
 
@@ -133,7 +149,7 @@ See `docs/VALIDATION.md` for the exact invariant and diagnostic contract.
 
 ## Validation and evaluation coverage
 
-CTest registers **24 native suites** after the Phase 5-6 hardening patch.
+CTest registers **26 native suites** after the v0.2 architecture integration patch.
 
 Coverage includes:
 

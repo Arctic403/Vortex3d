@@ -27,6 +27,7 @@ add_library(vortex_core STATIC
     src/mesh/validation.cpp
     src/mesh/extrude.cpp
     src/mesh/command.cpp
+    src/geometry/operations.cpp
 )
 
 add_library(Vortex3D::core ALIAS vortex_core)
@@ -91,6 +92,39 @@ if(VORTEX_WARNINGS_AS_ERRORS)
         target_compile_options(vortex_eval PRIVATE /WX)
     else()
         target_compile_options(vortex_eval PRIVATE -Werror)
+    endif()
+endif()
+
+add_library(vortex_engine STATIC
+    src/editor/context.cpp
+    src/editor/operator.cpp
+    src/tool/tool_session.cpp
+    src/graph/dependency_graph.cpp
+    src/project/project_io.cpp
+    src/viewport/render_extract.cpp
+    src/procedural/geometry_graph.cpp
+    src/ext/registry.cpp
+)
+
+add_library(Vortex3D::engine ALIAS vortex_engine)
+target_link_libraries(vortex_engine PUBLIC Vortex3D::eval)
+target_include_directories(vortex_engine
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+target_compile_features(vortex_engine PUBLIC cxx_std_20)
+set_target_properties(vortex_engine PROPERTIES CXX_EXTENSIONS OFF POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+    target_compile_options(vortex_engine PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(vortex_engine PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+if(VORTEX_WARNINGS_AS_ERRORS)
+    if(MSVC)
+        target_compile_options(vortex_engine PRIVATE /WX)
+    else()
+        target_compile_options(vortex_engine PRIVATE -Werror)
     endif()
 endif()
 
@@ -221,6 +255,16 @@ if(VORTEX_BUILD_TESTS)
     target_link_libraries(vortex_evaluation_randomized_smoke PRIVATE Vortex3D::eval)
     target_compile_features(vortex_evaluation_randomized_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.eval.randomized.smoke COMMAND vortex_evaluation_randomized_smoke)
+
+    add_executable(vortex_architecture_v02_smoke tests/architecture_v02_smoke.cpp)
+    target_link_libraries(vortex_architecture_v02_smoke PRIVATE Vortex3D::engine)
+    target_compile_features(vortex_architecture_v02_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.architecture.v02.smoke COMMAND vortex_architecture_v02_smoke)
+
+    add_executable(vortex_project_format_v01_smoke tests/project_format_v01_smoke.cpp)
+    target_link_libraries(vortex_project_format_v01_smoke PRIVATE Vortex3D::engine)
+    target_compile_features(vortex_project_format_v01_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.project.format.v01.smoke COMMAND vortex_project_format_v01_smoke)
 endif()
 
 if(VORTEX_BUILD_BENCHMARKS)
