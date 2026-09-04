@@ -1,6 +1,5 @@
 #pragma once
 
-#include "vortex/core/document.hpp"
 #include "vortex/mesh/editable_mesh.hpp"
 
 #include <cstddef>
@@ -12,6 +11,8 @@
 #include <vector>
 
 namespace vortex {
+
+class Document;
 
 struct VertexPositionTarget final {
     VertexId vertexId;
@@ -178,18 +179,7 @@ public:
 private:
     friend class Document;
 
-    [[nodiscard]] bool bindToDocumentMesh(const Document& document, const MeshId meshId) noexcept {
-        if (!meshId || !document.runtimeId()) {
-            return false;
-        }
-        if (!ownerDocumentRuntimeId_) {
-            ownerDocumentRuntimeId_ = document.runtimeId();
-            ownerMeshId_ = meshId;
-            return true;
-        }
-        return ownerDocumentRuntimeId_ == document.runtimeId() && ownerMeshId_ == meshId;
-    }
-
+    [[nodiscard]] bool bindToDocumentMesh(const Document& document, MeshId meshId) noexcept;
     [[nodiscard]] bool applyRecord(EditableMesh& mesh, const MeshHistoryRecord& record, bool forward);
     void clearRedo() noexcept;
     void enforceBudget() noexcept;
