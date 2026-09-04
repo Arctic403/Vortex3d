@@ -9,8 +9,9 @@ Vortex3D remains in the evaluated-geometry/product-foundation stage. The portabl
 Post-audit hardening status:
 
 - [x] Phase 1 — runtime Document identity and cross-Document cache/history safety.
-- [x] Phase 2 — authored/evaluated validator hardening implemented and regression-covered on the patch branch.
-- [ ] Later hardening phases remain separate patches; no memory-journal, fuzz-target, renderer, or branch-protection work is mixed into Phase 2.
+- [x] Phase 2 — authored/evaluated validator hardening merged and regression-covered.
+- [x] Phase 3 — bounded change journal, mesh evaluation-revision split, and no-op mutation cleanup implemented and regression-covered.
+- [ ] Phases 4-6 remain separate patches; fuzz/tooling expansion, unified editor history, and repository protection are not mixed into Phase 3.
 
 ## Foundation state
 
@@ -40,6 +41,7 @@ Post-audit hardening status:
 - [x] resident MeshBlocks carry and validate the owning runtime Document identity.
 - [x] `DocumentHistory` and `MeshHistory` bind by runtime lineage rather than C++ object address.
 - [x] ordinary Document undo uses reversible deltas rather than retained whole-Document snapshots.
+- [x] runtime Document change notifications are bounded and gap-aware rather than an unbounded vector.
 - [x] Document and mesh histories have explicit retained-byte budgets.
 
 ### Mesh kernel
@@ -68,6 +70,15 @@ Post-audit hardening status:
 - [x] mesh history bound to `{RuntimeDocumentId, MeshId}` through the Document bridge.
 
 Whole meshes are not retained as normal undo steps. Some complex topology operations still use temporary whole-`EditableMesh` copies as operation-local rollback guards; those remain measured performance debt, not history architecture.
+
+
+### Change tracking and revision semantics
+
+The runtime `Document` change journal has a configurable 256 KiB default logical payload budget and discards oldest events deterministically. `changesSince()` returns a gap-aware result: if the caller asks from a revision older than the retained floor, `complete()` is false and the consumer must resync from current state. Transaction/DocumentHistory batches defer pruning so rollback cannot lose the prior event suffix.
+
+`MeshBlock::revision` is the general datablock revision. `MeshBlock::evaluationRevision()` advances only for authored geometry/shading changes. Mesh rename therefore advances metadata/Document revision without invalidating an otherwise identical evaluated snapshot. No-op mesh commands create no history record, emit no change event, and advance no revision. The first `sharp_face=false` edit materializes the optional Face layer; undo removes that layer again when it did not previously exist.
+
+See `docs/CHANGE_TRACKING.md`.
 
 ## Validation hardening
 
@@ -120,7 +131,7 @@ See `docs/VALIDATION.md` for the exact invariant and diagnostic contract.
 
 ## Validation and evaluation coverage
 
-CTest registers **20 native suites** on the Phase 2 patch.
+CTest registers **22 native suites** after Phase 3.
 
 Coverage includes:
 
@@ -178,7 +189,7 @@ Every evaluated snapshot/cache entry is identified by:
 ```text
 RuntimeDocumentId
 + MeshId
-+ authored Mesh revision
++ source Mesh evaluation revision
 + ordered modifier-stack revision
 ```
 

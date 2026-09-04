@@ -38,7 +38,7 @@ Nothing in `vortex_core` depends on the evaluator, cache, or renderer.
 
 ## Current evaluated representation
 
-Evaluation starts with a deterministic one-to-one conversion from a validated `EditableMesh` and preserves source runtime Document lineage, source `MeshId`, source mesh revision, source Vertex/Edge/Face/Corner IDs, generic attribute layers, authored n-gon boundaries, face cycles, and radial edge topology.
+Evaluation starts with a deterministic one-to-one conversion from a validated `EditableMesh` and preserves source runtime Document lineage, source `MeshId`, source mesh evaluation revision, source Vertex/Edge/Face/Corner IDs, generic attribute layers, authored n-gon boundaries, face cycles, and radial edge topology.
 
 Generated topology is independent from authored container addresses and hash nodes.
 
@@ -86,13 +86,13 @@ Modifiers and final derived stages receive controlled internal mutation access t
 
 An older evaluated snapshot remains valid as its own immutable value. Later authored edits, modifier evaluations, cache eviction, cache clearing, or moving the owning Document do not silently mutate a snapshot still held by a consumer.
 
-## Authored revision discipline
+## Datablock and evaluation revision discipline
 
-Evaluation identity depends on `MeshBlock::revision`, so authored geometry and shading state must not be mutated without advancing that revision.
+`MeshBlock::revision` is the general datablock revision. `MeshBlock::evaluationRevision()` is the narrower geometry/shading revision used by evaluation identity. Authored geometry and shading state must not be mutated without advancing the evaluation revision.
 
-`MeshBlock` keeps its owning `std::unique_ptr<EditableMesh>` private and exposes only `const EditableMesh* authoredMesh() const`. Const datablock access propagates constness to the authored payload. Normal mutation remains behind `Document` mesh command/history operations, which advance mesh/document revisions.
+`MeshBlock` keeps its owning `std::unique_ptr<EditableMesh>` private and exposes only `const EditableMesh* authoredMesh() const`. Const datablock access propagates constness to the authored payload. Normal mutation remains behind `Document` mesh command/history operations. A real geometry/shading edit advances both the general Mesh revision and evaluation revision; a metadata-only mesh rename advances the general Mesh/Document revision without changing evaluation identity. A successful no-op mesh command advances neither.
 
-This rule prevents stale cache hits caused by untracked authored mutation.
+This rule prevents stale cache hits caused by untracked authored mutation while avoiding needless cache misses for metadata-only changes.
 
 ## Modifier stack
 
@@ -204,7 +204,7 @@ Every evaluated snapshot exposes:
 ```text
 source RuntimeDocumentId
 + source MeshId
-+ source MeshBlock revision
++ source Mesh evaluation revision
 + ordered modifier-stack revision
 ```
 
@@ -212,9 +212,10 @@ The runtime Document identity disambiguates different open Documents that can le
 
 Consequences:
 
-- same live Document lineage + same authored revision + same ordered modifiers => same key,
-- same numeric MeshId/revision in a different Document => different key,
-- authored geometry or shading changes => different key,
+- same live Document lineage + same evaluation revision + same ordered modifiers => same key,
+- same numeric MeshId/evaluation revision in a different Document => different key,
+- authored geometry or shading changes => different evaluation revision/key,
+- mesh metadata rename alone => same evaluation key,
 - modifier setting changes => different key,
 - Mirror weld setting/tolerance changes => different key,
 - adding/removing/reordering Triangulate => different key,
@@ -294,7 +295,7 @@ Evaluation coverage proves authored/evaluated separation, source mappings, packe
 - explicit retained-byte budget enforcement,
 - oversized-result non-retention,
 - zero-budget operation,
-- authored-revision invalidation after geometry and shading commands,
+- evaluation-revision invalidation after geometry and shading commands,
 - immutable old snapshots after authored edits,
 - cache clear/per-mesh invalidation while externally held snapshots remain valid,
 - invalid modifier diagnostics,
