@@ -46,6 +46,13 @@ struct EdgeSplitResult final {
     std::uint32_t insertedCornerCount = 0;
 };
 
+struct FaceExtrudeResult final {
+    FaceId sourceFace;
+    FaceId capFace;
+    std::vector<FaceId> sideFaces;
+    std::vector<VertexId> newVertices;
+};
+
 enum class MeshValidationCode : std::uint8_t {
     MissingElement,
     InvalidFaceSize,
@@ -85,6 +92,11 @@ public:
     // Split contract: the original edge ID survives on vertexA -> newVertex.
     // A new edge is created for newVertex -> original vertexB.
     [[nodiscard]] std::optional<EdgeSplitResult> splitEdge(EdgeId id, float factor = 0.5F);
+
+    // First higher-level modeling operation. The source face is replaced by a translated
+    // cap plus one quad per source boundary edge. The result maps the deleted source face
+    // to the new cap and exposes all newly created topology for selection/history layers.
+    [[nodiscard]] std::optional<FaceExtrudeResult> extrudeFace(FaceId id, Vec3 offset);
 
     [[nodiscard]] bool hasVertex(VertexId id) const noexcept;
     [[nodiscard]] bool hasEdge(EdgeId id) const noexcept;
