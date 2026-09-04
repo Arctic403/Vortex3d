@@ -104,6 +104,10 @@ MeshEvaluationKeyResult MeshEvaluator::cacheKeyFor(
         result.error = MeshEvaluationError::MissingAuthoredMesh;
         return result;
     }
+    if (!source.ownerDocumentRuntimeId()) {
+        result.error = MeshEvaluationError::InvalidSourceIdentity;
+        return result;
+    }
 
     std::size_t nullModifierIndex = 0;
     const auto stackRevision = modifierStackRevision(modifiers, nullModifierIndex);
@@ -113,7 +117,11 @@ MeshEvaluationKeyResult MeshEvaluator::cacheKeyFor(
         return result;
     }
 
-    result.key = EvaluationCacheKey{source.id, source.revision, *stackRevision};
+    result.key = EvaluationCacheKey{
+        source.ownerDocumentRuntimeId(),
+        source.id,
+        source.revision,
+        *stackRevision};
     return result;
 }
 
