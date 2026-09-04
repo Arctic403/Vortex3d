@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 #include <variant>
@@ -49,6 +50,21 @@ enum class AttributeType : std::uint8_t {
     Vec4,
 };
 
+struct AttributeKey final {
+    std::string name;
+    AttributeDomain domain = AttributeDomain::Vertex;
+
+    [[nodiscard]] bool operator==(const AttributeKey&) const noexcept = default;
+};
+
+struct AttributeKeyHash final {
+    [[nodiscard]] std::size_t operator()(const AttributeKey& key) const noexcept {
+        const std::size_t nameHash = std::hash<std::string>{}(key.name);
+        const std::size_t domainHash = std::hash<std::uint8_t>{}(static_cast<std::uint8_t>(key.domain));
+        return nameHash ^ (domainHash + 0x9e3779b9U + (nameHash << 6U) + (nameHash >> 2U));
+    }
+};
+
 template <typename T>
 struct AttributeTypeOf;
 
@@ -71,8 +87,7 @@ using AttributeStorage = std::variant<
     std::vector<Vec4>>;
 
 struct AttributeLayer final {
-    std::string name;
-    AttributeDomain domain = AttributeDomain::Vertex;
+    AttributeKey key;
     AttributeType type = AttributeType::Float;
     AttributeScalar defaultValue = 0.0F;
     AttributeStorage storage = std::vector<float>{};
@@ -87,31 +102,33 @@ public:
             std::is_same_v<T, float> || std::is_same_v<T, Vec2> || std::is_same_v<T, Vec3> || std::is_same_v<T, Vec4>,
             "Unsupported Vortex3D attribute type");
 
-        if (layers_.contains(name)) {
+        AttributeKey key{std::move(name), domain};
+        if (layers_.contains(key)) {
             return false;
         }
 
         const std::size_t size = domainSizes_[domainIndex(domain)];
         AttributeLayer layer;
-        layer.name = std::move(name);
-        layer.domain = domain;
+        layer.key = key;
         layer.type = AttributeTypeOf<T>::value;
         layer.defaultValue = defaultValue;
         layer.storage = std::vector<T>(size, defaultValue);
-        layers_.emplace(layer.name, std::move(layer));
+        layers_.emplace(std::move(key), std::move(layer));
         return true;
     }
 
-    [[nodiscard]] bool contains(const std::string& name) const noexcept { return layers_.contains(name); }
+    [[nodiscard]] bool contains(const std::string_view name, const AttributeDomain domain) const noexcept {
+        return layers_.contains(AttributeKey{std::string{name}, domain});
+    }
 
-    [[nodiscard]] const AttributeLayer* layer(const std::string& name) const noexcept {
-        const auto it = layers_.find(name);
+    [[nodiscard]] const AttributeLayer* layer(const std::string_view name, const AttributeDomain domain) const noexcept {
+        const auto it = layers_.find(AttributeKey{std::string{name}, domain});
         return it == layers_.end() ? nullptr : &it->second;
     }
 
     template <typename T>
-    [[nodiscard]] std::vector<T>* values(const std::string& name) noexcept {
-        const auto it = layers_.find(name);
+    [[nodiscard]] std::vector<T>* values(const std::string_view name, const AttributeDomain domain) noexcept {
+        const auto it = layers_.find(AttributeKey{std::string{name}, domain});
         if (it == layers_.end() || it->second.type != AttributeTypeOf<T>::value) {
             return nullptr;
         }
@@ -119,8 +136,8 @@ public:
     }
 
     template <typename T>
-    [[nodiscard]] const std::vector<T>* values(const std::string& name) const noexcept {
-        const auto it = layers_.find(name);
+    [[nodiscard]] const std::vector<T>* values(const std::string_view name, const AttributeDomain domain) const noexcept {
+        const auto it = layers_.find(AttributeKey{std::string{name}, domain});
         if (it == layers_.end() || it->second.type != AttributeTypeOf<T>::value) {
             return nullptr;
         }
@@ -129,9 +146,9 @@ public:
 
     void setDomainSize(const AttributeDomain domain, const std::size_t size) {
         domainSizes_[domainIndex(domain)] = size;
-        for (auto& [name, layer] : layers_) {
-            (void)name;
-            if (layer.domain != domain) {
+        for (auto& [key, layer] : layers_) {
+            (void)key;
+            if (layer.key.domain != domain) {
                 continue;
             }
             std::visit([&](auto& storage) {
@@ -149,9 +166,9 @@ public:
     }
 
     [[nodiscard]] bool validateSizes() const noexcept {
-        for (const auto& [name, layer] : layers_) {
-            (void)name;
-            const std::size_t expected = domainSize(layer.domain);
+        for (const auto& [key, layer] : layers_) {
+            (void)key;
+            const std::size_t expected = domainSize(layer.key.domain);
             const bool matches = std::visit([expected](const auto& storage) { return storage.size() == expected; }, layer.storage);
             if (!matches) {
                 return false;
@@ -166,7 +183,7 @@ private:
     }
 
     std::array<std::size_t, 4> domainSizes_{};
-    std::unordered_map<std::string, AttributeLayer> layers_;
+    std::unordered_map<AttributeKey, AttributeLayer, AttributeKeyHash> layers_;
 };
 
 } // namespace vortex
