@@ -6,7 +6,9 @@
 
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -19,7 +21,8 @@ vortex::MeshId createQuad(vortex::Document& document) {
     const VertexId b = mesh.addVertex({1.0F, 0.0F, 0.0F});
     const VertexId c = mesh.addVertex({1.0F, 1.0F, 0.0F});
     const VertexId d = mesh.addVertex({0.0F, 1.0F, 0.0F});
-    assert(mesh.addFace({a, b, c, d}));
+    const FaceId face = mesh.addFace({a, b, c, d});
+    assert(face);
     assert(mesh.validate());
     return document.createMesh("Cache Quad", std::move(mesh));
 }
@@ -118,7 +121,9 @@ int main() {
     // Authored edits change the key. The previous evaluated snapshot remains immutable.
     source = document.mesh(meshId);
     assert(source != nullptr);
-    const auto originalVertexId = source->authoredMesh->vertexIds().front();
+    const EditableMesh* authored = document.authoredMesh(meshId);
+    assert(authored != nullptr);
+    const VertexId originalVertexId = authored->vertexIds().front();
     const std::uint64_t originalRevision = source->revision;
 
     EvaluationCache revisionCache(oneSnapshotBytes * 2U);
