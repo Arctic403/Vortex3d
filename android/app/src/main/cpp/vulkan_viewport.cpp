@@ -86,6 +86,27 @@ void VulkanViewport::detach() noexcept {
     destroySurface();
 }
 
+bool VulkanViewport::rebuildCameraCommandBuffers() {
+    if (!cameraDirty_) {
+        return true;
+    }
+    if (device_ == VK_NULL_HANDLE || commandPool_ == VK_NULL_HANDLE || framebuffers_.empty()) {
+        return false;
+    }
+
+    if (!commandBuffers_.empty()) {
+        vkFreeCommandBuffers(
+            device_, commandPool_, static_cast<std::uint32_t>(commandBuffers_.size()), commandBuffers_.data());
+        commandBuffers_.clear();
+    }
+
+    if (!recordCommandBuffers()) {
+        return false;
+    }
+    cameraDirty_ = false;
+    return true;
+}
+
 bool VulkanViewport::render() {
     if (device_ == VK_NULL_HANDLE || swapchain_ == VK_NULL_HANDLE || commandBuffers_.empty()) {
         return false;
@@ -94,6 +115,12 @@ bool VulkanViewport::render() {
     VkResult result = vkWaitForFences(device_, 1U, &frameFence_, VK_TRUE, std::numeric_limits<std::uint64_t>::max());
     if (result != VK_SUCCESS) {
         return failVk("vkWaitForFences", result);
+    }
+
+    // Camera input only marks state dirty. Re-record after the previous frame fence signals,
+    // keeping gesture JNI calls lightweight and avoiding command-buffer mutation while in flight.
+    if (cameraDirty_ && !rebuildCameraCommandBuffers()) {
+        return false;
     }
 
     std::uint32_t imageIndex = 0;
@@ -162,7 +189,7 @@ std::string VulkanViewport::info() const {
     }
     if (graphicsPipeline_ != VK_NULL_HANDLE && gridPipeline_ != VK_NULL_HANDLE &&
         depthView_ != VK_NULL_HANDLE && indexCount_ != 0U && gridVertexCount_ != 0U) {
-        stream << " | Stage3 camera+grid";
+        stream << " | Stage4 touch camera";
     }
     return stream.str();
 }
@@ -207,6 +234,7 @@ void VulkanViewport::shutdown() noexcept {
     graphicsQueueFamily_ = UINT32_MAX;
     presentQueueFamily_ = UINT32_MAX;
     physicalProperties_ = {};
+    cameraDirty_ = false;
     if (instance_ != VK_NULL_HANDLE) {
         vkDestroyInstance(instance_, nullptr);
         instance_ = VK_NULL_HANDLE;
