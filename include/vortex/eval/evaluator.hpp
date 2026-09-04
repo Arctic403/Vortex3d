@@ -15,6 +15,7 @@ namespace vortex {
 enum class MeshEvaluationError : std::uint8_t {
     None,
     MissingAuthoredMesh,
+    InvalidSourceIdentity,
     InvalidSourceMesh,
     ElementCountOverflow,
     MissingTopologyReference,
