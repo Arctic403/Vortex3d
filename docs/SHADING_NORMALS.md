@@ -43,17 +43,19 @@ A missing `sharp_face` layer therefore means flat shading. `SetFaceSharpCommand`
 
 ### Standard `normal`
 
-The standard Corner-domain `normal : Vec3` in a completed `EvaluatedMesh` is derived output. The final normal stage overwrites any copied bootstrap/legacy Corner `normal` values from authored data.
+The standard Corner-domain `normal : Vec3` in a completed `EvaluatedMesh` is derived output.
 
-The current early `EditableMesh` constructor still creates a Corner `normal` layer for compatibility with existing topology/attribute fixtures. That authored slot is **not** authoritative shading truth. A future authored custom/split-normal feature must use an explicit semantic such as `custom_normal` and define how it participates in evaluation; it must not silently overload the standard derived `normal` contract.
+New `EditableMesh` instances do **not** bootstrap an authored Corner `normal` layer. This avoids paying 12 logical bytes per authored corner for data that evaluation would immediately replace, and it avoids copying that redundant layer into the common evaluated path.
 
-Only final Corner normals are retained in evaluated snapshots. Face normals, corner angles, edge-use counts, and smoothing-fan bookkeeping are temporary operation data and are released after generation.
+Legacy/imported meshes may still contain a Corner `normal` layer. If present, it is compatibility data rather than authoritative standard shading truth: the final normal stage validates its type and overwrites its evaluated storage in place. A future authored custom/split-normal feature must use an explicit semantic such as `custom_normal` and define how it participates in evaluation; it must not silently overload the standard derived `normal` contract.
+
+Only final Corner normals are retained in evaluated snapshots. Face normals, edge-use counts, smoothing-fan bookkeeping, and face-cycle scratch are temporary operation data and are released after generation. Corner-angle weights are computed on demand rather than retained as a separate per-corner array.
 
 ## Geometric face normals
 
 Each evaluated face receives a temporary geometric normal computed from its current evaluated positions using Newell accumulation. This supports triangles, quads, and simple n-gons without requiring authored triangulation.
 
-The accumulated vector is normalized. Non-finite positions, zero-area/degenerate faces, broken face cycles, and invalid topology return structured normal-generation errors instead of producing NaN/Inf values.
+The accumulated vector is normalized. Non-finite positions, zero-area/degenerate faces, collapsed face edges, broken face cycles, and invalid topology return structured normal-generation errors instead of producing NaN/Inf values.
 
 Face winding determines normal direction. Reversing a valid face cycle reverses its geometric normal.
 
@@ -147,7 +149,9 @@ Shading commands advance the authored Mesh revision, so changing `sharp` or `sha
 
 A `Vec3` Corner normal is 12 logical bytes. Large triangulated meshes can therefore spend tens of megabytes on standard shading normals alone.
 
-V0.1 deliberately avoids retaining redundant Face and Vertex normal arrays. Temporary normal-generation data is bounded to packed arrays needed by the operation and is discarded after the Corner normal layer is produced.
+V0.1 deliberately avoids retaining redundant Face and Vertex normal arrays. New authored meshes do not carry a standard Corner normal buffer. During generation, the final evaluated Corner `normal` storage doubles as the smooth-fan accumulation buffer, so there is no separate accumulated Vec3 array plus generated Vec3 array. Corner-angle weights are computed on demand, and one reusable face-cycle vector replaces per-face scratch allocation.
+
+The remaining large temporary structures are packed topology/fan arrays required by the current algorithm. They are explicit future profiling targets rather than a reason to introduce allocator architecture prematurely.
 
 No custom allocator or PMR conversion is introduced by this feature. Future allocator work remains profiling-driven.
 
@@ -163,6 +167,8 @@ The initial 64-bit CI Release smoke on 2026-09-04 measured 250 smooth quads / 1,
 
 Normal coverage includes:
 
+- absence of a standard authored Corner normal bootstrap,
+- evaluated Corner normal materialization,
 - flat default faces,
 - reversed winding,
 - fully smooth cube fans,
