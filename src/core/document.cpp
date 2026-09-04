@@ -1,5 +1,9 @@
 #include "vortex/core/document.hpp"
 
+#include "vortex/mesh/command.hpp"
+#include "vortex/mesh/editable_mesh.hpp"
+
+#include <memory>
 #include <utility>
 
 namespace vortex {
@@ -36,8 +40,18 @@ CollectionId Document::createCollection(const SceneId sceneId, std::string name,
 }
 
 MeshId Document::createMesh(std::string name) {
+    return createMesh(std::move(name), EditableMesh{});
+}
+
+MeshId Document::createMesh(std::string name, EditableMesh authoredMeshValue) {
+    if (!authoredMeshValue.validate()) {
+        return {};
+    }
+
     const MeshId id = allocateId<MeshId>();
-    meshes_.emplace(id, MeshBlock{id, std::move(name), 1});
+    meshes_.emplace(
+        id,
+        MeshBlock{id, std::move(name), std::make_shared<EditableMesh>(std::move(authoredMeshValue)), 1});
     markChanged(DataKind::Mesh, ChangeKind::Created, id.value());
     return id;
 }
@@ -87,6 +101,14 @@ const MeshBlock* Document::mesh(const MeshId id) const noexcept {
 const ObjectBlock* Document::object(const ObjectId id) const noexcept {
     const auto it = objects_.find(id);
     return it == objects_.end() ? nullptr : &it->second;
+}
+
+const EditableMesh* Document::authoredMesh(const MeshId id) const noexcept {
+    const auto it = meshes_.find(id);
+    if (it == meshes_.end() || !it->second.authoredMesh) {
+        return nullptr;
+    }
+    return it->second.authoredMesh.get();
 }
 
 bool Document::renameScene(const SceneId sceneId, std::string name) {
@@ -196,7 +218,7 @@ MeshId Document::makeObjectMeshUnique(const ObjectId objectId) {
     }
 
     const auto sourceIt = meshes_.find(sourceId);
-    if (sourceIt == meshes_.end()) {
+    if (sourceIt == meshes_.end() || !sourceIt->second.authoredMesh) {
         return {};
     }
 
@@ -204,6 +226,7 @@ MeshId Document::makeObjectMeshUnique(const ObjectId objectId) {
     MeshBlock clone = sourceIt->second;
     clone.id = cloneId;
     clone.revision = 1;
+    clone.authoredMesh = std::make_shared<EditableMesh>(*sourceIt->second.authoredMesh);
     meshes_.emplace(cloneId, std::move(clone));
 
     objectIt->second.meshId = cloneId;
@@ -212,6 +235,55 @@ MeshId Document::makeObjectMeshUnique(const ObjectId objectId) {
     markChanged(DataKind::Mesh, ChangeKind::Created, cloneId.value());
     markChanged(DataKind::Object, ChangeKind::Updated, objectId.value());
     return cloneId;
+}
+
+bool Document::executeMeshCommand(
+    const MeshId meshId,
+    MeshHistory& history,
+    MeshCommand& command,
+    MeshCommandResult* result) {
+    const auto meshIt = meshes_.find(meshId);
+    if (meshIt == meshes_.end() || !meshIt->second.authoredMesh) {
+        return false;
+    }
+
+    if (!history.execute(*meshIt->second.authoredMesh, command, result)) {
+        return false;
+    }
+
+    ++meshIt->second.revision;
+    markChanged(DataKind::Mesh, ChangeKind::Updated, meshId.value());
+    return true;
+}
+
+bool Document::undoMeshCommand(const MeshId meshId, MeshHistory& history) {
+    const auto meshIt = meshes_.find(meshId);
+    if (meshIt == meshes_.end() || !meshIt->second.authoredMesh) {
+        return false;
+    }
+
+    if (!history.undo(*meshIt->second.authoredMesh)) {
+        return false;
+    }
+
+    ++meshIt->second.revision;
+    markChanged(DataKind::Mesh, ChangeKind::Updated, meshId.value());
+    return true;
+}
+
+bool Document::redoMeshCommand(const MeshId meshId, MeshHistory& history) {
+    const auto meshIt = meshes_.find(meshId);
+    if (meshIt == meshes_.end() || !meshIt->second.authoredMesh) {
+        return false;
+    }
+
+    if (!history.redo(*meshIt->second.authoredMesh)) {
+        return false;
+    }
+
+    ++meshIt->second.revision;
+    markChanged(DataKind::Mesh, ChangeKind::Updated, meshId.value());
+    return true;
 }
 
 bool Document::linkObjectToCollection(const ObjectId objectId, const CollectionId collectionId) {
@@ -377,7 +449,7 @@ bool Document::validate() const noexcept {
     }
 
     for (const auto& [meshId, mesh] : meshes_) {
-        if (!meshId || mesh.id != meshId) {
+        if (!meshId || mesh.id != meshId || !mesh.authoredMesh || !mesh.authoredMesh->validate()) {
             return false;
         }
     }
