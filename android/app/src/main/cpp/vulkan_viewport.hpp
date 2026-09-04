@@ -17,6 +17,20 @@ struct ViewportVertex {
 };
 static_assert(sizeof(ViewportVertex) == sizeof(float) * 6U);
 
+struct ViewportCamera final {
+    float yawRadians = 0.6108652382F;
+    float pitchRadians = -0.3490658504F;
+    float distance = 7.0F;
+    float fovYRadians = 1.0471975512F;
+    float nearPlane = 0.1F;
+    float farPlane = 100.0F;
+};
+
+struct CameraPushConstants final {
+    std::array<float, 16> viewProjection{};
+};
+static_assert(sizeof(CameraPushConstants) == sizeof(float) * 16U);
+
 class VulkanViewport final {
 public:
     VulkanViewport() = default;
@@ -44,8 +58,10 @@ private:
     [[nodiscard]] bool createSwapchain();
     [[nodiscard]] bool createDepthResources();
     [[nodiscard]] bool createGeometryResources();
+    [[nodiscard]] bool createGridResources();
     [[nodiscard]] bool createGraphicsPipeline();
     [[nodiscard]] bool recordCommandBuffers();
+    [[nodiscard]] CameraPushConstants cameraPushConstants(float aspect) const noexcept;
 
     [[nodiscard]] bool createBuffer(
         VkDeviceSize size,
@@ -95,8 +111,15 @@ private:
     VkDeviceMemory indexMemory_ = VK_NULL_HANDLE;
     std::uint32_t indexCount_ = 0U;
 
+    VkBuffer gridVertexBuffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory gridVertexMemory_ = VK_NULL_HANDLE;
+    std::uint32_t gridVertexCount_ = 0U;
+
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
+    VkPipeline gridPipeline_ = VK_NULL_HANDLE;
+
+    ViewportCamera camera_{};
 
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> commandBuffers_;
