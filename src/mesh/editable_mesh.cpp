@@ -23,7 +23,7 @@ VertexId EditableMesh::addVertex(const Vec3 positionValue) {
     vertices_.emplace(id, MeshVertex{id});
     attributes_.setDomainSize(AttributeDomain::Vertex, vertexOrder_.size());
 
-    auto* positions = attributes_.values<Vec3>("position");
+    auto* positions = attributes_.values<Vec3>("position", AttributeDomain::Vertex);
     if (positions != nullptr) {
         (*positions)[index] = positionValue;
     }
@@ -163,7 +163,7 @@ const MeshCorner* EditableMesh::corner(const CornerId id) const noexcept {
 
 std::optional<Vec3> EditableMesh::position(const VertexId id) const noexcept {
     const auto indexIt = vertexIndex_.find(id);
-    const auto* positions = attributes_.values<Vec3>("position");
+    const auto* positions = attributes_.values<Vec3>("position", AttributeDomain::Vertex);
     if (indexIt == vertexIndex_.end() || positions == nullptr || indexIt->second >= positions->size()) {
         return std::nullopt;
     }
@@ -172,7 +172,7 @@ std::optional<Vec3> EditableMesh::position(const VertexId id) const noexcept {
 
 bool EditableMesh::setPosition(const VertexId id, const Vec3 positionValue) noexcept {
     const auto indexIt = vertexIndex_.find(id);
-    auto* positions = attributes_.values<Vec3>("position");
+    auto* positions = attributes_.values<Vec3>("position", AttributeDomain::Vertex);
     if (indexIt == vertexIndex_.end() || positions == nullptr || indexIt->second >= positions->size()) {
         return false;
     }
