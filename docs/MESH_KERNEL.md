@@ -95,15 +95,21 @@ Implemented foundation primitives:
 - create/remove polygon face,
 - split edge.
 
+Implemented higher-level composition:
+
+- extrude one polygon face by an explicit translation vector.
+
 Future candidates:
 
 - collapse edge,
 - split face,
 - join faces across an edge,
 - duplicate region/topology,
-- reverse face winding.
+- reverse face winding,
+- inset face/region,
+- multi-face region extrusion.
 
-Higher-level tools compose these operations through commands/transactions rather than directly mutating topology storage.
+Higher-level tools compose trusted kernel behavior rather than directly mutating topology storage from UI code.
 
 ## Removal contract
 
@@ -164,16 +170,75 @@ For a face traversing the edge in reverse (`B -> A`), the face-local interpolati
 
 Invalid factors (`t <= 0` or `t >= 1`) are rejected without mutation.
 
+## Face extrude contract
+
+`extrudeFace(face, offset)` is the first recognizable modeling operation in the native kernel.
+
+Given a source polygon with ordered boundary vertices:
+
+```text
+A ---- B
+|      |
+D ---- C
+```
+
+an extrusion duplicates the boundary at `offset`, creates a translated cap, creates one quad side wall per source boundary edge, and removes the original source face:
+
+```text
+A' --- B'
+|\     |\
+| A ---|-B
+| |    | |
+D'| ---C'|
+ \D ---- C
+```
+
+The current contract is:
+
+- the source `FaceId` becomes invalid after a successful extrusion,
+- a fresh `FaceId` identifies the new cap,
+- one fresh `VertexId` is created per source corner/vertex use in the polygon boundary,
+- one fresh side `FaceId` is created per source boundary edge,
+- original boundary vertices and edges survive,
+- adjacent non-extruded faces survive and keep their IDs,
+- new vertex-domain attributes copy from the corresponding source vertex before position is translated,
+- cap face-domain attributes copy from the source face,
+- side face-domain attributes copy from the source face,
+- cap Corner attributes copy from corresponding source Corners,
+- side Corner attributes inherit deterministically from their source/cap endpoint Corners,
+- n-gons are supported,
+- attached faces are supported; existing boundary-edge radial connectivity remains valid,
+- the operation validates before and after mutation,
+- if any construction step fails, the Phase-0 implementation restores a full pre-operation mesh snapshot.
+
+`FaceExtrudeResult` explicitly maps `sourceFace -> capFace` and returns all new side faces and vertices. Editor selection/history code must use this result rather than guessing which new IDs correspond to the operation.
+
+The snapshot rollback is intentionally temporary. Before large production meshes and 32-bit Android undo are enabled, higher-level mesh operations must move to delta/copy-on-write transaction history.
+
 ## ID behavior
 
 - Pure coordinate edits retain topology IDs.
 - Attribute edits retain topology IDs.
 - New topology always receives new IDs.
 - Edge split follows the explicit inheritance contract above.
+- Face extrude returns an explicit source-to-cap mapping because the current source face is replaced rather than retaining its ID.
 - Deleted elements become invalid and their IDs are never silently rebound to new elements.
 - Packed-array compaction never changes a surviving topology ID.
 
 These rules are part of the public modeling contract because selections, commands, undo, modifiers, scripting, serialization, and future AI references may depend on them.
+
+## Donor behavior policy
+
+`Arctic403/Vortex3dGm` remains a behavior/reference donor only. Native tests may reproduce useful behavioral contracts such as:
+
+- polygon faces retain explicit corner/loop topology,
+- coordinate edits preserve topology IDs,
+- edge flags live on the Edge domain,
+- material assignment lives on the Face domain,
+- UVs live on the Corner domain,
+- linked/shared document mesh behavior remains explicit.
+
+The new repository does **not** preserve donor JSON APIs, browser storage, WebView assumptions, or the donor `Core` class architecture merely for compatibility.
 
 ## Evaluation boundary
 
@@ -205,11 +270,19 @@ The native suites now cover:
 - shared-edge split with stable-ID inheritance,
 - vertex attribute interpolation on split,
 - edge attribute copying on split,
-- non-manifold 3-face edge split.
+- non-manifold 3-face edge split,
+- isolated quad extrusion,
+- extrusion of an attached cube face,
+- concave n-gon extrusion,
+- source material inheritance during extrusion,
+- source UV inheritance onto the extrusion cap,
+- deterministic randomized sequences of create/split/remove/move operations with validation after every step,
+- donor behavior contracts for stable IDs and Edge/Face/Corner-authored attributes.
 
 Still required as the kernel grows:
 
 - collapse-edge fixtures,
 - hole/boundary-region fixtures,
-- randomized sequences of trusted operations followed by validation,
-- donor behavior fixtures rewritten as native contract tests rather than architectural source copies.
+- multi-face region extrusion fixtures,
+- larger randomized/fuzz/property-based test campaigns,
+- undo/redo of mesh-level operations through memory-efficient deltas.
