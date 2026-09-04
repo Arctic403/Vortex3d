@@ -5,6 +5,7 @@ import android.graphics.Color;
 import android.os.Bundle;
 import android.view.Choreographer;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -24,12 +25,22 @@ public final class MainActivity extends Activity {
     private static native boolean nativeSurfaceChanged(long handle);
     private static native void nativeSurfaceDestroyed(long handle);
     private static native boolean nativeRenderFrame(long handle);
+    private static native boolean nativeOrbitCamera(long handle, float deltaX, float deltaY);
+    private static native boolean nativePanCamera(long handle, float deltaX, float deltaY);
+    private static native boolean nativeZoomCamera(long handle, float scaleFactor);
     private static native String nativeRendererInfo(long handle);
 
     private long rendererHandle;
     private boolean surfaceReady;
     private boolean frameLoopRunning;
     private TextView statusView;
+
+    private int gesturePointerCount;
+    private float lastTouchX;
+    private float lastTouchY;
+    private float lastCentroidX;
+    private float lastCentroidY;
+    private float lastSpan;
 
     private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
         @Override
@@ -55,6 +66,7 @@ public final class MainActivity extends Activity {
         FrameLayout root = new FrameLayout(this);
         SurfaceView viewport = new SurfaceView(this);
         viewport.setKeepScreenOn(true);
+        viewport.setOnTouchListener((view, event) -> handleViewportTouch(event));
         root.addView(
             viewport,
             new FrameLayout.LayoutParams(
@@ -97,6 +109,7 @@ public final class MainActivity extends Activity {
             @Override
             public void surfaceDestroyed(SurfaceHolder holder) {
                 stopFrameLoop();
+                resetGestureState();
                 if (rendererHandle != 0L) {
                     nativeSurfaceDestroyed(rendererHandle);
                 }
@@ -119,17 +132,118 @@ public final class MainActivity extends Activity {
     @Override
     protected void onPause() {
         stopFrameLoop();
+        resetGestureState();
         super.onPause();
     }
 
     @Override
     protected void onDestroy() {
         stopFrameLoop();
+        resetGestureState();
         if (rendererHandle != 0L) {
             nativeDestroyRenderer(rendererHandle);
             rendererHandle = 0L;
         }
         super.onDestroy();
+    }
+
+    private boolean handleViewportTouch(MotionEvent event) {
+        if (rendererHandle == 0L || !surfaceReady) {
+            resetGestureState();
+            return true;
+        }
+
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                gesturePointerCount = 1;
+                lastTouchX = event.getX(0);
+                lastTouchY = event.getY(0);
+                return true;
+
+            case MotionEvent.ACTION_POINTER_DOWN:
+                if (event.getPointerCount() >= 2) {
+                    beginTwoFingerGesture(event);
+                }
+                return true;
+
+            case MotionEvent.ACTION_MOVE:
+                if (event.getPointerCount() >= 2) {
+                    updateTwoFingerGesture(event);
+                } else if (event.getPointerCount() == 1) {
+                    updateOneFingerGesture(event);
+                }
+                return true;
+
+            case MotionEvent.ACTION_POINTER_UP:
+                // Pointer indices are about to change. Re-anchor on the next MOVE instead of
+                // injecting a jump into the orbit gesture.
+                gesturePointerCount = 0;
+                lastSpan = 0.0f;
+                return true;
+
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                resetGestureState();
+                return true;
+
+            default:
+                return true;
+        }
+    }
+
+    private void updateOneFingerGesture(MotionEvent event) {
+        float x = event.getX(0);
+        float y = event.getY(0);
+        if (gesturePointerCount == 1) {
+            nativeOrbitCamera(rendererHandle, x - lastTouchX, y - lastTouchY);
+        }
+        lastTouchX = x;
+        lastTouchY = y;
+        gesturePointerCount = 1;
+    }
+
+    private void beginTwoFingerGesture(MotionEvent event) {
+        float x0 = event.getX(0);
+        float y0 = event.getY(0);
+        float x1 = event.getX(1);
+        float y1 = event.getY(1);
+        lastCentroidX = (x0 + x1) * 0.5f;
+        lastCentroidY = (y0 + y1) * 0.5f;
+        lastSpan = distance(x0, y0, x1, y1);
+        gesturePointerCount = 2;
+    }
+
+    private void updateTwoFingerGesture(MotionEvent event) {
+        float x0 = event.getX(0);
+        float y0 = event.getY(0);
+        float x1 = event.getX(1);
+        float y1 = event.getY(1);
+        float centroidX = (x0 + x1) * 0.5f;
+        float centroidY = (y0 + y1) * 0.5f;
+        float span = distance(x0, y0, x1, y1);
+
+        if (gesturePointerCount == 2) {
+            nativePanCamera(rendererHandle, centroidX - lastCentroidX, centroidY - lastCentroidY);
+            if (lastSpan > 1.0f && span > 1.0f) {
+                nativeZoomCamera(rendererHandle, span / lastSpan);
+            }
+        }
+
+        lastCentroidX = centroidX;
+        lastCentroidY = centroidY;
+        lastSpan = span;
+        gesturePointerCount = 2;
+    }
+
+    private static float distance(float x0, float y0, float x1, float y1) {
+        float dx = x1 - x0;
+        float dy = y1 - y0;
+        return (float) Math.sqrt(dx * dx + dy * dy);
+    }
+
+    private void resetGestureState() {
+        gesturePointerCount = 0;
+        lastSpan = 0.0f;
     }
 
     private void startFrameLoop() {
