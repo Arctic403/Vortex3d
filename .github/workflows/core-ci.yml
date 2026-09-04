@@ -99,3 +99,26 @@ jobs:
           -DVORTEX_EXPECT_POINTER_BITS=${{ matrix.pointer_bits }}
       - name: Build ${{ matrix.abi }}
         run: cmake --build build-android-${{ matrix.abi }} --parallel
+
+  performance-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure benchmark smoke
+        run: >-
+          cmake -S . -B build-bench
+          -DCMAKE_BUILD_TYPE=Release
+          -DVORTEX_BUILD_TESTS=OFF
+          -DVORTEX_BUILD_BENCHMARKS=ON
+          -DVORTEX_WARNINGS_AS_ERRORS=ON
+      - name: Build benchmark
+        run: cmake --build build-bench --target vortex_mesh_bench --parallel
+      - name: Run benchmark smoke
+        run: ./build-bench/vortex_mesh_bench --smoke --output benchmark-smoke.json
+      - name: Show benchmark smoke
+        run: cat benchmark-smoke.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vortex-benchmark-smoke-${{ github.sha }}
+          path: benchmark-smoke.json
+          retention-days: 14
