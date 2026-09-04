@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -87,18 +88,11 @@ public:
     [[nodiscard]] EdgeId addEdge(VertexId vertexA, VertexId vertexB);
     [[nodiscard]] FaceId addFace(const std::vector<VertexId>& vertices);
 
-    // Safe low-level deletion primitives. They never cascade through still-referenced topology.
     [[nodiscard]] bool removeFace(FaceId id, bool removeUnusedEdges = true);
     [[nodiscard]] bool removeEdge(EdgeId id);
     [[nodiscard]] bool removeVertex(VertexId id);
 
-    // Split contract: the original edge ID survives on vertexA -> newVertex.
-    // A new edge is created for newVertex -> original vertexB.
     [[nodiscard]] std::optional<EdgeSplitResult> splitEdge(EdgeId id, float factor = 0.5F);
-
-    // First higher-level modeling operation. The source face is replaced by a translated
-    // cap plus one quad per source boundary edge. The result maps the deleted source face
-    // to the new cap and exposes all newly created topology for selection/history layers.
     [[nodiscard]] std::optional<FaceExtrudeResult> extrudeFace(FaceId id, Vec3 offset);
 
     [[nodiscard]] bool hasVertex(VertexId id) const noexcept;
@@ -121,6 +115,13 @@ public:
     [[nodiscard]] std::size_t edgeCount() const noexcept { return edgeOrder_.size(); }
     [[nodiscard]] std::size_t faceCount() const noexcept { return faceOrder_.size(); }
     [[nodiscard]] std::size_t cornerCount() const noexcept { return cornerOrder_.size(); }
+
+    // Ordered, read-only topology views for evaluation/export/diagnostics. These expose
+    // stable IDs, not mutable storage or persistent packed-index identity.
+    [[nodiscard]] std::span<const VertexId> vertexIds() const noexcept { return vertexOrder_; }
+    [[nodiscard]] std::span<const EdgeId> edgeIds() const noexcept { return edgeOrder_; }
+    [[nodiscard]] std::span<const FaceId> faceIds() const noexcept { return faceOrder_; }
+    [[nodiscard]] std::span<const CornerId> cornerIds() const noexcept { return cornerOrder_; }
 
     [[nodiscard]] const AttributeSet& attributes() const noexcept { return attributes_; }
     [[nodiscard]] AttributeSet& attributes() noexcept { return attributes_; }
