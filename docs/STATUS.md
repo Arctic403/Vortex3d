@@ -1,6 +1,6 @@
 # Vortex3D Native Status
 
-Last updated: 2026-09-03
+Last updated: 2026-09-04
 
 ## Current phase
 
@@ -25,16 +25,19 @@ Last updated: 2026-09-03
 - Face boundary `next/prev` cycles and edge radial Corner cycles implemented.
 - Non-manifold radial topology with 3+ faces around one edge is supported and tested.
 - Generic typed AttributeSet implemented with `(name, domain)` identity so the same semantic name can coexist on different domains.
+- Generic deterministic attribute compaction, copying, and interpolation helpers implemented.
 - Initial attributes implemented: position, crease, sharp, seam, material index, UV, and corner normal.
 - Mesh validator reports structured diagnostics for topology and attribute invariant failures.
-- First trusted topology primitives implemented: add vertex, find/create edge, add polygon face.
+- Validator now proves each Corner edge connects that Corner to the next face Corner and every radial cycle covers all live uses of its edge.
+- Trusted topology primitives implemented: add/remove vertex, add/remove edge, add/remove polygon face, and split edge.
+- Face removal compacts Face/Corner attributes, rebuilds radials, and optionally removes unused affected edges without silently deleting vertices.
+- Edge/vertex removal are conservative and reject still-referenced topology.
+- Edge split has a locked stable-ID contract: original edge ID survives on `vertexA -> newVertex`; the second segment receives a fresh edge ID.
+- Edge split interpolates vertex/corner attributes, copies edge attributes, updates every radial face, and supports boundary/manifold/non-manifold topology.
 - Authoring n-gons are supported; concave n-gon, shared-edge, non-manifold, and cube fixtures pass validation.
-- Native CTest coverage contains Document/Transaction and Mesh Kernel suites.
-- Local GCC-style warnings-as-errors build passes 2/2 tests.
-- Local Clang build passes 2/2 tests.
-- Local AddressSanitizer + UndefinedBehaviorSanitizer build passes 2/2 tests.
-- Portable-core boundary scanner passes locally.
-- GitHub CI now gates GCC, Clang, warnings-as-errors, ASan/UBSan, and the portable-core boundary.
+- Native CTest coverage now contains Document/Transaction, Mesh Kernel, and Mesh Mutation suites.
+- GCC, Clang, warnings-as-errors, AddressSanitizer, UndefinedBehaviorSanitizer, and portable-core boundary checks pass on GitHub-hosted runners for the edge-split/removal code.
+- Portable core remains free of Android/JNI/Vulkan/WebView/Emscripten/Three.js/platform-header dependencies.
 - `.clang-format`, `.clang-tidy`, and `docs/STYLE.md` establish the code-quality policy.
 
 ## Phase 0.1 — Document hardening
@@ -64,10 +67,14 @@ Last updated: 2026-09-03
 - [x] Add non-manifold 3+ radial-face fixture.
 - [x] Add concave n-gon fixture.
 - [x] Add closed cube fixture.
-- [ ] Add removal primitive(s) with deterministic attribute compaction rules.
-- [ ] Add an edge-split primitive with an explicit ID-inheritance contract.
+- [x] Add removal primitives with deterministic attribute compaction rules.
+- [x] Add edge-split primitive with explicit ID-inheritance contract.
+- [x] Test edge split across a shared manifold edge.
+- [x] Test edge split across a 3-face non-manifold radial edge.
+- [x] Test vertex interpolation and edge-attribute inheritance during split.
 - [ ] Port donor topology fixtures as behavior tests, not source-copy architecture.
 - [ ] Add randomized trusted-operation validation tests.
+- [ ] Add the next trusted topology primitive needed by the first higher-level modeling operation.
 
 ## Phase 0.3 — Portability gate
 
@@ -77,13 +84,20 @@ Last updated: 2026-09-03
 - [x] Add formatting/static-analysis policy.
 - [x] Add portable-core dependency scanner.
 - [x] Confirm the current core has no Android/JNI/Vulkan/WebView/Emscripten/Three.js/platform-header dependency.
-- [ ] Confirm the latest expanded GitHub Actions matrix completes successfully on GitHub-hosted runners.
+- [x] Confirm the expanded GitHub Actions matrix completes successfully on GitHub-hosted runners with the mutation kernel enabled.
+
+**Phase 0.3 portability gates are established and green.**
 
 ## Next engineering target
 
-The next kernel slice is **topology removal + edge split**. That is the point where stable-ID inheritance and attribute compaction stop being theoretical and become enforceable behavior.
+The next kernel work is now **behavior hardening and composition**:
 
-After that, the first higher-level modeling operation should be built from trusted primitives rather than bypassing them.
+1. randomized trusted-operation validation,
+2. donor topology fixtures rewritten as native contract tests,
+3. choose and implement the next primitive required for a real higher-level modeling operation,
+4. build that operation through the trusted kernel rather than bypassing topology contracts.
+
+The leading higher-level target remains a simple **face extrude** path because it exercises duplication, side-face creation, transforms, stable selection identities, commands, and eventual undo without forcing us to build the entire modeling toolset first.
 
 ## First architecture milestone
 
