@@ -1,4 +1,9 @@
-Checks: '-*,bugprone-*,performance-*,portability-*'
+Checks: >-
+  -*,
+  bugprone-*,
+  performance-*,
+  portability-*,
+  -bugprone-easily-swappable-parameters
 WarningsAsErrors: ''
-HeaderFilterRegex: '^(include|src)/'
+HeaderFilterRegex: '^(.*\/)?(include\/vortex|src)\/'
 FormatStyle: file

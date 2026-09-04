@@ -9,9 +9,7 @@ jobs:
   portable-boundary:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Check portable core boundary
         run: python3 scripts/check_core_portability.py
 
@@ -24,15 +22,11 @@ jobs:
     env:
       CXX: ${{ matrix.cxx }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DVORTEX_BUILD_TESTS=ON -DVORTEX_WARNINGS_AS_ERRORS=ON
-
       - name: Build
         run: cmake --build build --config Debug --parallel
-
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
@@ -40,23 +34,68 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CXX: clang++
-      ASAN_OPTIONS: detect_leaks=1
-      UBSAN_OPTIONS: halt_on_error=1
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Configure ASan + UBSan
         run: >-
-          cmake -S . -B build-san
+          cmake -S . -B build-sanitize
           -DCMAKE_BUILD_TYPE=Debug
           -DVORTEX_BUILD_TESTS=ON
           -DVORTEX_WARNINGS_AS_ERRORS=ON
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
-
       - name: Build
-        run: cmake --build build-san --parallel
-
+        run: cmake --build build-sanitize --parallel
       - name: Test under sanitizers
-        run: ctest --test-dir build-san --output-on-failure
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir build-sanitize --output-on-failure
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    env:
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show clang-tidy version
+        run: clang-tidy --version
+      - name: Configure compile database
+        run: >-
+          cmake -S . -B build-tidy
+          -DCMAKE_BUILD_TYPE=Debug
+          -DVORTEX_BUILD_TESTS=OFF
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+      - name: Run clang-tidy
+        run: |
+          mapfile -t SOURCES < <(find src -name '*.cpp' -print | sort)
+          clang-tidy "${SOURCES[@]}" -p build-tidy --quiet --warnings-as-errors='bugprone-*,performance-*,portability-*'
+
+  android-core:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: armeabi-v7a
+            pointer_bits: 32
+          - abi: arm64-v8a
+            pointer_bits: 64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Android NDK
+        run: |
+          test -f "$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake"
+          echo "Using NDK: $ANDROID_NDK_LATEST_HOME"
+      - name: Configure ${{ matrix.abi }}
+        run: >-
+          cmake -S . -B build-android-${{ matrix.abi }}
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake"
+          -DANDROID_ABI=${{ matrix.abi }}
+          -DANDROID_PLATFORM=android-26
+          -DVORTEX_BUILD_TESTS=OFF
+          -DVORTEX_WARNINGS_AS_ERRORS=ON
+          -DVORTEX_EXPECT_POINTER_BITS=${{ matrix.pointer_bits }}
+      - name: Build ${{ matrix.abi }}
+        run: cmake --build build-android-${{ matrix.abi }} --parallel

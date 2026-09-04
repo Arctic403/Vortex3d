@@ -8,6 +8,15 @@ project(Vortex3D
 
 option(VORTEX_BUILD_TESTS "Build Vortex3D native tests" ON)
 option(VORTEX_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+set(VORTEX_EXPECT_POINTER_BITS "" CACHE STRING "Expected target pointer width for portability validation")
+
+if(VORTEX_EXPECT_POINTER_BITS)
+    math(EXPR VORTEX_POINTER_BITS "${CMAKE_SIZEOF_VOID_P} * 8")
+    if(NOT VORTEX_POINTER_BITS EQUAL VORTEX_EXPECT_POINTER_BITS)
+        message(FATAL_ERROR
+            "Vortex3D target pointer width mismatch: expected ${VORTEX_EXPECT_POINTER_BITS}, got ${VORTEX_POINTER_BITS}")
+    endif()
+endif()
 
 add_library(vortex_core STATIC
     src/core/command.cpp
