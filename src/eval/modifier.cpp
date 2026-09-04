@@ -106,6 +106,10 @@ void transformNormals(
     return false;
 }
 
+[[nodiscard]] bool validMirrorWeld(const MirrorWeldSettings weld) noexcept {
+    return std::isfinite(weld.tolerance) && weld.tolerance >= 0.0F;
+}
+
 [[nodiscard]] bool canDoubleGeneratedCount(const std::size_t count) noexcept {
     constexpr auto maxIndex = std::numeric_limits<EvaluatedMesh::Index>::max();
     return count <= static_cast<std::size_t>(maxIndex) / 2U;
@@ -124,8 +128,42 @@ void transformNormals(
     return true;
 }
 
+[[nodiscard]] bool appendCopiedAttributeRow(
+    AttributeSet& attributes,
+    const AttributeDomain domain,
+    const std::size_t sourceIndex) {
+    const auto row = attributes.captureDomainIndex(domain, sourceIndex);
+    return row.has_value() && attributes.appendDomainRow(domain, *row);
+}
+
 [[nodiscard]] float mirroredCoordinate(const float value, const float planeOffset) noexcept {
     return (2.0F * planeOffset) - value;
+}
+
+[[nodiscard]] float axisCoordinate(const Vec3 value, const MirrorAxis axis) noexcept {
+    switch (axis) {
+    case MirrorAxis::X:
+        return value.x;
+    case MirrorAxis::Y:
+        return value.y;
+    case MirrorAxis::Z:
+        return value.z;
+    }
+    return 0.0F;
+}
+
+void setAxisCoordinate(Vec3& value, const MirrorAxis axis, const float coordinate) noexcept {
+    switch (axis) {
+    case MirrorAxis::X:
+        value.x = coordinate;
+        break;
+    case MirrorAxis::Y:
+        value.y = coordinate;
+        break;
+    case MirrorAxis::Z:
+        value.z = coordinate;
+        break;
+    }
 }
 
 void mirrorVector(Vec3& value, const MirrorAxis axis, const float planeOffset, const bool isNormal) noexcept {
@@ -155,6 +193,65 @@ void mirrorNormals(
     for (std::size_t index = 0; index < sourceCount; ++index) {
         mirrorVector((*normals)[sourceCount + index], axis, 0.0F, true);
     }
+}
+
+void mirrorNormalAt(
+    AttributeSet& attributes,
+    const AttributeDomain domain,
+    const std::size_t index,
+    const MirrorAxis axis) noexcept {
+    auto* normals = attributes.values<Vec3>("normal", domain);
+    if (normals == nullptr || index >= normals->size()) {
+        return;
+    }
+    mirrorVector((*normals)[index], axis, 0.0F, true);
+}
+
+[[nodiscard]] bool collectFaceCycle(
+    const EvaluatedFace& face,
+    const std::vector<EvaluatedCorner>& corners,
+    const std::size_t sourceCornerCount,
+    std::vector<EvaluatedMesh::Index>& cycle) {
+    if (face.cornerCount < 3U || face.firstCorner >= sourceCornerCount) {
+        return false;
+    }
+
+    cycle.clear();
+    cycle.reserve(face.cornerCount);
+    EvaluatedMesh::Index cursor = face.firstCorner;
+    for (std::uint32_t step = 0; step < face.cornerCount; ++step) {
+        if (cursor >= sourceCornerCount) {
+            return false;
+        }
+        cycle.push_back(cursor);
+        cursor = corners[cursor].next;
+    }
+    return cursor == face.firstCorner;
+}
+
+[[nodiscard]] bool rebuildRadialRings(
+    const std::size_t edgeCount,
+    std::vector<EvaluatedCorner>& corners) {
+    std::vector<std::vector<EvaluatedMesh::Index>> uses(edgeCount);
+    for (std::size_t index = 0; index < corners.size(); ++index) {
+        const EvaluatedCorner& corner = corners[index];
+        if (corner.edge >= edgeCount) {
+            return false;
+        }
+        uses[corner.edge].push_back(static_cast<EvaluatedMesh::Index>(index));
+    }
+
+    for (const auto& edgeUses : uses) {
+        if (edgeUses.empty()) {
+            continue;
+        }
+        for (std::size_t index = 0; index < edgeUses.size(); ++index) {
+            EvaluatedCorner& corner = corners[edgeUses[index]];
+            corner.radialNext = edgeUses[(index + 1U) % edgeUses.size()];
+            corner.radialPrev = edgeUses[(index + edgeUses.size() - 1U) % edgeUses.size()];
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -211,12 +308,17 @@ ModifierApplyResult TransformModifier::apply(EvaluatedMesh& mesh) const {
 std::uint64_t MirrorModifier::revisionToken() const noexcept {
     std::uint64_t hash = 1469598103934665603ULL;
     hash = mixByte(hash, static_cast<std::uint8_t>(axis_));
-    return mixFloat(hash, planeOffset_);
+    hash = mixFloat(hash, planeOffset_);
+    hash = mixByte(hash, weld_.enabled ? std::uint8_t{1} : std::uint8_t{0});
+    return mixFloat(hash, weld_.tolerance);
 }
 
 ModifierApplyResult MirrorModifier::apply(EvaluatedMesh& mesh) const {
     if (!validMirrorAxis(axis_) || !std::isfinite(planeOffset_)) {
         return {ModifierApplyError::InvalidMirror};
+    }
+    if (!validMirrorWeld(weld_)) {
+        return {ModifierApplyError::InvalidMirrorWeld};
     }
 
     const std::size_t sourceVertexCount = mesh.vertexCount();
@@ -234,6 +336,12 @@ ModifierApplyResult MirrorModifier::apply(EvaluatedMesh& mesh) const {
     if (positions == nullptr || positions->size() != sourceVertexCount) {
         return {ModifierApplyError::MissingPositionAttribute};
     }
+    if (!attributes.validateSizes() || attributes.domainSize(AttributeDomain::Vertex) != sourceVertexCount ||
+        attributes.domainSize(AttributeDomain::Edge) != sourceEdgeCount ||
+        attributes.domainSize(AttributeDomain::Face) != sourceFaceCount ||
+        attributes.domainSize(AttributeDomain::Corner) != sourceCornerCount) {
+        return {ModifierApplyError::AttributeCopyFailed};
+    }
 
     std::vector<EvaluatedVertex>& vertices = mutableVertices(mesh);
     std::vector<EvaluatedEdge>& edges = mutableEdges(mesh);
@@ -245,79 +353,209 @@ ModifierApplyResult MirrorModifier::apply(EvaluatedMesh& mesh) const {
     faces.reserve(sourceFaceCount * 2U);
     corners.reserve(sourceCornerCount * 2U);
 
+    if (!weld_.enabled) {
+        for (std::size_t index = 0; index < sourceVertexCount; ++index) {
+            vertices.push_back(vertices[index]);
+        }
+
+        const EvaluatedMesh::Index vertexOffset = static_cast<EvaluatedMesh::Index>(sourceVertexCount);
+        for (std::size_t index = 0; index < sourceEdgeCount; ++index) {
+            const EvaluatedEdge source = edges[index];
+            edges.push_back(EvaluatedEdge{
+                static_cast<EvaluatedMesh::Index>(vertexOffset + source.vertexA),
+                static_cast<EvaluatedMesh::Index>(vertexOffset + source.vertexB),
+                source.sourceId});
+        }
+
+        const EvaluatedMesh::Index cornerOffset = static_cast<EvaluatedMesh::Index>(sourceCornerCount);
+        for (std::size_t index = 0; index < sourceFaceCount; ++index) {
+            const EvaluatedFace source = faces[index];
+            faces.push_back(EvaluatedFace{
+                static_cast<EvaluatedMesh::Index>(cornerOffset + source.firstCorner),
+                source.cornerCount,
+                source.sourceId});
+        }
+
+        const EvaluatedMesh::Index edgeOffset = static_cast<EvaluatedMesh::Index>(sourceEdgeCount);
+        std::vector<std::vector<EvaluatedMesh::Index>> mirroredRadialUses(sourceEdgeCount);
+        for (std::size_t index = 0; index < sourceCornerCount; ++index) {
+            const EvaluatedCorner source = corners[index];
+            const EvaluatedCorner sourcePrevious = corners[source.prev];
+            const EvaluatedMesh::Index mirroredEdge =
+                static_cast<EvaluatedMesh::Index>(edgeOffset + sourcePrevious.edge);
+            const EvaluatedMesh::Index mirroredCorner =
+                static_cast<EvaluatedMesh::Index>(cornerOffset + static_cast<EvaluatedMesh::Index>(index));
+
+            corners.push_back(EvaluatedCorner{
+                static_cast<EvaluatedMesh::Index>(vertexOffset + source.vertex),
+                mirroredEdge,
+                static_cast<EvaluatedMesh::Index>(cornerOffset + source.prev),
+                static_cast<EvaluatedMesh::Index>(cornerOffset + source.next),
+                mirroredCorner,
+                mirroredCorner,
+                source.sourceId});
+
+            mirroredRadialUses[static_cast<std::size_t>(mirroredEdge - edgeOffset)].push_back(mirroredCorner);
+        }
+
+        for (const auto& uses : mirroredRadialUses) {
+            if (uses.empty()) {
+                continue;
+            }
+            for (std::size_t index = 0; index < uses.size(); ++index) {
+                EvaluatedCorner& corner = corners[uses[index]];
+                corner.radialNext = uses[(index + 1U) % uses.size()];
+                corner.radialPrev = uses[(index + uses.size() - 1U) % uses.size()];
+            }
+        }
+
+        if (!duplicateAttributeRows(attributes, AttributeDomain::Vertex, sourceVertexCount) ||
+            !duplicateAttributeRows(attributes, AttributeDomain::Edge, sourceEdgeCount) ||
+            !duplicateAttributeRows(attributes, AttributeDomain::Face, sourceFaceCount) ||
+            !duplicateAttributeRows(attributes, AttributeDomain::Corner, sourceCornerCount)) {
+            return {ModifierApplyError::AttributeCopyFailed};
+        }
+
+        positions = attributes.values<Vec3>("position", AttributeDomain::Vertex);
+        if (positions == nullptr || positions->size() != sourceVertexCount * 2U) {
+            return {ModifierApplyError::AttributeCopyFailed};
+        }
+        for (std::size_t index = 0; index < sourceVertexCount; ++index) {
+            mirrorVector((*positions)[sourceVertexCount + index], axis_, planeOffset_, false);
+        }
+
+        mirrorNormals(attributes, AttributeDomain::Vertex, sourceVertexCount, axis_);
+        mirrorNormals(attributes, AttributeDomain::Corner, sourceCornerCount, axis_);
+        return {};
+    }
+
+    const std::vector<Vec3> sourcePositions(positions->begin(), positions->end());
+    std::vector<EvaluatedMesh::Index> mirroredVertex(sourceVertexCount);
+    std::vector<bool> weldedVertex(sourceVertexCount, false);
+
     for (std::size_t index = 0; index < sourceVertexCount; ++index) {
-        const EvaluatedVertex source = vertices[index];
-        vertices.push_back(source);
-    }
-
-    const EvaluatedMesh::Index vertexOffset = static_cast<EvaluatedMesh::Index>(sourceVertexCount);
-    for (std::size_t index = 0; index < sourceEdgeCount; ++index) {
-        const EvaluatedEdge source = edges[index];
-        edges.push_back(EvaluatedEdge{
-            static_cast<EvaluatedMesh::Index>(vertexOffset + source.vertexA),
-            static_cast<EvaluatedMesh::Index>(vertexOffset + source.vertexB),
-            source.sourceId});
-    }
-
-    const EvaluatedMesh::Index cornerOffset = static_cast<EvaluatedMesh::Index>(sourceCornerCount);
-    for (std::size_t index = 0; index < sourceFaceCount; ++index) {
-        const EvaluatedFace source = faces[index];
-        faces.push_back(EvaluatedFace{
-            static_cast<EvaluatedMesh::Index>(cornerOffset + source.firstCorner),
-            source.cornerCount,
-            source.sourceId});
-    }
-
-    const EvaluatedMesh::Index edgeOffset = static_cast<EvaluatedMesh::Index>(sourceEdgeCount);
-    std::vector<std::vector<EvaluatedMesh::Index>> mirroredRadialUses(sourceEdgeCount);
-    for (std::size_t index = 0; index < sourceCornerCount; ++index) {
-        const EvaluatedCorner source = corners[index];
-        const EvaluatedCorner sourcePrevious = corners[source.prev];
-        const EvaluatedMesh::Index mirroredEdge =
-            static_cast<EvaluatedMesh::Index>(edgeOffset + sourcePrevious.edge);
-        const EvaluatedMesh::Index mirroredCorner =
-            static_cast<EvaluatedMesh::Index>(cornerOffset + static_cast<EvaluatedMesh::Index>(index));
-
-        corners.push_back(EvaluatedCorner{
-            static_cast<EvaluatedMesh::Index>(vertexOffset + source.vertex),
-            mirroredEdge,
-            static_cast<EvaluatedMesh::Index>(cornerOffset + source.prev),
-            static_cast<EvaluatedMesh::Index>(cornerOffset + source.next),
-            mirroredCorner,
-            mirroredCorner,
-            source.sourceId});
-
-        mirroredRadialUses[static_cast<std::size_t>(mirroredEdge - edgeOffset)].push_back(mirroredCorner);
-    }
-
-    for (const auto& uses : mirroredRadialUses) {
-        if (uses.empty()) {
+        const float distance = std::abs(axisCoordinate(sourcePositions[index], axis_) - planeOffset_);
+        if (distance <= weld_.tolerance) {
+            mirroredVertex[index] = static_cast<EvaluatedMesh::Index>(index);
+            weldedVertex[index] = true;
+            auto* currentPositions = attributes.values<Vec3>("position", AttributeDomain::Vertex);
+            if (currentPositions == nullptr || index >= currentPositions->size()) {
+                return {ModifierApplyError::AttributeCopyFailed};
+            }
+            setAxisCoordinate((*currentPositions)[index], axis_, planeOffset_);
             continue;
         }
-        for (std::size_t index = 0; index < uses.size(); ++index) {
-            EvaluatedCorner& corner = corners[uses[index]];
-            corner.radialNext = uses[(index + 1U) % uses.size()];
-            corner.radialPrev = uses[(index + uses.size() - 1U) % uses.size()];
+
+        const EvaluatedMesh::Index destination = static_cast<EvaluatedMesh::Index>(vertices.size());
+        vertices.push_back(vertices[index]);
+        if (!appendCopiedAttributeRow(attributes, AttributeDomain::Vertex, index)) {
+            return {ModifierApplyError::AttributeCopyFailed};
+        }
+        mirroredVertex[index] = destination;
+
+        auto* currentPositions = attributes.values<Vec3>("position", AttributeDomain::Vertex);
+        if (currentPositions == nullptr || destination >= currentPositions->size()) {
+            return {ModifierApplyError::AttributeCopyFailed};
+        }
+        Vec3 mirroredPosition = sourcePositions[index];
+        mirrorVector(mirroredPosition, axis_, planeOffset_, false);
+        (*currentPositions)[destination] = mirroredPosition;
+        mirrorNormalAt(attributes, AttributeDomain::Vertex, destination, axis_);
+    }
+
+    std::vector<EvaluatedMesh::Index> mirroredEdge(sourceEdgeCount);
+    for (std::size_t index = 0; index < sourceEdgeCount; ++index) {
+        const EvaluatedEdge source = edges[index];
+        if (source.vertexA >= sourceVertexCount || source.vertexB >= sourceVertexCount) {
+            return {ModifierApplyError::GeneratedTopologyInvalid};
+        }
+
+        if (weldedVertex[source.vertexA] && weldedVertex[source.vertexB]) {
+            mirroredEdge[index] = static_cast<EvaluatedMesh::Index>(index);
+            continue;
+        }
+
+        const EvaluatedMesh::Index destination = static_cast<EvaluatedMesh::Index>(edges.size());
+        edges.push_back(EvaluatedEdge{
+            mirroredVertex[source.vertexA],
+            mirroredVertex[source.vertexB],
+            source.sourceId});
+        if (!appendCopiedAttributeRow(attributes, AttributeDomain::Edge, index)) {
+            return {ModifierApplyError::AttributeCopyFailed};
+        }
+        mirroredEdge[index] = destination;
+    }
+
+    std::vector<EvaluatedMesh::Index> cycle;
+    for (std::size_t faceIndex = 0; faceIndex < sourceFaceCount; ++faceIndex) {
+        const EvaluatedFace sourceFace = faces[faceIndex];
+        if (!collectFaceCycle(sourceFace, corners, sourceCornerCount, cycle)) {
+            return {ModifierApplyError::GeneratedTopologyInvalid};
+        }
+
+        bool allVerticesWelded = true;
+        for (const EvaluatedMesh::Index cornerIndex : cycle) {
+            const EvaluatedCorner& sourceCorner = corners[cornerIndex];
+            if (sourceCorner.vertex >= sourceVertexCount) {
+                return {ModifierApplyError::GeneratedTopologyInvalid};
+            }
+            allVerticesWelded = allVerticesWelded && weldedVertex[sourceCorner.vertex];
+        }
+        if (allVerticesWelded) {
+            continue;
+        }
+
+        const EvaluatedMesh::Index firstMirroredCorner = static_cast<EvaluatedMesh::Index>(corners.size());
+        faces.push_back(EvaluatedFace{firstMirroredCorner, sourceFace.cornerCount, sourceFace.sourceId});
+        if (!appendCopiedAttributeRow(attributes, AttributeDomain::Face, faceIndex)) {
+            return {ModifierApplyError::AttributeCopyFailed};
+        }
+
+        const std::size_t faceCornerCount = cycle.size();
+        for (std::size_t offset = 0; offset < faceCornerCount; ++offset) {
+            const EvaluatedMesh::Index sourceCornerIndex =
+                offset == 0U ? cycle[0] : cycle[faceCornerCount - offset];
+            const EvaluatedCorner sourceCorner = corners[sourceCornerIndex];
+            if (sourceCorner.vertex >= sourceVertexCount || sourceCorner.prev >= sourceCornerCount) {
+                return {ModifierApplyError::GeneratedTopologyInvalid};
+            }
+            const EvaluatedCorner sourcePrevious = corners[sourceCorner.prev];
+            if (sourcePrevious.edge >= sourceEdgeCount) {
+                return {ModifierApplyError::GeneratedTopologyInvalid};
+            }
+
+            const EvaluatedMesh::Index destination = static_cast<EvaluatedMesh::Index>(corners.size());
+            const EvaluatedMesh::Index next = static_cast<EvaluatedMesh::Index>(
+                firstMirroredCorner + static_cast<EvaluatedMesh::Index>((offset + 1U) % faceCornerCount));
+            const EvaluatedMesh::Index prev = static_cast<EvaluatedMesh::Index>(
+                firstMirroredCorner + static_cast<EvaluatedMesh::Index>((offset + faceCornerCount - 1U) % faceCornerCount));
+
+            corners.push_back(EvaluatedCorner{
+                mirroredVertex[sourceCorner.vertex],
+                mirroredEdge[sourcePrevious.edge],
+                next,
+                prev,
+                destination,
+                destination,
+                sourceCorner.sourceId});
+            if (!appendCopiedAttributeRow(attributes, AttributeDomain::Corner, sourceCornerIndex)) {
+                return {ModifierApplyError::AttributeCopyFailed};
+            }
+            mirrorNormalAt(attributes, AttributeDomain::Corner, destination, axis_);
         }
     }
 
-    if (!duplicateAttributeRows(attributes, AttributeDomain::Vertex, sourceVertexCount) ||
-        !duplicateAttributeRows(attributes, AttributeDomain::Edge, sourceEdgeCount) ||
-        !duplicateAttributeRows(attributes, AttributeDomain::Face, sourceFaceCount) ||
-        !duplicateAttributeRows(attributes, AttributeDomain::Corner, sourceCornerCount)) {
+    if (!rebuildRadialRings(edges.size(), corners)) {
+        return {ModifierApplyError::GeneratedTopologyInvalid};
+    }
+
+    if (!attributes.validateSizes() || attributes.domainSize(AttributeDomain::Vertex) != vertices.size() ||
+        attributes.domainSize(AttributeDomain::Edge) != edges.size() ||
+        attributes.domainSize(AttributeDomain::Face) != faces.size() ||
+        attributes.domainSize(AttributeDomain::Corner) != corners.size()) {
         return {ModifierApplyError::AttributeCopyFailed};
     }
 
-    positions = attributes.values<Vec3>("position", AttributeDomain::Vertex);
-    if (positions == nullptr || positions->size() != sourceVertexCount * 2U) {
-        return {ModifierApplyError::AttributeCopyFailed};
-    }
-    for (std::size_t index = 0; index < sourceVertexCount; ++index) {
-        mirrorVector((*positions)[sourceVertexCount + index], axis_, planeOffset_, false);
-    }
-
-    mirrorNormals(attributes, AttributeDomain::Vertex, sourceVertexCount, axis_);
-    mirrorNormals(attributes, AttributeDomain::Corner, sourceCornerCount, axis_);
     return {};
 }
 
