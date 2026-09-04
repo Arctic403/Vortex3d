@@ -93,6 +93,11 @@ jobs:
             pointer_bits: 64
     steps:
       - uses: actions/checkout@v4
+      - name: Install Vulkan shader compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y glslc
+          glslc --version
       - name: Verify Android NDK
         run: |
           test -f "$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake"
@@ -122,6 +127,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      - name: Install Vulkan shader compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y glslc
+          glslc --version
       - name: Build split + universal debug APKs
         run: gradle -p android :app:assembleDebug --no-daemon
       - name: Verify ABI packaging
