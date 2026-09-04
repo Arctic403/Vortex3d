@@ -278,8 +278,8 @@ public final class MainActivity extends Activity {
             float combinedY = move0Y + move1Y;
             float combinedTravel = magnitude(combinedX, combinedY);
             boolean symmetricPinch =
-                spanTravel >= touchSlop * 1.35f &&
-                centroidTravel <= Math.max(touchSlop, spanTravel * 0.35f) &&
+                spanTravel >= touchSlop * 1.15f &&
+                centroidTravel <= Math.max(touchSlop, spanTravel * 0.40f) &&
                 totalFingerTravel >= touchSlop * 2.0f &&
                 combinedTravel <= totalFingerTravel * 0.40f;
 
@@ -324,7 +324,7 @@ public final class MainActivity extends Activity {
             // Zoom only while the pinch remains substantially more radial than
             // translational. This is the per-frame symmetry guard.
             if (lastSpan > 1.0f && span > 1.0f &&
-                spanDelta >= centroidDelta * 1.5f) {
+                spanDelta >= centroidDelta * 1.30f) {
                 nativeZoomCamera(rendererHandle, span / lastSpan);
             }
         }
