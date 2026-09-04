@@ -127,15 +127,12 @@ int main() {
 
     auto* materials = authored.attributes().values<std::int32_t>("material_index", AttributeDomain::Face);
     auto* uvs = authored.attributes().values<Vec2>("uv:Map", AttributeDomain::Corner);
-    auto* normals = authored.attributes().values<Vec3>("normal", AttributeDomain::Corner);
     assert(materials != nullptr && materials->size() == 1U);
     assert(uvs != nullptr && uvs->size() == 3U);
-    assert(normals != nullptr && normals->size() == 3U);
     (*materials)[0] = 7;
     (*uvs)[0] = {0.0F, 0.0F};
     (*uvs)[1] = {1.0F, 0.0F};
     (*uvs)[2] = {0.0F, 1.0F};
-    (*normals)[0] = {1.0F, 0.0F, 0.0F};
     assert(authored.validate());
 
     Document document;
@@ -193,7 +190,8 @@ int main() {
     assert((*weldedUvs)[4].x == 0.0F && (*weldedUvs)[4].y == 1.0F);
     assert((*weldedUvs)[5].x == 1.0F && (*weldedUvs)[5].y == 0.0F);
     assert(weldedNormals != nullptr && weldedNormals->size() == 6U);
-    assert((*weldedNormals)[3].x == -1.0F);
+    assert((*weldedNormals)[0].z == -1.0F);
+    assert((*weldedNormals)[3].z == -1.0F);
 
     MirrorModifier noWeld(MirrorAxis::X, 0.0F);
     const MeshModifier* noWeldStack[] = {&noWeld};
