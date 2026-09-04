@@ -9,6 +9,7 @@ project(Vortex3D
 option(VORTEX_BUILD_TESTS "Build Vortex3D native tests" ON)
 
 add_library(vortex_core STATIC
+    src/core/command.cpp
     src/core/document.cpp
 )
 
