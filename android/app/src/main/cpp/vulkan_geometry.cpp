@@ -4,7 +4,6 @@
 #include "vortex/engine.hpp"
 
 #include <array>
-#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <utility>
@@ -40,7 +39,7 @@ namespace {
     }
 
     Document document;
-    const MeshId meshId = document.createMesh("Stage2 Engine Cube", std::move(authored));
+    const MeshId meshId = document.createMesh("Stage3 Engine Cube", std::move(authored));
     const MeshBlock* block = document.mesh(meshId);
     if (!meshId || block == nullptr) {
         return false;
@@ -75,6 +74,44 @@ namespace {
         indices.push_back(triangle.c);
     }
     return !vertices.empty() && !indices.empty();
+}
+
+[[nodiscard]] std::vector<ViewportVertex> buildGridVertices() {
+    constexpr int halfExtent = 10;
+    constexpr float minor = 0.20F;
+    constexpr float major = 0.32F;
+    std::vector<ViewportVertex> vertices;
+    vertices.reserve(96U);
+
+    const auto addLine = [&vertices](
+        const std::array<float, 3>& a,
+        const std::array<float, 3>& b,
+        const std::array<float, 3>& color) {
+        vertices.push_back(ViewportVertex{a, color});
+        vertices.push_back(ViewportVertex{b, color});
+    };
+
+    for (int coordinate = -halfExtent; coordinate <= halfExtent; ++coordinate) {
+        if (coordinate == 0) {
+            continue;
+        }
+        const float value = static_cast<float>(coordinate);
+        const float intensity = coordinate % 5 == 0 ? major : minor;
+        const std::array<float, 3> color{intensity, intensity, intensity};
+        addLine(
+            {-static_cast<float>(halfExtent), 0.0F, value},
+            { static_cast<float>(halfExtent), 0.0F, value},
+            color);
+        addLine(
+            {value, 0.0F, -static_cast<float>(halfExtent)},
+            {value, 0.0F,  static_cast<float>(halfExtent)},
+            color);
+    }
+
+    addLine({-10.0F, 0.0F, 0.0F}, {10.0F, 0.0F, 0.0F}, {0.90F, 0.18F, 0.16F});
+    addLine({0.0F, 0.0F, -10.0F}, {0.0F, 0.0F, 10.0F}, {0.18F, 0.38F, 0.95F});
+    addLine({0.0F, -3.0F, 0.0F}, {0.0F, 3.0F, 0.0F}, {0.20F, 0.85F, 0.28F});
+    return vertices;
 }
 
 [[nodiscard]] VkShaderModule createShaderModule(
@@ -126,7 +163,7 @@ bool VulkanViewport::createBuffer(
     vkGetBufferMemoryRequirements(device_, buffer, &requirements);
     const std::uint32_t memoryType = findMemoryType(requirements.memoryTypeBits, properties);
     if (memoryType == UINT32_MAX) {
-        return fail("No compatible Vulkan memory type for geometry buffer");
+        return fail("No compatible Vulkan memory type for viewport buffer");
     }
 
     VkMemoryAllocateInfo allocationInfo{};
@@ -150,7 +187,7 @@ bool VulkanViewport::createGeometryResources() {
     std::vector<ViewportVertex> vertices;
     std::vector<std::uint32_t> indices;
     if (!buildEngineCube(vertices, indices)) {
-        return fail("Vortex engine failed to evaluate/extract the Stage 2 cube");
+        return fail("Vortex engine failed to evaluate/extract the Stage 3 cube");
     }
 
     const VkDeviceSize vertexBytes = static_cast<VkDeviceSize>(vertices.size() * sizeof(ViewportVertex));
@@ -181,6 +218,33 @@ bool VulkanViewport::createGeometryResources() {
     std::memcpy(mapped, indices.data(), static_cast<std::size_t>(indexBytes));
     vkUnmapMemory(device_, indexMemory_);
     indexCount_ = static_cast<std::uint32_t>(indices.size());
+    return true;
+}
+
+bool VulkanViewport::createGridResources() {
+    if (gridVertexBuffer_ != VK_NULL_HANDLE) {
+        return true;
+    }
+    const std::vector<ViewportVertex> vertices = buildGridVertices();
+    if (vertices.empty()) {
+        return fail("Viewport grid generation returned no vertices");
+    }
+
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(vertices.size() * sizeof(ViewportVertex));
+    const VkMemoryPropertyFlags hostMemory =
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    if (!createBuffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, hostMemory, gridVertexBuffer_, gridVertexMemory_)) {
+        return false;
+    }
+
+    void* mapped = nullptr;
+    const VkResult result = vkMapMemory(device_, gridVertexMemory_, 0U, bytes, 0U, &mapped);
+    if (result != VK_SUCCESS) {
+        return failVk("vkMapMemory(grid)", result);
+    }
+    std::memcpy(mapped, vertices.data(), static_cast<std::size_t>(bytes));
+    vkUnmapMemory(device_, gridVertexMemory_);
+    gridVertexCount_ = static_cast<std::uint32_t>(vertices.size());
     return true;
 }
 
@@ -268,7 +332,7 @@ bool VulkanViewport::createGraphicsPipeline() {
         if (fragmentModule != VK_NULL_HANDLE) {
             vkDestroyShaderModule(device_, fragmentModule, nullptr);
         }
-        return fail("Failed to create Stage 2 shader modules");
+        return fail("Failed to create Stage 3 shader modules");
     }
 
     std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
@@ -298,7 +362,6 @@ bool VulkanViewport::createGraphicsPipeline() {
 
     VkPipelineInputAssemblyStateCreateInfo assembly{};
     assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
     VkPipelineViewportStateCreateInfo viewportState{};
     viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
@@ -338,7 +401,7 @@ bool VulkanViewport::createGraphicsPipeline() {
     VkPushConstantRange cameraPushConstant{};
     cameraPushConstant.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     cameraPushConstant.offset = 0U;
-    cameraPushConstant.size = sizeof(float);
+    cameraPushConstant.size = sizeof(CameraPushConstants);
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layoutInfo.pushConstantRangeCount = 1U;
@@ -365,7 +428,14 @@ bool VulkanViewport::createGraphicsPipeline() {
     pipelineInfo.layout = pipelineLayout_;
     pipelineInfo.renderPass = renderPass_;
     pipelineInfo.subpass = 0U;
+
+    assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     result = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1U, &pipelineInfo, nullptr, &graphicsPipeline_);
+    if (result == VK_SUCCESS) {
+        assembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+        depth.depthWriteEnable = VK_FALSE;
+        result = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1U, &pipelineInfo, nullptr, &gridPipeline_);
+    }
 
     vkDestroyShaderModule(device_, fragmentModule, nullptr);
     vkDestroyShaderModule(device_, vertexModule, nullptr);
@@ -375,6 +445,12 @@ bool VulkanViewport::createGraphicsPipeline() {
 void VulkanViewport::destroyGeometry() noexcept {
     if (device_ == VK_NULL_HANDLE) {
         return;
+    }
+    if (gridVertexBuffer_ != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, gridVertexBuffer_, nullptr);
+    }
+    if (gridVertexMemory_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, gridVertexMemory_, nullptr);
     }
     if (indexBuffer_ != VK_NULL_HANDLE) {
         vkDestroyBuffer(device_, indexBuffer_, nullptr);
@@ -388,6 +464,9 @@ void VulkanViewport::destroyGeometry() noexcept {
     if (vertexMemory_ != VK_NULL_HANDLE) {
         vkFreeMemory(device_, vertexMemory_, nullptr);
     }
+    gridVertexBuffer_ = VK_NULL_HANDLE;
+    gridVertexMemory_ = VK_NULL_HANDLE;
+    gridVertexCount_ = 0U;
     indexBuffer_ = VK_NULL_HANDLE;
     indexMemory_ = VK_NULL_HANDLE;
     vertexBuffer_ = VK_NULL_HANDLE;
