@@ -91,6 +91,9 @@ bool VulkanViewport::createSwapchain() {
         extent.width = std::clamp(width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
         extent.height = std::clamp(height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
     }
+    if (extent.width == 0U || extent.height == 0U) {
+        return fail("Android viewport has zero swapchain extent");
+    }
 
     std::uint32_t imageCount = capabilities.minImageCount + 1U;
     if (capabilities.maxImageCount != 0U && imageCount > capabilities.maxImageCount) {
@@ -158,6 +161,10 @@ bool VulkanViewport::createSwapchain() {
         swapchainImageViews_.push_back(view);
     }
 
+    if (!createDepthResources()) {
+        return false;
+    }
+
     VkAttachmentDescription colorAttachment{};
     colorAttachment.format = swapchainFormat_;
     colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -167,21 +174,39 @@ bool VulkanViewport::createSwapchain() {
     colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkAttachmentDescription depthAttachment{};
+    depthAttachment.format = depthFormat_;
+    depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    const std::array<VkAttachmentDescription, 2> attachments{colorAttachment, depthAttachment};
     VkAttachmentReference colorReference{0U, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkAttachmentReference depthReference{1U, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1U;
     subpass.pColorAttachments = &colorReference;
+    subpass.pDepthStencilAttachment = &depthReference;
+
     VkSubpassDependency dependency{};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass = 0U;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                              VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.dstStageMask = dependency.srcStageMask;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                               VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
     VkRenderPassCreateInfo passInfo{};
     passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    passInfo.attachmentCount = 1U;
-    passInfo.pAttachments = &colorAttachment;
+    passInfo.attachmentCount = static_cast<std::uint32_t>(attachments.size());
+    passInfo.pAttachments = attachments.data();
     passInfo.subpassCount = 1U;
     passInfo.pSubpasses = &subpass;
     passInfo.dependencyCount = 1U;
@@ -191,13 +216,18 @@ bool VulkanViewport::createSwapchain() {
         return failVk("vkCreateRenderPass", result);
     }
 
+    if (!createGraphicsPipeline()) {
+        return false;
+    }
+
     framebuffers_.reserve(swapchainImageViews_.size());
     for (const VkImageView view : swapchainImageViews_) {
+        const std::array<VkImageView, 2> framebufferAttachments{view, depthView_};
         VkFramebufferCreateInfo framebufferInfo{};
         framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebufferInfo.renderPass = renderPass_;
-        framebufferInfo.attachmentCount = 1U;
-        framebufferInfo.pAttachments = &view;
+        framebufferInfo.attachmentCount = static_cast<std::uint32_t>(framebufferAttachments.size());
+        framebufferInfo.pAttachments = framebufferAttachments.data();
         framebufferInfo.width = swapchainExtent_.width;
         framebufferInfo.height = swapchainExtent_.height;
         framebufferInfo.layers = 1U;
@@ -232,17 +262,37 @@ bool VulkanViewport::recordCommandBuffers() {
         if (result != VK_SUCCESS) {
             return failVk("vkBeginCommandBuffer", result);
         }
-        VkClearValue clearValue{};
-        clearValue.color = {{0.025F, 0.035F, 0.055F, 1.0F}};
+
+        std::array<VkClearValue, 2> clearValues{};
+        clearValues[0].color = {{0.025F, 0.035F, 0.055F, 1.0F}};
+        clearValues[1].depthStencil = {1.0F, 0U};
         VkRenderPassBeginInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         renderPassInfo.renderPass = renderPass_;
         renderPassInfo.framebuffer = framebuffers_[index];
         renderPassInfo.renderArea.extent = swapchainExtent_;
-        renderPassInfo.clearValueCount = 1U;
-        renderPassInfo.pClearValues = &clearValue;
+        renderPassInfo.clearValueCount = static_cast<std::uint32_t>(clearValues.size());
+        renderPassInfo.pClearValues = clearValues.data();
         vkCmdBeginRenderPass(commandBuffers_[index], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+        VkViewport viewport{};
+        viewport.x = 0.0F;
+        viewport.y = 0.0F;
+        viewport.width = static_cast<float>(swapchainExtent_.width);
+        viewport.height = static_cast<float>(swapchainExtent_.height);
+        viewport.minDepth = 0.0F;
+        viewport.maxDepth = 1.0F;
+        vkCmdSetViewport(commandBuffers_[index], 0U, 1U, &viewport);
+        VkRect2D scissor{{0, 0}, swapchainExtent_};
+        vkCmdSetScissor(commandBuffers_[index], 0U, 1U, &scissor);
+
+        vkCmdBindPipeline(commandBuffers_[index], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline_);
+        const VkDeviceSize vertexOffset = 0U;
+        vkCmdBindVertexBuffers(commandBuffers_[index], 0U, 1U, &vertexBuffer_, &vertexOffset);
+        vkCmdBindIndexBuffer(commandBuffers_[index], indexBuffer_, 0U, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(commandBuffers_[index], indexCount_, 1U, 0U, 0, 0U);
         vkCmdEndRenderPass(commandBuffers_[index]);
+
         result = vkEndCommandBuffer(commandBuffers_[index]);
         if (result != VK_SUCCESS) {
             return failVk("vkEndCommandBuffer", result);
@@ -260,14 +310,39 @@ void VulkanViewport::destroySwapchain() noexcept {
             device_, commandPool_, static_cast<std::uint32_t>(commandBuffers_.size()), commandBuffers_.data());
     }
     commandBuffers_.clear();
+
     for (const VkFramebuffer framebuffer : framebuffers_) {
         vkDestroyFramebuffer(device_, framebuffer, nullptr);
     }
     framebuffers_.clear();
+
+    if (graphicsPipeline_ != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device_, graphicsPipeline_, nullptr);
+        graphicsPipeline_ = VK_NULL_HANDLE;
+    }
+    if (pipelineLayout_ != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr);
+        pipelineLayout_ = VK_NULL_HANDLE;
+    }
     if (renderPass_ != VK_NULL_HANDLE) {
         vkDestroyRenderPass(device_, renderPass_, nullptr);
         renderPass_ = VK_NULL_HANDLE;
     }
+
+    if (depthView_ != VK_NULL_HANDLE) {
+        vkDestroyImageView(device_, depthView_, nullptr);
+        depthView_ = VK_NULL_HANDLE;
+    }
+    if (depthImage_ != VK_NULL_HANDLE) {
+        vkDestroyImage(device_, depthImage_, nullptr);
+        depthImage_ = VK_NULL_HANDLE;
+    }
+    if (depthMemory_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, depthMemory_, nullptr);
+        depthMemory_ = VK_NULL_HANDLE;
+    }
+    depthFormat_ = VK_FORMAT_UNDEFINED;
+
     for (const VkImageView view : swapchainImageViews_) {
         vkDestroyImageView(device_, view, nullptr);
     }
