@@ -49,67 +49,48 @@ if(VORTEX_BUILD_TESTS)
     include(CTest)
     enable_testing()
 
-    add_executable(vortex_core_smoke
-        tests/core_smoke.cpp
-    )
+    add_executable(vortex_core_smoke tests/core_smoke.cpp)
     target_link_libraries(vortex_core_smoke PRIVATE Vortex3D::core)
     target_compile_features(vortex_core_smoke PRIVATE cxx_std_20)
-
     add_test(NAME vortex.core.smoke COMMAND vortex_core_smoke)
 
-    add_executable(vortex_mesh_kernel_smoke
-        tests/mesh_kernel_smoke.cpp
-    )
+    add_executable(vortex_mesh_kernel_smoke tests/mesh_kernel_smoke.cpp)
     target_link_libraries(vortex_mesh_kernel_smoke PRIVATE Vortex3D::core)
     target_compile_features(vortex_mesh_kernel_smoke PRIVATE cxx_std_20)
-
     add_test(NAME vortex.mesh.kernel.smoke COMMAND vortex_mesh_kernel_smoke)
 
-    add_executable(vortex_mesh_mutation_smoke
-        tests/mesh_mutation_smoke.cpp
-    )
+    add_executable(vortex_mesh_mutation_smoke tests/mesh_mutation_smoke.cpp)
     target_link_libraries(vortex_mesh_mutation_smoke PRIVATE Vortex3D::core)
     target_compile_features(vortex_mesh_mutation_smoke PRIVATE cxx_std_20)
-
     add_test(NAME vortex.mesh.mutation.smoke COMMAND vortex_mesh_mutation_smoke)
 
-    add_executable(vortex_mesh_extrude_smoke
-        tests/mesh_extrude_smoke.cpp
-    )
+    add_executable(vortex_mesh_extrude_smoke tests/mesh_extrude_smoke.cpp)
     target_link_libraries(vortex_mesh_extrude_smoke PRIVATE Vortex3D::core)
     target_compile_features(vortex_mesh_extrude_smoke PRIVATE cxx_std_20)
-
     add_test(NAME vortex.mesh.extrude.smoke COMMAND vortex_mesh_extrude_smoke)
 
-    add_executable(vortex_mesh_randomized_smoke
-        tests/mesh_randomized_smoke.cpp
-    )
+    add_executable(vortex_mesh_randomized_smoke tests/mesh_randomized_smoke.cpp)
     target_link_libraries(vortex_mesh_randomized_smoke PRIVATE Vortex3D::core)
     target_compile_features(vortex_mesh_randomized_smoke PRIVATE cxx_std_20)
-
     add_test(NAME vortex.mesh.randomized.smoke COMMAND vortex_mesh_randomized_smoke)
 
-    add_executable(vortex_donor_contract_smoke
-        tests/donor_contract_smoke.cpp
-    )
+    add_executable(vortex_donor_contract_smoke tests/donor_contract_smoke.cpp)
     target_link_libraries(vortex_donor_contract_smoke PRIVATE Vortex3D::core)
     target_compile_features(vortex_donor_contract_smoke PRIVATE cxx_std_20)
-
     add_test(NAME vortex.donor.contract.smoke COMMAND vortex_donor_contract_smoke)
 
-    add_executable(vortex_mesh_command_smoke
-        tests/mesh_command_smoke.cpp
-    )
+    add_executable(vortex_mesh_command_smoke tests/mesh_command_smoke.cpp)
     target_link_libraries(vortex_mesh_command_smoke PRIVATE Vortex3D::core)
     target_compile_features(vortex_mesh_command_smoke PRIVATE cxx_std_20)
-
     add_test(NAME vortex.mesh.command.smoke COMMAND vortex_mesh_command_smoke)
 
-    add_executable(vortex_mesh_topology_history_smoke
-        tests/mesh_topology_history_smoke.cpp
-    )
+    add_executable(vortex_mesh_topology_history_smoke tests/mesh_topology_history_smoke.cpp)
     target_link_libraries(vortex_mesh_topology_history_smoke PRIVATE Vortex3D::core)
     target_compile_features(vortex_mesh_topology_history_smoke PRIVATE cxx_std_20)
-
     add_test(NAME vortex.mesh.topology.history.smoke COMMAND vortex_mesh_topology_history_smoke)
+
+    add_executable(vortex_document_mesh_integration_smoke tests/document_mesh_integration_smoke.cpp)
+    target_link_libraries(vortex_document_mesh_integration_smoke PRIVATE Vortex3D::core)
+    target_compile_features(vortex_document_mesh_integration_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.document.mesh.integration.smoke COMMAND vortex_document_mesh_integration_smoke)
 endif()
