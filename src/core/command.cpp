@@ -52,11 +52,14 @@ std::size_t DocumentHistoryRecord::estimatedBytes() const noexcept {
 }
 
 bool DocumentHistory::accepts(const Document& document) noexcept {
-    if (ownerDocument_ == nullptr) {
-        ownerDocument_ = &document;
+    if (!document.runtimeId()) {
+        return false;
+    }
+    if (!ownerDocumentRuntimeId_) {
+        ownerDocumentRuntimeId_ = document.runtimeId();
         return true;
     }
-    return ownerDocument_ == &document;
+    return ownerDocumentRuntimeId_ == document.runtimeId();
 }
 
 bool DocumentHistory::applyRecord(Document& document, DocumentHistoryRecord& record, const bool forward) {
@@ -150,7 +153,7 @@ bool DocumentHistory::applyRecord(Document& document, DocumentHistoryRecord& rec
 }
 
 bool DocumentHistory::execute(Document& document, Command& command) {
-    if (ownerDocument_ != nullptr && ownerDocument_ != &document) {
+    if (ownerDocumentRuntimeId_ && ownerDocumentRuntimeId_ != document.runtimeId()) {
         return false;
     }
 
@@ -190,7 +193,7 @@ bool DocumentHistory::execute(Document& document, Command& command) {
 }
 
 bool DocumentHistory::undo(Document& document) {
-    if (undo_.empty() || ownerDocument_ != &document) {
+    if (undo_.empty() || ownerDocumentRuntimeId_ != document.runtimeId()) {
         return false;
     }
 
@@ -209,7 +212,7 @@ bool DocumentHistory::undo(Document& document) {
 }
 
 bool DocumentHistory::redo(Document& document) {
-    if (redo_.empty() || ownerDocument_ != &document) {
+    if (redo_.empty() || ownerDocumentRuntimeId_ != document.runtimeId()) {
         return false;
     }
 
@@ -258,7 +261,7 @@ void DocumentHistory::clear() noexcept {
     undo_.clear();
     redo_.clear();
     retainedBytes_ = 0;
-    ownerDocument_ = nullptr;
+    ownerDocumentRuntimeId_ = {};
 }
 
 void DocumentHistory::setBudgetBytes(const std::size_t budgetBytes) noexcept {
