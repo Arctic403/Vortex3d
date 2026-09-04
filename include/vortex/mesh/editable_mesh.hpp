@@ -39,6 +39,13 @@ struct MeshCorner final {
     CornerId radialPrev;
 };
 
+struct EdgeSplitResult final {
+    VertexId newVertex;
+    EdgeId retainedEdge;
+    EdgeId newEdge;
+    std::uint32_t insertedCornerCount = 0;
+};
+
 enum class MeshValidationCode : std::uint8_t {
     MissingElement,
     InvalidFaceSize,
@@ -70,6 +77,15 @@ public:
     [[nodiscard]] EdgeId addEdge(VertexId vertexA, VertexId vertexB);
     [[nodiscard]] FaceId addFace(const std::vector<VertexId>& vertices);
 
+    // Safe low-level deletion primitives. They never cascade through still-referenced topology.
+    [[nodiscard]] bool removeFace(FaceId id, bool removeUnusedEdges = true);
+    [[nodiscard]] bool removeEdge(EdgeId id);
+    [[nodiscard]] bool removeVertex(VertexId id);
+
+    // Split contract: the original edge ID survives on vertexA -> newVertex.
+    // A new edge is created for newVertex -> original vertexB.
+    [[nodiscard]] std::optional<EdgeSplitResult> splitEdge(EdgeId id, float factor = 0.5F);
+
     [[nodiscard]] bool hasVertex(VertexId id) const noexcept;
     [[nodiscard]] bool hasEdge(EdgeId id) const noexcept;
     [[nodiscard]] bool hasFace(FaceId id) const noexcept;
@@ -79,6 +95,9 @@ public:
     [[nodiscard]] const MeshEdge* edge(EdgeId id) const noexcept;
     [[nodiscard]] const MeshFace* face(FaceId id) const noexcept;
     [[nodiscard]] const MeshCorner* corner(CornerId id) const noexcept;
+
+    [[nodiscard]] EdgeId edgeBetween(VertexId vertexA, VertexId vertexB) const noexcept;
+    [[nodiscard]] std::size_t radialCornerCount(EdgeId id) const noexcept;
 
     [[nodiscard]] std::optional<Vec3> position(VertexId id) const noexcept;
     [[nodiscard]] bool setPosition(VertexId id, Vec3 position) noexcept;
@@ -98,7 +117,13 @@ private:
     [[nodiscard]] IdType allocateId() noexcept { return IdType{nextElementId_++}; }
 
     [[nodiscard]] EdgeId findEdge(VertexId vertexA, VertexId vertexB) const noexcept;
+    [[nodiscard]] std::vector<CornerId> faceCorners(FaceId faceId) const;
     void attachCornerToRadialCycle(EdgeId edgeId, CornerId cornerId);
+    void rebuildRadialCycle(EdgeId edgeId);
+    void rebuildVertexIndex();
+    void rebuildEdgeIndex();
+    void rebuildFaceIndex();
+    void rebuildCornerIndex();
 
     std::uint64_t nextElementId_ = 1;
     AttributeSet attributes_;
