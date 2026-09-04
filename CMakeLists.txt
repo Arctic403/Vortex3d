@@ -59,6 +59,7 @@ add_library(vortex_eval STATIC
     src/eval/evaluation_cache.cpp
     src/eval/evaluator.cpp
     src/eval/modifier.cpp
+    src/eval/normals.cpp
     src/eval/triangulate.cpp
 )
 
@@ -182,6 +183,11 @@ if(VORTEX_BUILD_TESTS)
     target_link_libraries(vortex_triangulate_modifier_smoke PRIVATE Vortex3D::eval)
     target_compile_features(vortex_triangulate_modifier_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.eval.triangulate.smoke COMMAND vortex_triangulate_modifier_smoke)
+
+    add_executable(vortex_derived_normals_smoke tests/derived_normals_smoke.cpp)
+    target_link_libraries(vortex_derived_normals_smoke PRIVATE Vortex3D::eval)
+    target_compile_features(vortex_derived_normals_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.eval.normals.smoke COMMAND vortex_derived_normals_smoke)
 endif()
 
 if(VORTEX_BUILD_BENCHMARKS)
