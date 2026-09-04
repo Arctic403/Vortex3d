@@ -44,6 +44,16 @@ template <typename IdType>
     return result;
 }
 
+[[nodiscard]] MeshEvaluationResult failEvaluatedValidation(
+    const EvaluatedMeshValidationResult& validation) {
+    MeshEvaluationResult result;
+    result.error = MeshEvaluationError::InvalidEvaluatedMesh;
+    if (!validation.issues.empty()) {
+        result.evaluatedValidationCode = validation.issues.front().code;
+    }
+    return result;
+}
+
 [[nodiscard]] MeshEvaluationResult failModifier(
     const MeshEvaluationError error,
     const ModifierApplyError modifierError,
@@ -52,6 +62,19 @@ template <typename IdType>
     result.error = error;
     result.modifierError = modifierError;
     result.modifierIndex = modifierIndex;
+    return result;
+}
+
+[[nodiscard]] MeshEvaluationResult failModifierValidation(
+    const EvaluatedMeshValidationResult& validation,
+    const std::size_t modifierIndex) {
+    MeshEvaluationResult result;
+    result.error = MeshEvaluationError::ModifierFailed;
+    result.modifierError = ModifierApplyError::GeneratedTopologyInvalid;
+    result.modifierIndex = modifierIndex;
+    if (!validation.issues.empty()) {
+        result.evaluatedValidationCode = validation.issues.front().code;
+    }
     return result;
 }
 
@@ -141,7 +164,7 @@ MeshEvaluationResult MeshEvaluator::evaluate(
         return fail(MeshEvaluationError::MissingAuthoredMesh);
     }
     const EditableMesh& authored = *authoredMesh;
-    if (!authored.validate()) {
+    if (!authored.validateStrict()) {
         return fail(MeshEvaluationError::InvalidSourceMesh);
     }
 
@@ -217,16 +240,31 @@ MeshEvaluationResult MeshEvaluator::evaluate(
             id});
     }
 
+    const EvaluatedMeshValidationResult initialValidation = EvaluatedMeshValidator::validate(evaluated);
+    if (!initialValidation) {
+        return failEvaluatedValidation(initialValidation);
+    }
+
     for (std::size_t index = 0; index < modifiers.size(); ++index) {
         const ModifierApplyResult modifierResult = modifiers[index]->apply(evaluated);
         if (!modifierResult) {
             return failModifier(MeshEvaluationError::ModifierFailed, modifierResult.error, index);
+        }
+
+        const EvaluatedMeshValidationResult modifierValidation = EvaluatedMeshValidator::validate(evaluated);
+        if (!modifierValidation) {
+            return failModifierValidation(modifierValidation, index);
         }
     }
 
     const NormalGenerationResult normalResult = DerivedNormalsGenerator::generate(evaluated);
     if (!normalResult) {
         return failNormals(normalResult.error);
+    }
+
+    const EvaluatedMeshValidationResult finalValidation = EvaluatedMeshValidator::validate(evaluated);
+    if (!finalValidation) {
+        return failEvaluatedValidation(finalValidation);
     }
 
     MeshEvaluationResult result;
