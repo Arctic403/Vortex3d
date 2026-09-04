@@ -66,6 +66,12 @@ enum class MeshValidationCode : std::uint8_t {
     CornerEdgeMismatch,
     AttributeSizeMismatch,
     UnreachableCorner,
+    StorageSizeMismatch,
+    DuplicateElementId,
+    IndexMapMismatch,
+    ElementIdentityMismatch,
+    InvalidAllocatorState,
+    DuplicateEdge,
 };
 
 struct MeshValidationIssue final {
@@ -124,7 +130,12 @@ public:
     [[nodiscard]] const AttributeSet& attributes() const noexcept { return attributes_; }
     [[nodiscard]] AttributeSet& attributes() noexcept { return attributes_; }
 
+    // Topology/attribute validation retained for compatibility with the existing mutation paths.
     [[nodiscard]] MeshValidationResult validate() const;
+
+    // Full hardening gate: validate() plus order/index/registry identity, allocator monotonicity,
+    // and duplicate undirected-edge detection. Evaluation/import boundaries should use this form.
+    [[nodiscard]] MeshValidationResult validateStrict() const;
 
 private:
     friend class ExtrudeFaceCommand;
