@@ -116,8 +116,6 @@ public:
     [[nodiscard]] std::size_t faceCount() const noexcept { return faceOrder_.size(); }
     [[nodiscard]] std::size_t cornerCount() const noexcept { return cornerOrder_.size(); }
 
-    // Ordered, read-only topology views for evaluation/export/diagnostics. These expose
-    // stable IDs, not mutable storage or persistent packed-index identity.
     [[nodiscard]] std::span<const VertexId> vertexIds() const noexcept { return vertexOrder_; }
     [[nodiscard]] std::span<const EdgeId> edgeIds() const noexcept { return edgeOrder_; }
     [[nodiscard]] std::span<const FaceId> faceIds() const noexcept { return faceOrder_; }

@@ -2,6 +2,7 @@
 
 #include "vortex/core/id.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -15,6 +16,24 @@ class EditableMesh;
 class MeshCommand;
 class MeshHistory;
 struct MeshCommandResult;
+class DocumentHistory;
+class Transaction;
+
+class MeshBlock final {
+public:
+    MeshBlock(MeshId id, std::string name, std::unique_ptr<EditableMesh> authoredMesh, std::uint64_t revision = 1);
+    ~MeshBlock();
+
+    MeshBlock(MeshBlock&&) noexcept;
+    MeshBlock& operator=(MeshBlock&&) noexcept;
+    MeshBlock(const MeshBlock&) = delete;
+    MeshBlock& operator=(const MeshBlock&) = delete;
+
+    MeshId id;
+    std::string name;
+    std::unique_ptr<EditableMesh> authoredMesh;
+    std::uint64_t revision = 1;
+};
 
 enum class DataKind : std::uint8_t {
     Document,
@@ -37,13 +56,6 @@ struct ChangeEvent final {
     DataKind dataKind = DataKind::Document;
     ChangeKind changeKind = ChangeKind::Updated;
     std::uint64_t entityId = 0;
-};
-
-struct MeshBlock final {
-    MeshId id;
-    std::string name;
-    std::shared_ptr<EditableMesh> authoredMesh;
-    std::uint64_t revision = 1;
 };
 
 struct ObjectBlock final {
@@ -73,6 +85,12 @@ struct SceneBlock final {
 class Document final {
 public:
     Document();
+    ~Document() = default;
+
+    Document(Document&&) noexcept = default;
+    Document& operator=(Document&&) noexcept = default;
+    Document(const Document&) = delete;
+    Document& operator=(const Document&) = delete;
 
     [[nodiscard]] DocumentId id() const noexcept { return id_; }
     [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
@@ -129,6 +147,9 @@ public:
     [[nodiscard]] bool validate() const noexcept;
 
 private:
+    friend class DocumentHistory;
+    friend class Transaction;
+
     template <typename IdType>
     [[nodiscard]] IdType allocateId() noexcept {
         return IdType{nextId_++};

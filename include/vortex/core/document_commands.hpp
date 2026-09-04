@@ -2,6 +2,7 @@
 
 #include "vortex/core/command.hpp"
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -12,7 +13,24 @@ class RenameObjectCommand final : public Command {
 public:
     RenameObjectCommand(ObjectId objectId, std::string name) : objectId_(objectId), name_(std::move(name)) {}
     [[nodiscard]] std::string_view name() const noexcept override { return "Rename Object"; }
-    [[nodiscard]] bool apply(Document& document) override { return document.renameObject(objectId_, name_); }
+
+    [[nodiscard]] std::optional<DocumentHistoryRecord> apply(Document& document) override {
+        const ObjectBlock* object = document.object(objectId_);
+        if (object == nullptr) {
+            return std::nullopt;
+        }
+
+        const std::string before = object->name;
+        if (!document.renameObject(objectId_, name_)) {
+            return std::nullopt;
+        }
+
+        DocumentHistoryRecord record{std::string{name()}, {}};
+        if (before != name_) {
+            record.deltas.emplace_back(RenameObjectDelta{objectId_, before, name_});
+        }
+        return record;
+    }
 
 private:
     ObjectId objectId_;
@@ -23,7 +41,24 @@ class SetObjectParentCommand final : public Command {
 public:
     SetObjectParentCommand(ObjectId objectId, ObjectId parentId) : objectId_(objectId), parentId_(parentId) {}
     [[nodiscard]] std::string_view name() const noexcept override { return "Set Object Parent"; }
-    [[nodiscard]] bool apply(Document& document) override { return document.setObjectParent(objectId_, parentId_); }
+
+    [[nodiscard]] std::optional<DocumentHistoryRecord> apply(Document& document) override {
+        const ObjectBlock* object = document.object(objectId_);
+        if (object == nullptr) {
+            return std::nullopt;
+        }
+
+        const ObjectId before = object->parentId;
+        if (!document.setObjectParent(objectId_, parentId_)) {
+            return std::nullopt;
+        }
+
+        DocumentHistoryRecord record{std::string{name()}, {}};
+        if (before != parentId_) {
+            record.deltas.emplace_back(SetObjectParentDelta{objectId_, before, parentId_});
+        }
+        return record;
+    }
 
 private:
     ObjectId objectId_;
@@ -34,7 +69,24 @@ class SetObjectMeshCommand final : public Command {
 public:
     SetObjectMeshCommand(ObjectId objectId, MeshId meshId) : objectId_(objectId), meshId_(meshId) {}
     [[nodiscard]] std::string_view name() const noexcept override { return "Set Object Mesh"; }
-    [[nodiscard]] bool apply(Document& document) override { return document.setObjectMesh(objectId_, meshId_); }
+
+    [[nodiscard]] std::optional<DocumentHistoryRecord> apply(Document& document) override {
+        const ObjectBlock* object = document.object(objectId_);
+        if (object == nullptr) {
+            return std::nullopt;
+        }
+
+        const MeshId before = object->meshId;
+        if (!document.setObjectMesh(objectId_, meshId_)) {
+            return std::nullopt;
+        }
+
+        DocumentHistoryRecord record{std::string{name()}, {}};
+        if (before != meshId_) {
+            record.deltas.emplace_back(SetObjectMeshDelta{objectId_, before, meshId_});
+        }
+        return record;
+    }
 
 private:
     ObjectId objectId_;
@@ -45,10 +97,27 @@ class MakeObjectMeshUniqueCommand final : public Command {
 public:
     explicit MakeObjectMeshUniqueCommand(ObjectId objectId) : objectId_(objectId) {}
     [[nodiscard]] std::string_view name() const noexcept override { return "Make Object Mesh Unique"; }
-    [[nodiscard]] bool apply(Document& document) override {
+
+    [[nodiscard]] std::optional<DocumentHistoryRecord> apply(Document& document) override {
+        result_ = {};
+        const ObjectBlock* object = document.object(objectId_);
+        if (object == nullptr || !object->meshId) {
+            return std::nullopt;
+        }
+
+        const MeshId sourceMeshId = object->meshId;
         result_ = document.makeObjectMeshUnique(objectId_);
-        return static_cast<bool>(result_);
+        if (!result_) {
+            return std::nullopt;
+        }
+
+        DocumentHistoryRecord record{std::string{name()}, {}};
+        if (result_ != sourceMeshId) {
+            record.deltas.emplace_back(MakeObjectMeshUniqueDelta{objectId_, sourceMeshId, result_, std::nullopt});
+        }
+        return record;
     }
+
     [[nodiscard]] MeshId result() const noexcept { return result_; }
 
 private:

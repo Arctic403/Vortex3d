@@ -4,7 +4,7 @@
 
 Vortex3D is an authoring system first. The persistent model must represent editable documents, shared data-blocks, stable topology, history, dependencies, and project state. Rendering and platform integration are consumers of that model, not owners of it.
 
-The architecture therefore separates four different things that must never collapse into one object:
+The architecture separates:
 
 1. **Persistent authoring data** — what the user actually created.
 2. **Editor/session state** — selection, active tool, hover state, gizmos, temporary previews.
@@ -14,151 +14,69 @@ The architecture therefore separates four different things that must never colla
 ## 2. Layer model
 
 ```text
-+--------------------------------------------------+
-| Platform Host                                    |
-| Android lifecycle, files, IME, clipboard, input |
-+--------------------------------------------------+
-                     |
-+--------------------------------------------------+
-| Editor Layer                                     |
-| Tools, selection, snapping, gizmos, workspaces  |
-+--------------------------------------------------+
-                     |
-+--------------------------------------------------+
-| Command / Transaction Layer                      |
-| Validation, mutation, undo records, notifications|
-+--------------------------------------------------+
-                     |
-+--------------------------------------------------+
-| Document Layer                                   |
-| Objects, meshes, materials, images, collections |
-+--------------------------------------------------+
-                     |
-+--------------------------------------------------+
-| Geometry Kernel                                  |
-| Vertices, edges, faces, corners, attributes     |
-+--------------------------------------------------+
-                     |
-+--------------------------------------------------+
-| Evaluation Layer                                 |
-| Modifiers, dependency graph, caches             |
-+--------------------------------------------------+
-                     |
-+--------------------------------------------------+
-| Renderer Adapter                                 |
-| EvaluatedMesh -> GPU resources                  |
-+--------------------------------------------------+
-                     |
-+--------------------------------------------------+
-| Vulkan Renderer                                  |
-+--------------------------------------------------+
+Platform Host (Android/Desktop)
+        |
+Editor / Tool Controllers
+        |
+Commands + Delta Transactions + Undo
+        |
+Document / Scene Data-blocks
+        |
+Editable Mesh Kernel
+        |
+Evaluation Graph / Derived Meshes
+        |
+Renderer Adapter
+        |
+Vulkan Renderer
 ```
 
-## 3. Document model
+## 3. Document and ownership model
 
-The document owns durable data-blocks. Initial types:
+The `Document` uniquely owns durable data-block registries. A `MeshBlock` uniquely owns its authored `EditableMesh`. Objects reference meshes by stable `MeshId`; they never share geometry by sharing owning pointers.
 
-- `Document`
-- `Scene`
-- `Object`
-- `Mesh`
-- `Material`
-- `Image`
-- `Collection`
+Multiple objects instance the same geometry by holding the same `MeshId`. `Make Unique` explicitly creates a new Mesh datablock, deep-copies that authored mesh once, and rewires one object.
 
-Objects reference mesh data by stable ID. Multiple objects may reference the same mesh. A Make Unique operation duplicates the data-block and rewires one object.
+The authoring core is deliberately **not an ECS**. Packed runtime structures may be used in derived/render caches later, but they do not define the saved project.
 
-The authoring core is deliberately **not an ECS**. ECS-style packed runtime structures may be used in a renderer cache later, but they do not define the saved project.
+See `docs/OWNERSHIP.md` for lifetime rules.
 
 ## 4. Stable identity
 
 Every persistent data-block and topology element receives a stable 64-bit identity.
 
-Requirements:
-
 - IDs are not array indices.
 - Repacking containers does not change identity.
 - Topology-preserving operations retain valid identities.
 - New topology receives new identities.
-- Deleted identities are not accidentally reused during the document lifetime.
+- Deleted/rolled-back identities are not silently reused during the document lifetime.
 - Serialization preserves persistent identity where required by history/references.
 
-Prefer strongly typed wrappers such as `ObjectId`, `MeshId`, `VertexId`, `EdgeId`, `FaceId`, and `CornerId` over naked integers.
+Use strongly typed wrappers such as `ObjectId`, `MeshId`, `VertexId`, `EdgeId`, `FaceId`, and `CornerId` rather than naked integers.
 
 ## 5. Mesh kernel
 
-The editable mesh uses four logical domains:
+The editable mesh uses Vertex, Edge, Face, and Corner/Loop domains. Corners carry face-varying data such as UVs and split normals. Radial connectivity supports traversal around an edge and legal non-manifold topology.
 
-- **Vertex** — position-bearing point.
-- **Edge** — connection between two vertices.
-- **Face** — polygon boundary.
-- **Corner / Loop** — one face-local use of a vertex/edge.
+Generic typed attributes remain domain-qualified rather than hard-coded into topology records.
 
-Corner/loop records allow face-varying data such as UVs and split normals. Radial connectivity allows traversal around an edge and supports non-manifold topology.
+The current vector + hash-map storage is correctness-first. Stable IDs are the public contract; packed indices are rebuildable implementation detail. Storage may become more cache-friendly only after benchmarks and memory measurements justify a change.
 
-The kernel should expose a small trusted set of low-level topology operations. Higher-level tools such as Extrude, Inset, Bevel, Dissolve, Bridge, and Loop Cut are composed from these primitives.
-
-### Generic attributes
-
-Do not permanently hard-code `uv0`, `uv1`, color sets, creases, weights, masks, or future data into the mesh structure.
-
-Use generic typed attributes:
-
-```text
-AttributeDomain = Vertex | Edge | Face | Corner
-AttributeType   = Bool | Int | Float | Vec2 | Vec3 | Vec4 | ...
-```
-
-Examples:
-
-- `position` -> Vertex / Vec3
-- `uv:Map` -> Corner / Vec2
-- `normal` -> Corner / Vec3 when split normals are authored
-- `crease` -> Edge / Float
-- `material_index` -> Face / Int
-- `selection_set:*` -> optional editor-owned data, not necessarily persistent
-
-## 6. Commands and transactions
+## 6. Commands, transactions, and history
 
 No UI code directly mutates document internals.
 
-All edits flow through commands:
-
 ```text
-UI/Input -> Command -> Transaction -> Document/Kernel
+UI/Input -> Command -> Delta/Transaction -> Document/Kernel
 ```
 
-Examples:
+Ordinary Document edits use `DocumentHistory` compact deltas. Mesh edits use `MeshHistory` value/topology deltas. Both histories have explicit retained-memory budgets.
 
-- `MoveVerticesCommand`
-- `ExtrudeFacesCommand`
-- `SetObjectTransformCommand`
-- `AddModifierCommand`
-- `AssignMaterialCommand`
+`Transaction` is an atomic composition helper. It retains only the deltas produced by commands executed inside it and reverses them if the transaction fails or is not committed. It does not clone the Document.
 
-A command:
+See `docs/COMMANDS_UNDO.md`.
 
-1. validates its inputs,
-2. opens or joins a transaction,
-3. calls domain services/kernel operations,
-4. records undo information,
-5. commits or rolls back atomically,
-6. emits invalidation/change notifications.
-
-This single API is intended to serve touch UI, keyboard shortcuts, automated tests, plugins, macros, scripting, and future AI tooling.
-
-## 7. Undo / redo
-
-Use a hybrid strategy rather than cloning the whole scene after every action.
-
-- Small property edits: compact inverse/delta records.
-- Topology edits: transactional topology deltas where safe.
-- Expensive or structurally complex operations: copy-on-write or scoped snapshots.
-- User-visible actions may contain many low-level mutations but commit as one undo step.
-
-Undo must restore authoring state and invalidate evaluated/render caches rather than serializing GPU state.
-
-## 8. Evaluation graph
+## 7. Evaluation graph
 
 The original mesh is immutable from the evaluator's point of view.
 
@@ -172,93 +90,42 @@ Editable Mesh
 
 Initial rules:
 
-- Deterministic evaluation.
-- Explicit dependencies.
-- Revision numbers / dirty propagation.
-- Cache evaluated results when inputs have not changed.
-- Start single-threaded.
-- Add parallel scheduling only after dependencies and invalidation are proven correct.
+- deterministic evaluation,
+- explicit dependencies,
+- revision/dirty propagation,
+- cache outputs only while inputs remain unchanged,
+- start single-threaded,
+- add parallel scheduling after dependencies/invalidation are proven.
 
-Initial modifiers should be deliberately small:
+## 8. Rendering boundary
 
-1. Transform
-2. Mirror
-3. Triangulate
-4. Recalculate Normals
-5. Bevel
-6. Subdivision
+The renderer never owns editable topology. It consumes evaluated data and owns only derived GPU caches. Picking returns engine IDs/handles, not pointers into renderer-owned arrays.
 
-## 9. Rendering boundary
+## 9. Platform boundary
 
-The renderer never owns editable topology.
+The engine library compiles without Android headers. Android owns activity/lifecycle, surfaces, file/document picker, scoped storage, clipboard, IME, haptics, and capability queries. C++ owns the portable document, mesh kernel, commands/history, evaluation, serialization, and portable import/export.
 
-It consumes an `EvaluatedMesh` and produces GPU caches such as:
+## 10. Native project format
 
-- vertex/index buffers,
-- material bindings,
-- acceleration/picking resources,
-- overlay buffers,
-- revision stamps.
+The Vortex project format is an authoring format, not glTF. It preserves stable IDs, hierarchy, linked data-blocks, editable n-gons, generic attributes, materials/assets, future modifier/node state, and explicit schema/migration versions.
 
-Triangulation belongs in evaluation/render preparation, not as the canonical saved authoring topology.
+## 11. Performance and 32-bit principles
 
-## 10. Platform boundary
+Especially because Vortex supports `armeabi-v7a`:
 
-The engine library must compile without Android headers.
+- avoid unbounded scene snapshots,
+- do not duplicate source/evaluated/GPU buffers unnecessarily,
+- keep evaluated/render data rebuildable and discardable,
+- track history/cache memory budgets explicitly,
+- use fixed-width persistent identifiers,
+- benchmark representative 10k/100k/1M-scale workloads before redesigning storage,
+- prefer cache-friendly packed internals only when stable public identity remains independent.
 
-Android owns:
+## 12. Threading
 
-- activity/app lifecycle,
-- surface creation,
-- file/document picker,
-- scoped storage integration,
-- clipboard,
-- keyboard/IME,
-- share intents,
-- haptics,
-- device capability queries.
+Authoring mutation is single-threaded today. Background evaluation/rendering must not race mutable authoring containers. Threading enters only through explicit immutable/revisioned handoff and measured need.
 
-C++ owns:
-
-- document,
-- mesh kernel,
-- commands,
-- undo/redo,
-- evaluation,
-- project serialization,
-- import/export logic where platform-independent.
-
-## 11. Native project format
-
-The Vortex project format is an authoring format, not glTF.
-
-It must preserve:
-
-- stable IDs,
-- object hierarchy,
-- linked data-blocks,
-- editable n-gons,
-- generic attributes,
-- materials and assets,
-- modifier stacks / future node graphs,
-- application version and schema version,
-- migration metadata.
-
-GLB/glTF is an interchange/export target.
-
-## 12. Performance principles
-
-Especially because Vortex supports 32-bit ARM:
-
-- Avoid unbounded scene snapshots.
-- Do not duplicate source, evaluated, and GPU buffers unnecessarily.
-- Keep evaluated/render data rebuildable and discardable.
-- Stream textures/assets when practical.
-- Use compact handles and contiguous storage where it improves locality without sacrificing stable identity.
-- Track memory budgets and cache ownership explicitly.
-- Build stress tests early.
-
-## 13. Non-negotiable architecture rules
+## 13. Non-negotiable rules
 
 1. No renderer types in persistent document classes.
 2. No Android types in the portable engine.
@@ -266,7 +133,7 @@ Especially because Vortex supports 32-bit ARM:
 4. IDs are never array positions.
 5. Authoring topology is not forced to triangles.
 6. Evaluated geometry is never silently written back into source geometry.
-7. Undo/redo is part of the mutation design, not bolted on later.
-8. Serialization has explicit versions and migrations from the first public schema.
-9. Every topology-changing kernel primitive has invariant tests.
-10. 32-bit ARM remains a supported build target from the beginning.
+7. Undo/redo is part of mutation design.
+8. Serialization has explicit versions/migrations.
+9. Every topology-changing primitive has invariant tests.
+10. 32-bit ARM remains a supported build target.

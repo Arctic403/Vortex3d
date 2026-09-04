@@ -4,8 +4,13 @@
 
 #include <cassert>
 #include <iostream>
+#include <memory>
+#include <type_traits>
 
 int main() {
+    static_assert(!std::is_copy_constructible_v<vortex::Document>);
+    static_assert(std::is_same_v<decltype(vortex::MeshBlock::authoredMesh), std::unique_ptr<vortex::EditableMesh>>);
+
     vortex::EditableMesh authored;
     const auto v0 = authored.addVertex({-1.0F, 0.0F, -1.0F});
     const auto v1 = authored.addVertex({ 1.0F, 0.0F, -1.0F});
@@ -26,11 +31,6 @@ int main() {
     assert(document.authoredMesh(sharedMesh)->hasFace(sourceFace));
     assert(document.validate());
 
-    // A metadata copy shares the authored payload instead of deep-copying all geometry.
-    const vortex::Document metadataSnapshot = document;
-    assert(metadataSnapshot.authoredMesh(sharedMesh) == document.authoredMesh(sharedMesh));
-
-    // Make Unique creates a new Mesh datablock with a deep-cloned authored payload.
     const vortex::MeshId uniqueMesh = document.makeObjectMeshUnique(objectB);
     assert(uniqueMesh && uniqueMesh != sharedMesh);
     assert(document.object(objectA)->meshId == sharedMesh);
@@ -46,7 +46,6 @@ int main() {
     assert(document.authoredMesh(uniqueMesh)->faceCount() == document.authoredMesh(sharedMesh)->faceCount());
     assert(document.validate());
 
-    // Edit only the unique payload through the Document command bridge.
     vortex::MeshHistory uniqueHistory(64U * 1024U);
     const std::uint64_t revisionBeforeMove = document.revision();
     const std::uint64_t meshRevisionBeforeMove = document.mesh(uniqueMesh)->revision;
@@ -56,12 +55,30 @@ int main() {
     assert(document.revision() == revisionBeforeMove + 1);
     assert(document.authoredMesh(uniqueMesh)->position(v0)->x == -3.0F);
     assert(document.authoredMesh(sharedMesh)->position(v0)->x == -1.0F);
+    assert(uniqueHistory.ownerMeshId() == uniqueMesh);
 
     const auto changes = document.changesSince(revisionBeforeMove);
     assert(changes.size() == 1);
     assert(changes[0].dataKind == vortex::DataKind::Mesh);
     assert(changes[0].changeKind == vortex::ChangeKind::Updated);
     assert(changes[0].entityId == uniqueMesh.value());
+
+    const std::uint64_t revisionBeforeWrongMesh = document.revision();
+    vortex::MoveVerticesCommand wrongMeshMove({{v0, {-8.0F, 0.0F, -1.0F}}});
+    assert(!document.executeMeshCommand(sharedMesh, uniqueHistory, wrongMeshMove));
+    assert(document.revision() == revisionBeforeWrongMesh);
+    assert(document.authoredMesh(sharedMesh)->position(v0)->x == -1.0F);
+
+    vortex::Document otherDocument;
+    vortex::EditableMesh otherAuthored;
+    const auto otherV0 = otherAuthored.addVertex({0.0F, 0.0F, 0.0F});
+    const auto otherV1 = otherAuthored.addVertex({1.0F, 0.0F, 0.0F});
+    const auto otherV2 = otherAuthored.addVertex({0.0F, 1.0F, 0.0F});
+    assert(otherAuthored.addFace({otherV0, otherV1, otherV2}));
+    const auto otherMesh = otherDocument.createMesh("Other", std::move(otherAuthored));
+    vortex::MoveVerticesCommand crossDocumentMove({{otherV0, {9.0F, 0.0F, 0.0F}}});
+    assert(!otherDocument.executeMeshCommand(otherMesh, uniqueHistory, crossDocumentMove));
+    assert(otherDocument.authoredMesh(otherMesh)->position(otherV0)->x == 0.0F);
 
     const std::uint64_t revisionBeforeUndo = document.revision();
     assert(document.undoMeshCommand(uniqueMesh, uniqueHistory));
@@ -73,7 +90,6 @@ int main() {
     assert(document.authoredMesh(uniqueMesh)->position(v0)->x == -3.0F);
     assert(document.authoredMesh(sharedMesh)->position(v0)->x == -1.0F);
 
-    // Topology commands also execute through the datablock bridge and stay undoable.
     vortex::ExtrudeFaceCommand extrude(sourceFace, {0.0F, 1.0F, 0.0F});
     vortex::MeshCommandResult extrusionResult;
     assert(document.executeMeshCommand(uniqueMesh, uniqueHistory, extrude, &extrusionResult));
@@ -88,7 +104,6 @@ int main() {
     assert(!document.authoredMesh(uniqueMesh)->hasFace(cap));
     assert(document.authoredMesh(sharedMesh)->hasFace(sourceFace));
 
-    // Bad MeshIds are rejected without a Document revision.
     const std::uint64_t beforeInvalid = document.revision();
     vortex::MoveVerticesCommand invalidTarget({{v0, {0.0F, 0.0F, 0.0F}}});
     assert(!document.executeMeshCommand(vortex::MeshId{999999}, uniqueHistory, invalidTarget));

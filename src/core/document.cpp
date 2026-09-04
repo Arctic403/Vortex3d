@@ -8,6 +8,17 @@
 
 namespace vortex {
 
+MeshBlock::MeshBlock(
+    const MeshId meshId,
+    std::string meshName,
+    std::unique_ptr<EditableMesh> mesh,
+    const std::uint64_t meshRevision)
+    : id(meshId), name(std::move(meshName)), authoredMesh(std::move(mesh)), revision(meshRevision) {}
+
+MeshBlock::~MeshBlock() = default;
+MeshBlock::MeshBlock(MeshBlock&&) noexcept = default;
+MeshBlock& MeshBlock::operator=(MeshBlock&&) noexcept = default;
+
 Document::Document() : id_(DocumentId{1}), nextId_(2) {}
 
 SceneId Document::createScene(std::string name) {
@@ -51,7 +62,7 @@ MeshId Document::createMesh(std::string name, EditableMesh authoredMeshValue) {
     const MeshId id = allocateId<MeshId>();
     meshes_.emplace(
         id,
-        MeshBlock{id, std::move(name), std::make_shared<EditableMesh>(std::move(authoredMeshValue)), 1});
+        MeshBlock{id, std::move(name), std::make_unique<EditableMesh>(std::move(authoredMeshValue)), 1});
     markChanged(DataKind::Mesh, ChangeKind::Created, id.value());
     return id;
 }
@@ -67,21 +78,10 @@ ObjectId Document::createObject(std::string name, const MeshId meshId) {
     return id;
 }
 
-bool Document::hasScene(const SceneId id) const noexcept {
-    return id && scenes_.contains(id);
-}
-
-bool Document::hasCollection(const CollectionId id) const noexcept {
-    return id && collections_.contains(id);
-}
-
-bool Document::hasMesh(const MeshId id) const noexcept {
-    return id && meshes_.contains(id);
-}
-
-bool Document::hasObject(const ObjectId id) const noexcept {
-    return id && objects_.contains(id);
-}
+bool Document::hasScene(const SceneId id) const noexcept { return id && scenes_.contains(id); }
+bool Document::hasCollection(const CollectionId id) const noexcept { return id && collections_.contains(id); }
+bool Document::hasMesh(const MeshId id) const noexcept { return id && meshes_.contains(id); }
+bool Document::hasObject(const ObjectId id) const noexcept { return id && objects_.contains(id); }
 
 const SceneBlock* Document::scene(const SceneId id) const noexcept {
     const auto it = scenes_.find(id);
@@ -223,10 +223,8 @@ MeshId Document::makeObjectMeshUnique(const ObjectId objectId) {
     }
 
     const MeshId cloneId = allocateId<MeshId>();
-    MeshBlock clone = sourceIt->second;
-    clone.id = cloneId;
-    clone.revision = 1;
-    clone.authoredMesh = std::make_shared<EditableMesh>(*sourceIt->second.authoredMesh);
+    auto authoredClone = std::make_unique<EditableMesh>(*sourceIt->second.authoredMesh);
+    MeshBlock clone{cloneId, sourceIt->second.name, std::move(authoredClone), 1};
     meshes_.emplace(cloneId, std::move(clone));
 
     objectIt->second.meshId = cloneId;
@@ -243,7 +241,7 @@ bool Document::executeMeshCommand(
     MeshCommand& command,
     MeshCommandResult* result) {
     const auto meshIt = meshes_.find(meshId);
-    if (meshIt == meshes_.end() || !meshIt->second.authoredMesh) {
+    if (meshIt == meshes_.end() || !meshIt->second.authoredMesh || !history.bindToDocumentMesh(*this, meshId)) {
         return false;
     }
 
@@ -258,7 +256,7 @@ bool Document::executeMeshCommand(
 
 bool Document::undoMeshCommand(const MeshId meshId, MeshHistory& history) {
     const auto meshIt = meshes_.find(meshId);
-    if (meshIt == meshes_.end() || !meshIt->second.authoredMesh) {
+    if (meshIt == meshes_.end() || !meshIt->second.authoredMesh || !history.bindToDocumentMesh(*this, meshId)) {
         return false;
     }
 
@@ -273,7 +271,7 @@ bool Document::undoMeshCommand(const MeshId meshId, MeshHistory& history) {
 
 bool Document::redoMeshCommand(const MeshId meshId, MeshHistory& history) {
     const auto meshIt = meshes_.find(meshId);
-    if (meshIt == meshes_.end() || !meshIt->second.authoredMesh) {
+    if (meshIt == meshes_.end() || !meshIt->second.authoredMesh || !history.bindToDocumentMesh(*this, meshId)) {
         return false;
     }
 

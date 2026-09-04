@@ -4,19 +4,27 @@
 
 #include <cassert>
 #include <iostream>
+#include <optional>
 #include <string_view>
+#include <type_traits>
 
 namespace {
 
 class FailingCommand final : public vortex::Command {
 public:
     [[nodiscard]] std::string_view name() const noexcept override { return "Fail"; }
-    [[nodiscard]] bool apply(vortex::Document&) override { return false; }
+    [[nodiscard]] std::optional<vortex::DocumentHistoryRecord> apply(vortex::Document&) override {
+        return std::nullopt;
+    }
 };
 
 } // namespace
 
 int main() {
+    static_assert(!std::is_copy_constructible_v<vortex::Document>);
+    static_assert(!std::is_copy_assignable_v<vortex::Document>);
+    static_assert(std::is_move_constructible_v<vortex::Document>);
+
     vortex::Document document;
     assert(document.id());
     assert(document.revision() == 0);
@@ -33,7 +41,6 @@ int main() {
     assert(props);
     assert(document.collectionCount() == 2);
 
-    // Persistent IDs use one monotonic document allocator even across typed domains.
     assert(document.id().value() != scene.value());
     assert(scene.value() != sceneData->rootCollectionId.value());
     assert(!document.hasObject({}));
@@ -48,7 +55,6 @@ int main() {
     assert(document.linkObjectToCollection(child, props));
     assert(document.validate());
 
-    // Shared data can be split without mutating the other object.
     const vortex::MeshId childMesh = document.makeObjectMeshUnique(child);
     assert(childMesh);
     assert(childMesh != sharedMesh);
@@ -58,7 +64,6 @@ int main() {
     assert(document.object(parent)->meshId == sharedMesh);
     assert(document.object(child)->meshId == childMesh);
 
-    // Commands execute through a transaction and commit atomically.
     vortex::SetObjectParentCommand setParent{child, parent};
     {
         vortex::Transaction transaction{document};
@@ -75,7 +80,6 @@ int main() {
     }
     assert(document.object(child)->name == "Child Renamed");
 
-    // A failed command restores the complete document snapshot.
     const std::uint64_t beforeFailure = document.revision();
     FailingCommand fail;
     {
@@ -86,26 +90,28 @@ int main() {
     assert(document.revision() == beforeFailure);
     assert(document.object(child)->parentId == parent);
 
-    // A transaction that is not committed rolls back on destruction.
+    const std::uint64_t beforeImplicitRollback = document.revision();
     {
         vortex::Transaction transaction{document};
         vortex::SetObjectParentCommand clearParent{child, {}};
+        vortex::RenameObjectCommand temporaryName{child, "Temporary"};
         assert(transaction.execute(clearParent));
+        assert(transaction.execute(temporaryName));
         assert(!document.object(child)->parentId);
+        assert(document.object(child)->name == "Temporary");
     }
+    assert(document.revision() == beforeImplicitRollback);
     assert(document.object(child)->parentId == parent);
+    assert(document.object(child)->name == "Child Renamed");
 
-    // Parent cycles remain forbidden.
     assert(!document.setObjectParent(parent, child));
     assert(document.validate());
 
-    // Removing an object clears collection membership and child references safely.
     assert(document.removeObject(parent));
     assert(!document.collection(props)->objectIds.contains(parent));
     assert(!document.object(child)->parentId);
     assert(document.validate());
 
-    // Change history is queryable by document revision.
     const auto allChanges = document.changesSince(0);
     assert(!allChanges.empty());
     assert(allChanges.back().revision == document.revision());
@@ -116,6 +122,6 @@ int main() {
     assert(document.meshCount() == 0);
     assert(document.validate());
 
-    std::cout << "Vortex3D Phase 0.1 document hardening smoke test passed\n";
+    std::cout << "Vortex3D document delta-transaction smoke test passed\n";
     return 0;
 }

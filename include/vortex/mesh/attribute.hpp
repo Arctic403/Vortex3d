@@ -362,6 +362,27 @@ public:
         return true;
     }
 
+    // Conservative approximation used for history budgeting and diagnostics. It intentionally
+    // overestimates vector<bool> and unordered-map node overhead rather than pretending to be
+    // allocator-exact. Benchmarks provide the platform-specific truth.
+    [[nodiscard]] std::size_t estimatedDynamicBytes() const noexcept {
+        std::size_t bytes = layers_.bucket_count() * sizeof(void*);
+        bytes += layers_.size() * (sizeof(typename decltype(layers_)::value_type) + 2U * sizeof(void*));
+
+        for (const auto& [key, layer] : layers_) {
+            bytes += key.name.capacity();
+            bytes += layer.key.name.capacity();
+            std::visit(
+                [&bytes](const auto& storage) {
+                    using Storage = std::decay_t<decltype(storage)>;
+                    using Value = typename Storage::value_type;
+                    bytes += storage.capacity() * sizeof(Value);
+                },
+                layer.storage);
+        }
+        return bytes;
+    }
+
 private:
     [[nodiscard]] static constexpr std::size_t domainIndex(const AttributeDomain domain) noexcept {
         return static_cast<std::size_t>(domain);

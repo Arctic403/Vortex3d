@@ -1,25 +1,32 @@
-# Vortex3D Mesh Commands and Undo
+# Vortex3D Commands, Transactions, and Undo
 
 ## Purpose
 
-Editor actions, automation, plugins, scripts, and future AI must use the same mutation path. A successful editor-visible mutation must either be reversible or be rejected before it touches authored state.
+Editor actions, automation, plugins, scripts, and future AI use the same mutation path. A successful editor-visible mutation must either be reversible or be rejected before it becomes durable authored state.
 
-The second hard requirement is 32-bit Android viability: production history must not retain a complete `EditableMesh` copy for every edit.
+32-bit Android viability is a hard requirement: production history does not retain a complete Document or EditableMesh copy for every edit.
 
-## Command boundary
+## Document commands
 
-`MeshCommand` owns one requested modeling action.
+Ordinary scene/document edits produce compact deltas:
 
-A command returns:
+- object rename -> previous/new names,
+- parenting -> previous/new parent IDs,
+- mesh assignment -> previous/new MeshIds,
+- Make Unique -> source/new MeshIds plus ownership transfer of the created MeshBlock while undone.
 
-- a `MeshCommandResult` describing affected/new stable IDs for selection and editor repair,
+`DocumentHistory` owns undo/redo records and a configurable retained-byte budget. It is bound to one live Document instance so records cannot be replayed against unrelated state.
+
+The old whole-`Document snapshot_` transaction model has been removed. `Transaction` now stores only command deltas for atomic rollback. If an uncommitted transaction rolls back, its revision/change-log side effects are removed as well.
+
+## Mesh commands
+
+`MeshCommand` owns one requested modeling action and returns:
+
+- a `MeshCommandResult` describing affected/new stable IDs for selection/editor repair,
 - an optional reversible `MeshHistoryRecord`.
 
-`MeshHistory::execute()` accepts only commands that report themselves undoable. A command whose compact history representation does not exist yet is rejected before mutation when routed through editor history.
-
-This is why `ExtrudeFaceCommand` currently works for direct headless execution but is blocked by `MeshHistory` until its topology patch lands.
-
-## History classes
+`MeshHistory` is also bound to one live EditableMesh instance after its first retained edit. Cross-mesh replay is rejected.
 
 ### Pure value edits
 
@@ -33,99 +40,44 @@ VertexPositionChange {
 }
 ```
 
-No topology, unrelated attributes, or unrelated vertices are copied.
-
 ### Topology edits
 
-Topology history uses a **local exact-ID patch**, not a whole mesh snapshot.
+Face extrusion already uses a local exact-ID topology patch rather than a retained whole-mesh snapshot. The patch stores only source/created topology records and affected attribute rows.
 
-For face extrusion the patch must retain only:
+Undo restores the original source Face/Corner IDs. Redo restores the same cap/side/new topology IDs produced by the first execution.
 
-```text
-ExtrudeTopologyHistory
-  source face snapshot
-  source corner snapshots
-  created vertex snapshots
-  created edge snapshots
-  created face snapshots
-  created corner snapshots
-  affected attribute rows
-```
+## Memory budgets
 
-Each element snapshot contains its stable ID, the minimal canonical topology fields needed to rebuild it, its packed-domain position where required for deterministic restoration, and one captured attribute row for that domain.
-
-## Exact-ID requirement
-
-Undo must not silently turn an old ID into a different identity.
-
-For extrusion:
-
-1. the first apply removes source FaceId `F` and creates cap/side/new topology,
-2. undo deletes only topology created by that extrusion,
-3. undo restores **the original `F` and original source CornerIds**,
-4. redo removes `F` again,
-5. redo restores the **same cap/side/vertex/edge/corner IDs created by the first apply**.
-
-This makes command results stable across undo/redo and avoids forcing selection, modifiers, scripts, or AI references to guess at remapped topology.
-
-The global monotonic allocator remains advanced after undo. Exact restoration is allowed only for IDs owned by the history patch and proven absent from live topology. Normal allocation never reuses those IDs.
-
-## Attribute rows
-
-Topology history captures attributes per affected element, not entire attribute layers.
-
-`AttributeRow` is a list of typed `(AttributeKey, AttributeScalar)` values for one domain slot.
-
-Required operations:
-
-- capture one domain row,
-- insert/append one domain row with captured values,
-- erase an existing row through normal topology removal.
-
-If a new attribute layer is introduced after a history record was created, restoring an old row uses that layer's default value. If a stored key no longer exists, the unknown stored value is ignored unless project/history migration later defines another policy.
-
-## Radial and face links
-
-History does not need to store every transient radial link of neighboring topology.
-
-Canonical restoration rebuilds:
-
-- face `next/prev` cycles from the restored ordered Corner list,
-- edge radial cycles from all live Corners using the edge.
-
-`anyCorner` and radial ordering are treated as rebuildable connectivity caches as long as every live use is represented and validator invariants hold.
-
-## Memory budget
-
-`MeshHistory` tracks estimated retained bytes and owns a configurable budget.
+Document and mesh histories both track estimated retained bytes.
 
 Policy:
 
-1. redo and undo records share one retained-byte budget,
-2. moving records between undo/redo does not duplicate byte accounting,
-3. a divergent edit clears the redo branch,
-4. oldest undo records are discarded first when the budget is exceeded,
-5. a single record larger than the entire budget must be rejected/rewound rather than becoming a permanent non-undoable mutation.
+1. undo and redo share one budget per history,
+2. divergent edits clear redo,
+3. oldest retained records are discarded first when necessary,
+4. an individual edit larger than the entire budget is reversed instead of becoming a permanent non-undoable mutation,
+5. estimates are conservative engineering controls, not allocator-exact profiling data.
 
-The default host budget is currently 8 MiB only as an engineering baseline. Android will choose a device-aware budget after memory/capability reporting exists.
+The current default budgets are engineering baselines and will become device-aware after Android memory/capability reporting exists.
 
-## Temporary snapshots
+## Operation-local rollback
 
-Whole-`EditableMesh` snapshots are currently permitted **inside one operation** to guarantee atomic rollback while topology primitives are still maturing.
+Whole-`EditableMesh` copies are still permitted temporarily **inside one topology operation** to guarantee atomic rollback while primitives mature. Those copies are not retained in history.
 
-They are not retained in the undo stack.
+They should be removed only when benchmark/profiling evidence and local rollback machinery justify the change.
 
-Once exact local topology patches are fully proven, operation-local snapshots should also be reduced where practical.
+## Stable identity
+
+Undo/redo never treats packed indices as external identity. Restored topology receives the exact stable IDs owned by its history patch. Normal allocation remains monotonic; rolled-back/deleted IDs are not silently rebound to unrelated elements.
 
 ## Test gates
 
-Before topology undo is considered usable:
+History changes must preserve:
 
-- isolated quad extrude -> undo -> redo retains exact IDs,
-- attached cube face extrude -> undo -> redo retains unaffected neighbor IDs and radial counts,
-- concave n-gon extrude -> undo -> redo validates,
-- mixed move + extrude history rewinds to semantic-equivalent source state,
-- redo reproduces the original command result IDs,
-- repeated cycles pass ASan/UBSan,
-- retained history bytes stay below the configured budget,
-- no history record contains a full `EditableMesh` object.
+- deterministic undo/redo,
+- exact topology IDs where promised,
+- failed-command atomicity,
+- bounded retained bytes,
+- GCC and Clang builds,
+- ASan/UBSan,
+- Android/32-bit compile compatibility once the Android CI gate is active.
