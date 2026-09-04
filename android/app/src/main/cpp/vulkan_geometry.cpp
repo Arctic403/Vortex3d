@@ -1,20 +1,81 @@
 #include "vulkan_viewport.hpp"
 #include "ViewportStage1ShadersGenerated.hpp"
 
+#include "vortex/engine.hpp"
+
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <utility>
+#include <vector>
 
 namespace vortex::android {
 namespace {
 
-constexpr std::array<ViewportVertex, 4> kVertices{{
-    ViewportVertex{{-0.60F, -0.45F, 0.25F}, {1.00F, 0.20F, 0.15F}},
-    ViewportVertex{{ 0.60F, -0.45F, 0.25F}, {0.15F, 0.85F, 0.25F}},
-    ViewportVertex{{ 0.60F,  0.45F, 0.25F}, {0.15F, 0.40F, 1.00F}},
-    ViewportVertex{{-0.60F,  0.45F, 0.25F}, {1.00F, 0.80F, 0.15F}},
-}};
-constexpr std::array<std::uint32_t, 6> kIndices{{0U, 1U, 2U, 2U, 3U, 0U}};
+[[nodiscard]] bool buildEngineCube(
+    std::vector<ViewportVertex>& vertices,
+    std::vector<std::uint32_t>& indices) {
+    EditableMesh authored;
+    const auto v0 = authored.addVertex({-1.0F, -1.0F, -1.0F});
+    const auto v1 = authored.addVertex({ 1.0F, -1.0F, -1.0F});
+    const auto v2 = authored.addVertex({ 1.0F,  1.0F, -1.0F});
+    const auto v3 = authored.addVertex({-1.0F,  1.0F, -1.0F});
+    const auto v4 = authored.addVertex({-1.0F, -1.0F,  1.0F});
+    const auto v5 = authored.addVertex({ 1.0F, -1.0F,  1.0F});
+    const auto v6 = authored.addVertex({ 1.0F,  1.0F,  1.0F});
+    const auto v7 = authored.addVertex({-1.0F,  1.0F,  1.0F});
+    if (!v0 || !v1 || !v2 || !v3 || !v4 || !v5 || !v6 || !v7) {
+        return false;
+    }
+
+    if (!authored.addFace({v0, v3, v2, v1}) ||
+        !authored.addFace({v4, v5, v6, v7}) ||
+        !authored.addFace({v0, v1, v5, v4}) ||
+        !authored.addFace({v1, v2, v6, v5}) ||
+        !authored.addFace({v2, v3, v7, v6}) ||
+        !authored.addFace({v3, v0, v4, v7}) ||
+        !authored.validateStrict()) {
+        return false;
+    }
+
+    Document document;
+    const MeshId meshId = document.createMesh("Stage2 Engine Cube", std::move(authored));
+    const MeshBlock* block = document.mesh(meshId);
+    if (!meshId || block == nullptr) {
+        return false;
+    }
+
+    const MeshEvaluationResult evaluated = MeshEvaluator::evaluate(*block);
+    if (!evaluated || !evaluated.mesh) {
+        return false;
+    }
+    const RenderExtractResult extracted = RenderExtractor::extract(*evaluated.mesh);
+    if (!extracted || !extracted.mesh) {
+        return false;
+    }
+
+    vertices.reserve(extracted.mesh->vertices.size());
+    for (const vortex::ViewportVertex& source : extracted.mesh->vertices) {
+        const Vec3& n = source.normal;
+        vertices.push_back(ViewportVertex{
+            {source.position.x, source.position.y, source.position.z},
+            {
+                0.25F + 0.65F * (n.x * 0.5F + 0.5F),
+                0.25F + 0.65F * (n.y * 0.5F + 0.5F),
+                0.25F + 0.65F * (n.z * 0.5F + 0.5F),
+            },
+        });
+    }
+
+    indices.reserve(extracted.mesh->triangles.size() * 3U);
+    for (const ViewportTriangle& triangle : extracted.mesh->triangles) {
+        indices.push_back(triangle.a);
+        indices.push_back(triangle.b);
+        indices.push_back(triangle.c);
+    }
+    return !vertices.empty() && !indices.empty();
+}
 
 [[nodiscard]] VkShaderModule createShaderModule(
     VkDevice device,
@@ -86,32 +147,40 @@ bool VulkanViewport::createGeometryResources() {
         return true;
     }
 
+    std::vector<ViewportVertex> vertices;
+    std::vector<std::uint32_t> indices;
+    if (!buildEngineCube(vertices, indices)) {
+        return fail("Vortex engine failed to evaluate/extract the Stage 2 cube");
+    }
+
+    const VkDeviceSize vertexBytes = static_cast<VkDeviceSize>(vertices.size() * sizeof(ViewportVertex));
+    const VkDeviceSize indexBytes = static_cast<VkDeviceSize>(indices.size() * sizeof(std::uint32_t));
     const VkMemoryPropertyFlags hostMemory =
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    if (!createBuffer(sizeof(kVertices), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, hostMemory, vertexBuffer_, vertexMemory_) ||
-        !createBuffer(sizeof(kIndices), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, hostMemory, indexBuffer_, indexMemory_)) {
+    if (!createBuffer(vertexBytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, hostMemory, vertexBuffer_, vertexMemory_) ||
+        !createBuffer(indexBytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, hostMemory, indexBuffer_, indexMemory_)) {
         destroyGeometry();
         return false;
     }
 
     void* mapped = nullptr;
-    VkResult result = vkMapMemory(device_, vertexMemory_, 0U, sizeof(kVertices), 0U, &mapped);
+    VkResult result = vkMapMemory(device_, vertexMemory_, 0U, vertexBytes, 0U, &mapped);
     if (result != VK_SUCCESS) {
         destroyGeometry();
         return failVk("vkMapMemory(vertex)", result);
     }
-    std::memcpy(mapped, kVertices.data(), sizeof(kVertices));
+    std::memcpy(mapped, vertices.data(), static_cast<std::size_t>(vertexBytes));
     vkUnmapMemory(device_, vertexMemory_);
 
     mapped = nullptr;
-    result = vkMapMemory(device_, indexMemory_, 0U, sizeof(kIndices), 0U, &mapped);
+    result = vkMapMemory(device_, indexMemory_, 0U, indexBytes, 0U, &mapped);
     if (result != VK_SUCCESS) {
         destroyGeometry();
         return failVk("vkMapMemory(index)", result);
     }
-    std::memcpy(mapped, kIndices.data(), sizeof(kIndices));
+    std::memcpy(mapped, indices.data(), static_cast<std::size_t>(indexBytes));
     vkUnmapMemory(device_, indexMemory_);
-    indexCount_ = static_cast<std::uint32_t>(kIndices.size());
+    indexCount_ = static_cast<std::uint32_t>(indices.size());
     return true;
 }
 
@@ -199,7 +268,7 @@ bool VulkanViewport::createGraphicsPipeline() {
         if (fragmentModule != VK_NULL_HANDLE) {
             vkDestroyShaderModule(device_, fragmentModule, nullptr);
         }
-        return fail("Failed to create Stage 1 shader modules");
+        return fail("Failed to create Stage 2 shader modules");
     }
 
     std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
@@ -266,8 +335,14 @@ bool VulkanViewport::createGraphicsPipeline() {
     colorBlend.attachmentCount = 1U;
     colorBlend.pAttachments = &colorAttachment;
 
+    VkPushConstantRange cameraPushConstant{};
+    cameraPushConstant.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    cameraPushConstant.offset = 0U;
+    cameraPushConstant.size = sizeof(float);
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.pushConstantRangeCount = 1U;
+    layoutInfo.pPushConstantRanges = &cameraPushConstant;
     VkResult result = vkCreatePipelineLayout(device_, &layoutInfo, nullptr, &pipelineLayout_);
     if (result != VK_SUCCESS) {
         vkDestroyShaderModule(device_, fragmentModule, nullptr);
