@@ -1,10 +1,10 @@
-# Vortex3D Android shell v0.1
+# Vortex3D Android host
 
-This directory is the Android host around the portable Vortex3D C++ engine. The host owns Android/JNI/lifecycle concerns; `include/vortex` and `src` remain platform-independent.
+This directory is the Android host around the portable Vortex3D C++ engine. The host owns Android/JNI/lifecycle and Vulkan presentation concerns; `include/vortex` and the portable engine sources remain platform-independent.
 
-The application is intentionally minimal in v0.1: it proves that the complete `Vortex3D::engine` target can be linked into an APK and reached through JNI. The actual viewport/input UI will grow here without leaking Android types into the engine.
+The v0.3 viewport bootstrap replaces the old text-only host proof with a real `SurfaceView` backed by the first Vortex-owned Vulkan renderer. It creates the Vulkan instance/device/surface/swapchain, presents a continuous clear frame, survives surface recreation, and reports GPU/API/ABI diagnostics through the Android overlay. Mesh upload, camera, picking, and editor overlays are the next renderer increments.
 
-Supported ABIs are intentionally explicit:
+Supported ABIs remain intentionally explicit:
 
 - `armeabi-v7a` (32-bit),
 - `arm64-v8a` (64-bit).
