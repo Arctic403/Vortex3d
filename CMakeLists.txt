@@ -111,6 +111,11 @@ if(VORTEX_BUILD_TESTS)
     target_compile_features(vortex_document_history_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.document.history.smoke COMMAND vortex_document_history_smoke)
 
+    add_executable(vortex_change_journal_smoke tests/change_journal_smoke.cpp)
+    target_link_libraries(vortex_change_journal_smoke PRIVATE Vortex3D::core)
+    target_compile_features(vortex_change_journal_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.document.change.journal.smoke COMMAND vortex_change_journal_smoke)
+
     add_executable(vortex_mesh_kernel_smoke tests/mesh_kernel_smoke.cpp)
     target_link_libraries(vortex_mesh_kernel_smoke PRIVATE Vortex3D::core)
     target_compile_features(vortex_mesh_kernel_smoke PRIVATE cxx_std_20)
@@ -150,6 +155,11 @@ if(VORTEX_BUILD_TESTS)
     target_link_libraries(vortex_document_mesh_integration_smoke PRIVATE Vortex3D::core)
     target_compile_features(vortex_document_mesh_integration_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.document.mesh.integration.smoke COMMAND vortex_document_mesh_integration_smoke)
+
+    add_executable(vortex_mesh_revision_semantics_smoke tests/mesh_revision_semantics_smoke.cpp)
+    target_link_libraries(vortex_mesh_revision_semantics_smoke PRIVATE Vortex3D::eval)
+    target_compile_features(vortex_mesh_revision_semantics_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.mesh.revision.semantics.smoke COMMAND vortex_mesh_revision_semantics_smoke)
 
     add_executable(vortex_mesh_validation_corruption_smoke tests/mesh_validation_corruption_smoke.cpp)
     target_link_libraries(vortex_mesh_validation_corruption_smoke PRIVATE Vortex3D::core)

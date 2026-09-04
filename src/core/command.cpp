@@ -8,6 +8,19 @@
 namespace vortex {
 namespace {
 
+template <typename Function>
+class ScopeExit final {
+public:
+    explicit ScopeExit(Function function) : function_(std::move(function)) {}
+    ~ScopeExit() { function_(); }
+
+    ScopeExit(const ScopeExit&) = delete;
+    ScopeExit& operator=(const ScopeExit&) = delete;
+
+private:
+    Function function_;
+};
+
 std::size_t estimatedMeshBlockDynamicBytes(const MeshBlock& mesh) noexcept {
     std::size_t bytes = mesh.name.capacity();
     const EditableMesh* authoredMesh = mesh.authoredMesh();
@@ -63,6 +76,8 @@ bool DocumentHistory::accepts(const Document& document) noexcept {
 }
 
 bool DocumentHistory::applyRecord(Document& document, DocumentHistoryRecord& record, const bool forward) {
+    document.beginChangeHistoryBatch();
+    const ScopeExit endBatch{[&document]() noexcept { document.endChangeHistoryBatch(); }};
     const std::uint64_t startRevision = document.revision_;
     const std::size_t startChangeCount = document.changes_.size();
     std::vector<std::size_t> applied;
@@ -153,6 +168,8 @@ bool DocumentHistory::applyRecord(Document& document, DocumentHistoryRecord& rec
 }
 
 bool DocumentHistory::execute(Document& document, Command& command) {
+    document.beginChangeHistoryBatch();
+    const ScopeExit endBatch{[&document]() noexcept { document.endChangeHistoryBatch(); }};
     if (ownerDocumentRuntimeId_ && ownerDocumentRuntimeId_ != document.runtimeId()) {
         return false;
     }
@@ -270,7 +287,9 @@ void DocumentHistory::setBudgetBytes(const std::size_t budgetBytes) noexcept {
 }
 
 Transaction::Transaction(Document& document)
-    : document_(document), startRevision_(document.revision_), startChangeCount_(document.changes_.size()) {}
+    : document_(document), startRevision_(document.revision_), startChangeCount_(document.changes_.size()) {
+    document_.beginChangeHistoryBatch();
+}
 
 Transaction::~Transaction() {
     if (active_) {
@@ -303,6 +322,7 @@ bool Transaction::commit() {
 
     records_.clear();
     active_ = false;
+    document_.endChangeHistoryBatch();
     return true;
 }
 
@@ -322,6 +342,7 @@ void Transaction::rollback() {
     document_.changes_.resize(startChangeCount_);
     records_.clear();
     active_ = false;
+    document_.endChangeHistoryBatch();
 }
 
 } // namespace vortex

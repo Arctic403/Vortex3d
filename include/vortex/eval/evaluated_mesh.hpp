@@ -16,7 +16,7 @@ namespace vortex {
 struct EvaluationCacheKey final {
     RuntimeDocumentId sourceDocumentRuntimeId;
     MeshId sourceMeshId;
-    std::uint64_t sourceRevision = 0;
+    std::uint64_t sourceEvaluationRevision = 0;
     std::uint64_t modifierStackRevision = 0;
 
     [[nodiscard]] bool operator==(const EvaluationCacheKey&) const noexcept = default;
@@ -30,7 +30,7 @@ struct EvaluationCacheKeyHash final {
             hash ^= folded + std::size_t{0x9e3779b9U} + (hash << 6U) + (hash >> 2U);
         };
         mix(key.sourceMeshId.value());
-        mix(key.sourceRevision);
+        mix(key.sourceEvaluationRevision);
         mix(key.modifierStackRevision);
         return hash;
     }
@@ -72,7 +72,9 @@ public:
 
     [[nodiscard]] RuntimeDocumentId sourceDocumentRuntimeId() const noexcept { return cacheKey_.sourceDocumentRuntimeId; }
     [[nodiscard]] MeshId sourceMeshId() const noexcept { return cacheKey_.sourceMeshId; }
-    [[nodiscard]] std::uint64_t sourceRevision() const noexcept { return cacheKey_.sourceRevision; }
+    [[nodiscard]] std::uint64_t sourceEvaluationRevision() const noexcept {
+        return cacheKey_.sourceEvaluationRevision;
+    }
     [[nodiscard]] std::uint64_t modifierStackRevision() const noexcept { return cacheKey_.modifierStackRevision; }
     [[nodiscard]] const EvaluationCacheKey& cacheKey() const noexcept { return cacheKey_; }
 

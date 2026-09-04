@@ -27,7 +27,7 @@ int main() {
 
     const MeshBlock* source = document.mesh(meshId);
     assert(source != nullptr);
-    const std::uint64_t sourceRevision = source->revision;
+    const std::uint64_t sourceRevision = source->evaluationRevision();
 
     const TransformModifier transform(
         {3.0F, 4.0F, 5.0F},
@@ -42,7 +42,7 @@ int main() {
     const EvaluatedMesh& transformed = *transformedResult.mesh;
 
     assert(transformed.sourceMeshId() == meshId);
-    assert(transformed.sourceRevision() == sourceRevision);
+    assert(transformed.sourceEvaluationRevision() == sourceRevision);
     assert(transformed.modifierStackRevision() != 0U);
     assert(transformed.vertices()[0].sourceId == a);
 
@@ -118,12 +118,12 @@ int main() {
     assert(document.executeMeshCommand(meshId, history, move));
     source = document.mesh(meshId);
     assert(source != nullptr);
-    assert(source->revision > sourceRevision);
+    assert(source->evaluationRevision() > sourceRevision);
 
     const MeshEvaluationResult movedResult =
         MeshEvaluator::evaluate(*source, std::span<const MeshModifier* const>{transformStack});
     assert(movedResult);
-    assert(movedResult.mesh->sourceRevision() == source->revision);
+    assert(movedResult.mesh->sourceEvaluationRevision() == source->evaluationRevision());
     assert(movedResult.mesh->modifierStackRevision() == transformed.modifierStackRevision());
     assert(movedResult.mesh->cacheKey() != transformed.cacheKey());
     assert(movedResult.mesh->position(0)->x == 7.0F);

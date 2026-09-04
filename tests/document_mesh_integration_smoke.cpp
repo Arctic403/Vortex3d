@@ -60,10 +60,11 @@ int main() {
     assert(uniqueHistory.ownerMeshId() == uniqueMesh);
 
     const auto changes = document.changesSince(revisionBeforeMove);
-    assert(changes.size() == 1);
-    assert(changes[0].dataKind == vortex::DataKind::Mesh);
-    assert(changes[0].changeKind == vortex::ChangeKind::Updated);
-    assert(changes[0].entityId == uniqueMesh.value());
+    assert(changes.complete());
+    assert(changes.events.size() == 1);
+    assert(changes.events[0].dataKind == vortex::DataKind::Mesh);
+    assert(changes.events[0].changeKind == vortex::ChangeKind::Updated);
+    assert(changes.events[0].entityId == uniqueMesh.value());
 
     const std::uint64_t revisionBeforeWrongMesh = document.revision();
     vortex::MoveVerticesCommand wrongMeshMove({{v0, {-8.0F, 0.0F, -1.0F}}});
