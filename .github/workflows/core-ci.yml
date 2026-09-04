@@ -111,14 +111,20 @@ jobs:
           -DVORTEX_BUILD_TESTS=OFF
           -DVORTEX_BUILD_BENCHMARKS=ON
           -DVORTEX_WARNINGS_AS_ERRORS=ON
-      - name: Build benchmark
-        run: cmake --build build-bench --target vortex_mesh_bench --parallel
+      - name: Build benchmarks
+        run: cmake --build build-bench --target vortex_mesh_bench vortex_eval_bench --parallel
       - name: Run benchmark smoke
-        run: ./build-bench/vortex_mesh_bench --smoke --output benchmark-smoke.json
+        run: |
+          ./build-bench/vortex_mesh_bench --smoke --output benchmark-smoke.json
+          ./build-bench/vortex_eval_bench --smoke --output evaluation-benchmark-smoke.json
       - name: Show benchmark smoke
-        run: cat benchmark-smoke.json
+        run: |
+          cat benchmark-smoke.json
+          cat evaluation-benchmark-smoke.json
       - uses: actions/upload-artifact@v4
         with:
           name: vortex-benchmark-smoke-${{ github.sha }}
-          path: benchmark-smoke.json
+          path: |
+            benchmark-smoke.json
+            evaluation-benchmark-smoke.json
           retention-days: 14
