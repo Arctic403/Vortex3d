@@ -129,6 +129,9 @@ public:
 private:
     friend class ExtrudeFaceCommand;
     friend class MeshHistory;
+#ifdef VORTEX_ENABLE_TEST_HOOKS
+    friend struct MeshValidationTestAccess;
+#endif
 
     template <typename IdType>
     [[nodiscard]] IdType allocateId() noexcept { return IdType{nextElementId_++}; }

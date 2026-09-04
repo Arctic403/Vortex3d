@@ -59,6 +59,10 @@ if(VORTEX_BUILD_TESTS)
     include(CTest)
     enable_testing()
 
+    # Test builds expose narrow friend hooks for deliberate corruption fixtures.
+    # This definition is absent from production/Android/benchmark-only builds.
+    target_compile_definitions(vortex_core PUBLIC VORTEX_ENABLE_TEST_HOOKS=1)
+
     add_executable(vortex_core_smoke tests/core_smoke.cpp)
     target_link_libraries(vortex_core_smoke PRIVATE Vortex3D::core)
     target_compile_features(vortex_core_smoke PRIVATE cxx_std_20)
@@ -108,6 +112,11 @@ if(VORTEX_BUILD_TESTS)
     target_link_libraries(vortex_document_mesh_integration_smoke PRIVATE Vortex3D::core)
     target_compile_features(vortex_document_mesh_integration_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.document.mesh.integration.smoke COMMAND vortex_document_mesh_integration_smoke)
+
+    add_executable(vortex_mesh_validation_corruption_smoke tests/mesh_validation_corruption_smoke.cpp)
+    target_link_libraries(vortex_mesh_validation_corruption_smoke PRIVATE Vortex3D::core)
+    target_compile_features(vortex_mesh_validation_corruption_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.mesh.validation.corruption.smoke COMMAND vortex_mesh_validation_corruption_smoke)
 endif()
 
 if(VORTEX_BUILD_BENCHMARKS)
