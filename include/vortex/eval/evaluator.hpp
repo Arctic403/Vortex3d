@@ -4,6 +4,7 @@
 #include "vortex/eval/evaluated_mesh.hpp"
 #include "vortex/eval/modifier.hpp"
 #include "vortex/eval/normals.hpp"
+#include "vortex/eval/validator.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -19,6 +20,7 @@ enum class MeshEvaluationError : std::uint8_t {
     InvalidSourceMesh,
     ElementCountOverflow,
     MissingTopologyReference,
+    InvalidEvaluatedMesh,
     NullModifier,
     ModifierFailed,
     NormalGenerationFailed,
@@ -38,6 +40,7 @@ struct MeshEvaluationResult final {
     MeshEvaluationError error = MeshEvaluationError::None;
     ModifierApplyError modifierError = ModifierApplyError::None;
     NormalGenerationError normalError = NormalGenerationError::None;
+    std::optional<EvaluatedMeshValidationCode> evaluatedValidationCode;
     std::optional<std::size_t> modifierIndex;
 
     [[nodiscard]] bool ok() const noexcept { return mesh.has_value() && error == MeshEvaluationError::None; }
