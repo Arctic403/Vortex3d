@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -343,6 +344,37 @@ public:
                 }
             }, layer.storage);
         }
+        return true;
+    }
+
+    [[nodiscard]] bool remapDomain(
+        const AttributeDomain domain,
+        const std::span<const std::size_t> sourceIndices) {
+        const std::size_t sourceSize = domainSize(domain);
+        for (const std::size_t sourceIndex : sourceIndices) {
+            if (sourceIndex >= sourceSize) {
+                return false;
+            }
+        }
+
+        for (auto& [key, layer] : layers_) {
+            (void)key;
+            if (layer.key.domain != domain) {
+                continue;
+            }
+
+            std::visit([sourceIndices](auto& storage) {
+                using Vector = std::decay_t<decltype(storage)>;
+                Vector remapped;
+                remapped.reserve(sourceIndices.size());
+                for (const std::size_t sourceIndex : sourceIndices) {
+                    remapped.push_back(storage[sourceIndex]);
+                }
+                storage = std::move(remapped);
+            }, layer.storage);
+        }
+
+        domainSizes_[domainIndex(domain)] = sourceIndices.size();
         return true;
     }
 
