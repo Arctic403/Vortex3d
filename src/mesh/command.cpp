@@ -1,5 +1,6 @@
 #include "vortex/mesh/command.hpp"
 
+#include <type_traits>
 #include <unordered_set>
 #include <utility>
 
@@ -110,10 +111,11 @@ bool MeshHistory::execute(EditableMesh& mesh, MeshCommand& command, MeshCommandR
     if (bytes > budgetBytes_) {
         // The command already ran. Rewind it immediately rather than retaining an
         // unbounded step or leaving a non-undoable editor mutation behind.
-        if (!applyRecord(mesh, record, false)) {
-            return false;
+        const bool rewound = applyRecord(mesh, record, false);
+        if (result != nullptr) {
+            *result = {};
         }
-        return false;
+        return rewound ? false : false;
     }
 
     clearRedo();
