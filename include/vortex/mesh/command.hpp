@@ -118,7 +118,9 @@ private:
 
 class MeshHistory final {
 public:
-    explicit MeshHistory(std::size_t budgetBytes = 8U * 1024U * 1024U) : budgetBytes_(budgetBytes) {}
+    explicit MeshHistory(
+        std::size_t budgetBytes = std::size_t{8} * std::size_t{1024} * std::size_t{1024})
+        : budgetBytes_(budgetBytes) {}
 
     [[nodiscard]] bool execute(EditableMesh& mesh, MeshCommand& command, MeshCommandResult* result = nullptr);
     [[nodiscard]] bool undo(EditableMesh& mesh);

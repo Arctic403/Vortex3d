@@ -60,7 +60,9 @@ public:
 
 class DocumentHistory final {
 public:
-    explicit DocumentHistory(std::size_t budgetBytes = 16U * 1024U * 1024U) : budgetBytes_(budgetBytes) {}
+    explicit DocumentHistory(
+        std::size_t budgetBytes = std::size_t{16} * std::size_t{1024} * std::size_t{1024})
+        : budgetBytes_(budgetBytes) {}
 
     [[nodiscard]] bool execute(Document& document, Command& command);
     [[nodiscard]] bool undo(Document& document);

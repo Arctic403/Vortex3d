@@ -14,11 +14,14 @@
 
 ## Static analysis
 
-`.clang-tidy` defines the bug-prone, performance, and portability baseline. CI runs it against the portable C++ implementation using the generated compile database.
+`.clang-tidy` defines the bug-prone, performance, and portability baseline. CI runs it against the portable C++ implementation using the generated compile database and treats enabled diagnostics as errors.
 
-The baseline intentionally disables `bugprone-easily-swappable-parameters` because topology APIs naturally contain same-typed endpoint/ID arguments and the check is noisy without improving those contracts. Other checks should be disabled only with a documented reason; new warnings should normally be fixed rather than ignored.
+Two checks are intentionally disabled:
 
-Do not enable broad `modernize-*` or `readability-*` families merely to generate churn. Adopt individual checks when they improve correctness or maintainability.
+- `bugprone-easily-swappable-parameters`: topology APIs naturally contain same-typed endpoint/ID arguments, so this produces large low-value churn without clarifying those contracts.
+- `bugprone-exception-escape`: LLVM 18 reports false positives around the variant-based history/attribute accounting helpers and implicit destructor exception rules. Rollback behavior remains covered by tests; this check should be revisited when the analyzer can distinguish those cases reliably.
+
+Do not disable additional checks merely to get green CI. New diagnostics should normally be fixed. Do not enable broad `modernize-*` or `readability-*` families merely to generate churn; adopt individual checks when they improve correctness or maintainability.
 
 ## Safety gates
 
