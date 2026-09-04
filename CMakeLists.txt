@@ -23,6 +23,7 @@ add_library(vortex_core STATIC
     src/core/command.cpp
     src/core/document.cpp
     src/mesh/editable_mesh.cpp
+    src/mesh/validation.cpp
     src/mesh/extrude.cpp
     src/mesh/command.cpp
 )
@@ -61,6 +62,7 @@ add_library(vortex_eval STATIC
     src/eval/modifier.cpp
     src/eval/normals.cpp
     src/eval/triangulate.cpp
+    src/eval/validator.cpp
 )
 
 add_library(Vortex3D::eval ALIAS vortex_eval)
@@ -154,6 +156,11 @@ if(VORTEX_BUILD_TESTS)
     target_compile_features(vortex_mesh_validation_corruption_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.mesh.validation.corruption.smoke COMMAND vortex_mesh_validation_corruption_smoke)
 
+    add_executable(vortex_mesh_validation_storage_smoke tests/mesh_validation_storage_smoke.cpp)
+    target_link_libraries(vortex_mesh_validation_storage_smoke PRIVATE Vortex3D::core)
+    target_compile_features(vortex_mesh_validation_storage_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.mesh.validation.storage.smoke COMMAND vortex_mesh_validation_storage_smoke)
+
     add_executable(vortex_evaluator_smoke tests/evaluator_smoke.cpp)
     target_link_libraries(vortex_evaluator_smoke PRIVATE Vortex3D::eval)
     target_compile_features(vortex_evaluator_smoke PRIVATE cxx_std_20)
@@ -188,6 +195,11 @@ if(VORTEX_BUILD_TESTS)
     target_link_libraries(vortex_derived_normals_smoke PRIVATE Vortex3D::eval)
     target_compile_features(vortex_derived_normals_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.eval.normals.smoke COMMAND vortex_derived_normals_smoke)
+
+    add_executable(vortex_evaluated_mesh_validation_smoke tests/evaluated_mesh_validation_smoke.cpp)
+    target_link_libraries(vortex_evaluated_mesh_validation_smoke PRIVATE Vortex3D::eval)
+    target_compile_features(vortex_evaluated_mesh_validation_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.eval.validation.smoke COMMAND vortex_evaluated_mesh_validation_smoke)
 endif()
 
 if(VORTEX_BUILD_BENCHMARKS)
