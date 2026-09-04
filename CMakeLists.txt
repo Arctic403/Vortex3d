@@ -58,6 +58,7 @@ endif()
 add_library(vortex_eval STATIC
     src/eval/evaluator.cpp
     src/eval/modifier.cpp
+    src/eval/triangulate.cpp
 )
 
 add_library(Vortex3D::eval ALIAS vortex_eval)
@@ -170,6 +171,11 @@ if(VORTEX_BUILD_TESTS)
     target_link_libraries(vortex_mirror_weld_smoke PRIVATE Vortex3D::eval)
     target_compile_features(vortex_mirror_weld_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.eval.mirror.weld.smoke COMMAND vortex_mirror_weld_smoke)
+
+    add_executable(vortex_triangulate_modifier_smoke tests/triangulate_modifier_smoke.cpp)
+    target_link_libraries(vortex_triangulate_modifier_smoke PRIVATE Vortex3D::eval)
+    target_compile_features(vortex_triangulate_modifier_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.eval.triangulate.smoke COMMAND vortex_triangulate_modifier_smoke)
 endif()
 
 if(VORTEX_BUILD_BENCHMARKS)
