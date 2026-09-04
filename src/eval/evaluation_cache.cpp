@@ -61,13 +61,14 @@ CachedEvaluationResult EvaluationCache::evaluate(
     CachedEvaluationResult result;
 
     const MeshEvaluationKeyResult keyResult = MeshEvaluator::cacheKeyFor(source, modifiers);
-    if (!keyResult) {
+    if (!keyResult || !keyResult.key.has_value()) {
         result.error = keyResult.error;
         result.modifierIndex = keyResult.modifierIndex;
         return result;
     }
+    const EvaluationCacheKey key = keyResult.key.value();
 
-    if (const auto existingIndex = findIndex(*keyResult.key)) {
+    if (const auto existingIndex = findIndex(key)) {
         Entry& entry = entries_[*existingIndex];
         entry.lastUse = nextUse();
         ++hitCount_;
@@ -79,14 +80,14 @@ CachedEvaluationResult EvaluationCache::evaluate(
 
     ++missCount_;
     MeshEvaluationResult evaluated = MeshEvaluator::evaluate(source, modifiers);
-    if (!evaluated) {
+    if (!evaluated || !evaluated.mesh.has_value()) {
         result.error = evaluated.error;
         result.modifierError = evaluated.modifierError;
         result.modifierIndex = evaluated.modifierIndex;
         return result;
     }
 
-    auto snapshot = std::make_shared<EvaluatedMesh>(std::move(*evaluated.mesh));
+    auto snapshot = std::make_shared<EvaluatedMesh>(std::move(evaluated.mesh.value()));
     result.mesh = snapshot;
 
     const std::size_t bytes = snapshot->estimatedRetainedBytes();
@@ -105,7 +106,7 @@ CachedEvaluationResult EvaluationCache::evaluate(
         ++evictionCount_;
     }
 
-    entries_.push_back(Entry{*keyResult.key, snapshot, bytes, nextUse()});
+    entries_.push_back(Entry{key, snapshot, bytes, nextUse()});
     retainedBytes_ += bytes;
     result.retainedByCache = true;
     return result;
