@@ -31,9 +31,18 @@ Last updated: 2026-09-03
 - Document-level monotonic revisions and queryable change events implemented.
 - First `Command` interface implemented.
 - Snapshot-backed `Transaction` boundary implemented with commit, explicit rollback, failed-command rollback, and destructor rollback.
-- Native CTest smoke coverage expanded across Scene/Collection/Make Unique/change tracking/transactions.
+- `EditableMesh` v2 module created outside the Document layer.
+- Stable Vertex/Edge/Face/Corner identities implemented.
+- Face boundary `next/prev` loops implemented.
+- Edge radial Corner cycles implemented, including shared-edge faces.
+- Generic typed AttributeSet implemented for Vertex/Edge/Face/Corner domains.
+- Initial attributes implemented: position, crease, sharp, seam, material index, UV, corner normal.
+- Mesh validator now reports structured diagnostics for topology and attribute invariant failures.
+- First trusted topology primitives implemented: add vertex, find/create edge, add polygon face.
+- N-gon authoring topology is supported by `addFace`.
+- Native CTest coverage now includes Document/Transaction and Mesh Kernel suites.
+- Local configure/build/test sanity gate passes with 2/2 tests.
 - GitHub Actions Core CI added.
-- Local configure/build/test sanity gate passes for Phase 0.1.
 
 ## Immediate next work
 
@@ -52,11 +61,14 @@ Last updated: 2026-09-03
 
 ### Phase 0.2 — Prepare Mesh Kernel v2
 
-- [ ] Create `EditableMesh` module separate from `Document`.
-- [ ] Define Vertex/Edge/Face/Corner storage with stable IDs.
-- [ ] Define generic AttributeSet domains (`Vertex`, `Edge`, `Face`, `Corner`).
-- [ ] Add topology validator result/diagnostic type.
-- [ ] Add first trusted topology primitive and behavior tests.
+- [x] Create `EditableMesh` module separate from `Document`.
+- [x] Define Vertex/Edge/Face/Corner storage with stable IDs.
+- [x] Define generic AttributeSet domains (`Vertex`, `Edge`, `Face`, `Corner`).
+- [x] Add topology validator result/diagnostic type.
+- [x] Add first trusted topology primitives and behavior tests.
+- [ ] Add explicit non-manifold (3+ faces around one edge) fixture.
+- [ ] Add concave n-gon and cube fixtures.
+- [ ] Add remove topology primitive(s) with attribute compaction rules.
 - [ ] Port donor topology fixtures as behavior tests, not source-copy architecture.
 
 ### Phase 0.3 — Portability gate
