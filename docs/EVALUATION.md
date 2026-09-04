@@ -16,9 +16,11 @@ EditableMesh          durable authored topology
 vortex_eval
         |
         v
-EvaluatedMesh         read-only generated topology
+EvaluatedMesh         generated topology/attributes
         |
-        +--> future modifiers
+        v
+ordered modifier stack
+        |
         +--> future triangulation
         +--> future renderer upload
 ```
@@ -27,7 +29,7 @@ Nothing in `vortex_core` depends on the evaluator or renderer.
 
 ## Current evaluated representation
 
-The first evaluator performs a deterministic one-to-one conversion from a validated `EditableMesh`.
+Evaluation starts with a deterministic one-to-one conversion from a validated `EditableMesh`.
 
 It preserves:
 
@@ -67,63 +69,121 @@ This is intentional.
 - 32-bit connectivity reduces generated topology memory and is friendly to the required ARMv7 target.
 - Evaluation fails with `MeshEvaluationError::ElementCountOverflow` rather than silently truncating an index.
 
-## Read-only rule
+## Read-only external contract
 
-`EvaluatedMesh` exposes const spans and const attributes. There is no normal editor mutation API.
+`EvaluatedMesh` exposes const spans and const attributes to normal consumers. There is no editor mutation API.
 
-Editor operations modify authored data through commands/history. A new source revision then produces a new evaluated snapshot.
+Modifiers receive controlled internal mutation access through the evaluation layer only. Editor operations still modify authored data exclusively through commands/history.
 
-An older evaluated snapshot remains valid as its own value until discarded; it is never silently mutated to mirror later source edits.
+An older evaluated snapshot remains valid as its own value until discarded; later authored edits or modifier evaluations do not silently mutate it.
+
+## Modifier stack v0.1
+
+`MeshModifier` is the first non-destructive modifier contract.
+
+Each modifier provides:
+
+- a stable modifier type,
+- a human-readable name,
+- a deterministic configuration/revision token,
+- an `apply(EvaluatedMesh&)` operation,
+- focused structured failure information.
+
+Modifier configurations are immutable values after construction in the current design. Editing modifier settings means constructing/replacing the configuration, which naturally changes its revision token.
+
+Modifiers execute strictly in stack order. Order is semantically meaningful and is included in evaluation identity.
+
+### Transform modifier
+
+`TransformModifier` is the first implemented modifier.
+
+It supports:
+
+- translation,
+- XYZ Euler rotation in radians,
+- non-uniform scale.
+
+The operation transforms evaluated vertex positions only. Authored positions are unchanged.
+
+Normals, when present on Vertex or Corner domains, are transformed using inverse scale followed by the same rotation and normalization. Zero/near-zero scale components and non-finite transform values are rejected instead of producing undefined geometry.
+
+Transform order is:
+
+```text
+position -> scale -> rotate X -> rotate Y -> rotate Z -> translate
+```
+
+This convention is now part of the deterministic modifier contract and should not change casually.
 
 ## Error model
 
-Evaluation currently reports focused structured errors:
+Evaluation reports focused structured errors:
 
 - `MissingAuthoredMesh`,
 - `InvalidSourceMesh`,
 - `ElementCountOverflow`,
-- `MissingTopologyReference`.
+- `MissingTopologyReference`,
+- `NullModifier`,
+- `ModifierFailed`.
+
+Modifier failures additionally report `ModifierApplyError` and the failing stack index.
 
 This remains intentionally small. The evaluator does not introduce an exception-heavy result framework.
 
 ## Revision and cache contract
 
-`EvaluatedMesh::sourceRevision()` records the `MeshBlock` revision that produced the snapshot.
+Every evaluated snapshot exposes an `EvaluationCacheKey` containing:
 
-A future cache may reuse an evaluated result only when its complete input key still matches. At minimum that key includes:
+```text
+source MeshId
++ source MeshBlock revision
++ ordered modifier-stack revision
+```
 
-- source `MeshId`,
-- source revision,
-- modifier-stack revision/configuration once modifiers exist.
+The modifier-stack revision is a deterministic hash of each modifier's stable type and configuration token in stack order.
+
+Consequences:
+
+- same authored revision + same ordered modifiers => same key,
+- changing authored geometry => different key,
+- changing modifier settings => different key,
+- reordering modifiers => different key.
+
+`EvaluationCacheKeyHash` exists so a future cache can use the key directly. **No retained evaluation cache is introduced yet.** Cache lifetime and memory budgets will be designed separately so 32-bit Android does not accumulate unbounded generated meshes.
 
 Cache ownership belongs to the evaluation/render side, never to persistent authored topology.
 
-## Modifier rules
+## Modifier roadmap
 
-Future modifiers consume immutable evaluated input and produce new evaluated output or a controlled mutable build buffer internal to evaluation.
+Current order:
 
-Initial modifier order remains:
-
-1. Transform
+1. Transform **implemented**
 2. Mirror
 3. Triangulate
 4. Recalculate Normals
 5. Bevel
 6. Subdivision
 
+Topology-generating modifiers must preserve meaningful source mappings and must never write generated topology back into the authored mesh.
+
 Do not add parallel evaluation until deterministic dependency and invalidation behavior is proven single-threaded.
 
 ## Testing gate
 
-The evaluator smoke test proves:
+Evaluation tests now prove:
 
 - quad/n-gon boundary preservation,
 - source-ID mappings,
 - copied generic attributes,
 - generated connectivity references valid packed indices,
 - source revision propagation,
-- a prior evaluated snapshot is unchanged after authored mutation,
-- re-evaluation reflects a command-driven vertex move,
-- undo followed by re-evaluation restores the authored position.
+- prior evaluated snapshots remain unchanged after authored mutation,
+- command/undo-driven re-evaluation,
+- Transform does not mutate authored data,
+- Transform position and normal behavior,
+- modifier order changes output,
+- modifier order/settings change the cache key,
+- authored revision changes the cache key without changing the modifier-stack revision,
+- null/invalid modifiers fail with structured diagnostics.
 
 The evaluator target is compiled by GCC, Clang, Android ARMv7, and Android ARM64 and is exercised under ASan/UBSan and clang-tidy through normal CI.
