@@ -4,9 +4,9 @@ Last updated: 2026-09-04
 
 ## Current engineering focus
 
-**Phase 4 is active: topology-generating modifiers, explicit Mirror welding rules, then Triangulate and bounded evaluation caching.**
+**Phase 4 is active: topology-generating modifiers are live; next is Triangulate, then bounded evaluation caching.**
 
-The portable foundation is now strong enough to build upward from without rewriting the authoring kernel. Document ownership/history, mesh topology, Android dual-ABI compilation, static analysis, sanitizer coverage, performance instrumentation, deliberate corruption testing, authored-to-evaluated conversion, ordered modifier evaluation, Transform, and Mirror v0.1 are all live.
+The portable foundation is now strong enough to build upward from without rewriting the authoring kernel. Document ownership/history, mesh topology, Android dual-ABI compilation, static analysis, sanitizer coverage, performance instrumentation, deliberate corruption testing, authored-to-evaluated conversion, ordered modifier evaluation, Transform, Mirror, and explicit Mirror seam welding are all live.
 
 ## Foundation state
 
@@ -36,7 +36,7 @@ The portable foundation is now strong enough to build upward from without rewrit
 
 - [x] Vertex / Edge / Face / Corner domains.
 - [x] stable IDs independent from packed storage.
-- [x] n-gons, face cycles, radial cycles, manifold and selected non-manifold topology.
+- [x] n-gons, face cycles, radial cycles, manifold and supported non-manifold topology.
 - [x] generic domain-qualified attributes.
 - [x] conservative add/remove topology operations.
 - [x] stable-ID edge split.
@@ -57,39 +57,38 @@ The portable foundation is now strong enough to build upward from without rewrit
 
 Whole meshes are not retained as normal undo steps. Some complex topology operations still use temporary whole-`EditableMesh` copies as atomic rollback guards; those remain performance debt to profile rather than history architecture.
 
-### Validation hardening
+### Validation and evaluation coverage
 
-CTest now registers **14 native suites**, including evaluator, modifier-stack, and Mirror generated-topology coverage.
+CTest now registers **15 native suites**.
 
-Coverage includes valid and deliberately malformed topology plus evaluated/modifier behavior:
+Coverage includes authored topology, deliberate corruption, command/history replay, evaluation, and modifier-generated topology:
 
 - triangle / quad / n-gon / cube,
-- shared and 3-face non-manifold radial edges,
+- shared and non-manifold radial edges,
 - edge split and face extrusion,
 - attribute compaction,
 - exact-ID history replay,
 - deterministic randomized mutation,
-- broken face cycles,
-- broken radial cycles,
-- invalid endpoints,
-- invalid face sizes,
-- unreachable corners,
+- broken face/radial cycles,
+- invalid endpoints / invalid face sizes / unreachable corners,
 - attribute-size mismatch,
 - duplicate/reversed edge prevention,
 - illegal deletion order,
 - authored-to-evaluated conversion and revision behavior,
-- Transform source immutability,
-- modifier ordering,
-- modifier cache-key invalidation,
-- invalid/null modifier diagnostics,
-- Mirror axis and plane offset,
-- mirrored source-ID mapping,
-- reversed mirrored face cycles,
-- mirrored face-edge continuity,
+- Transform source immutability and cache invalidation,
+- Mirror axis / plane offset / source mappings,
+- reversed mirrored face cycles and face-edge continuity,
 - rebuilt mirrored radial rings,
 - reflected normal data,
-- no-weld mirror-plane behavior,
-- invalid Mirror diagnostics.
+- no-weld Mirror behavior,
+- explicit Mirror weld tolerance and exact-only tolerance,
+- seam projection without authored mutation,
+- seam-edge reuse,
+- fully planar face suppression,
+- reversed Corner/UV attribute mapping,
+- two-use manifold welded seams,
+- four-use non-manifold welded seams,
+- invalid weld diagnostics.
 
 Private corruption access exists only in test builds through `VORTEX_ENABLE_TEST_HOOKS`.
 
@@ -124,42 +123,30 @@ bucket pointer           8 bytes
 
 These measurements make corner/hash-heavy storage a future optimization candidate, but they do not justify a container rewrite by themselves.
 
-## Evaluated geometry and modifier boundary
+## Evaluated geometry and modifiers
 
-A separate portable `vortex_eval` target is live.
+A separate portable `vortex_eval` target owns rebuildable generated geometry.
 
-`MeshEvaluator` converts a validated `MeshBlock` / `EditableMesh` into an `EvaluatedMesh` containing:
-
-- source `MeshId`,
-- source mesh revision,
-- source Vertex/Edge/Face/Corner IDs,
-- copied generic attribute layers,
-- preserved n-gon boundaries,
-- preserved face and radial connectivity,
-- checked 32-bit packed generated topology references.
-
-Persistent authored IDs remain 64-bit. The 32-bit evaluated indices are rebuildable implementation detail and are never persistent identity.
-
-`MeshModifier` defines the ordered non-destructive modifier contract.
+Persistent authored IDs remain 64-bit. Generated connectivity uses checked packed 32-bit indices and is never persistent identity.
 
 Implemented modifiers:
 
-1. `TransformModifier` — translation, XYZ rotation, and non-uniform scale.
-2. `MirrorModifier` v0.1 — X/Y/Z mirror axis plus plane offset, generated topology duplication, reversed winding, rebuilt mirrored radial rings, and reflected normal data.
+1. `TransformModifier` — translation, XYZ rotation, non-uniform scale.
+2. `MirrorModifier` v0.2 — X/Y/Z axis, plane offset, no-weld duplication, plus optional explicit seam welding.
 
-Mirror operates on the current evaluated input and never writes generated topology into the authored `EditableMesh`.
+Mirror welding uses `MirrorWeldSettings { enabled, tolerance }`. There is **no hidden epsilon**. `distance <= tolerance` welds; `tolerance == 0` means exact-only welding.
 
-Mirrored generated elements preserve the stable source IDs they derive from. This deliberately allows multiple generated elements to map back to one authored identity.
+The deterministic survivor is the source evaluated vertex. It is projected exactly onto the mirror plane in evaluated output only. Seam edges are reused when both endpoints weld; fully seam faces are not duplicated; mirrored Corner attributes follow reversed source-corner order; radial rings are rebuilt globally and may form supported non-manifold rings.
 
-**Mirror v0.1 does not weld vertices on the mirror plane.** Even an exactly-on-plane vertex is duplicated. Welding is deferred until merge tolerance, collapsed topology, corner attributes, source mappings, and non-manifold outcomes have explicit tested rules.
+Authored `EditableMesh` remains unchanged throughout evaluation.
 
-Every evaluated snapshot carries an `EvaluationCacheKey`:
+Every evaluated snapshot carries:
 
 ```text
 MeshId + authored Mesh revision + ordered modifier-stack revision
 ```
 
-Same inputs produce the same key; authored edits, modifier configuration changes, modifier axis/offset changes, or modifier reordering change it. Hash support exists for future caches, but **no retained evaluation cache is introduced yet**.
+Mirror axis, offset, weld enablement, and weld tolerance participate in evaluation identity. No retained evaluation cache exists yet.
 
 See `docs/EVALUATION.md`.
 
@@ -176,7 +163,7 @@ Normal Core CI has **8 jobs**:
 7. Android ARM64 cross-compile,
 8. Release benchmark smoke + artifact.
 
-Mirror PR #6 passed all eight gates before merge, including the 32-bit ARMv7 compile and the dedicated generated-topology test.
+Mirror weld PR #7 passed all eight gates before merge, including the dedicated seam/non-manifold suite under sanitizers and the ARMv7 32-bit build.
 
 ## Deferred intentionally
 
@@ -191,16 +178,15 @@ Still deliberately deferred:
 - renderer ownership of authored data,
 - retained evaluation caches without explicit memory budgets,
 - parallel evaluation before deterministic invalidation exists,
-- hidden Mirror weld epsilon.
+- broad spatial welding/deduplication unrelated to the configured Mirror seam.
 
 ## Next engineering target
 
-1. Define and implement **Mirror weld/merge v0.2** with explicit tolerance and deterministic collapse rules.
-2. Preserve source mappings and corner-domain attributes through welded mirror seams.
-3. Add seam/non-manifold fixtures before enabling welding by default anywhere.
-4. Implement **Triangulate** downstream while preserving authored n-gons.
-5. Add an explicitly budgeted evaluation cache only after topology-generating modifier invalidation behavior is proven.
-6. Keep storage optimization separate and evidence-driven from benchmark results.
+1. Implement **Triangulate** as derived evaluated topology while preserving authored n-gons.
+2. Define deterministic source mappings for generated triangles/corners.
+3. Add concave n-gon and modifier-stack fixtures (`Transform -> Mirror Weld -> Triangulate`).
+4. Add an explicitly byte-budgeted evaluation cache after topology-generating invalidation is proven.
+5. Keep storage optimization separate and evidence-driven from benchmark results.
 
 No renderer or Android UI code should bypass the evaluator boundary.
 
@@ -222,4 +208,4 @@ Launch native APK
 -> Re-import and validate
 ```
 
-The headless engine can now execute the **Add Mirror modifier** step non-destructively. The next architectural decision is deterministic mirror welding, followed by triangulation/render-oriented derived geometry.
+The headless engine now has deterministic no-weld and welded Mirror behavior. The next derived-geometry step is Triangulate, which will prepare evaluated topology for render/export consumers without destroying authored n-gons.
