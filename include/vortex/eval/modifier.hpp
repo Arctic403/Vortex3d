@@ -18,7 +18,9 @@ enum class ModifierApplyError : std::uint8_t {
     MissingPositionAttribute,
     InvalidTransform,
     InvalidMirror,
+    InvalidMirrorWeld,
     GeneratedTopologyOverflow,
+    GeneratedTopologyInvalid,
     AttributeCopyFailed,
 };
 
@@ -75,10 +77,20 @@ enum class MirrorAxis : std::uint8_t {
     Z,
 };
 
+struct MirrorWeldSettings final {
+    bool enabled = false;
+    float tolerance = 0.0F;
+
+    [[nodiscard]] bool operator==(const MirrorWeldSettings&) const noexcept = default;
+};
+
 class MirrorModifier final : public MeshModifier {
 public:
-    explicit MirrorModifier(const MirrorAxis axis = MirrorAxis::X, const float planeOffset = 0.0F) noexcept
-        : axis_(axis), planeOffset_(planeOffset) {}
+    explicit MirrorModifier(
+        const MirrorAxis axis = MirrorAxis::X,
+        const float planeOffset = 0.0F,
+        const MirrorWeldSettings weld = {}) noexcept
+        : axis_(axis), planeOffset_(planeOffset), weld_(weld) {}
 
     [[nodiscard]] std::string_view name() const noexcept override { return "Mirror"; }
     [[nodiscard]] MeshModifierType type() const noexcept override { return MeshModifierType::Mirror; }
@@ -87,10 +99,12 @@ public:
 
     [[nodiscard]] MirrorAxis axis() const noexcept { return axis_; }
     [[nodiscard]] float planeOffset() const noexcept { return planeOffset_; }
+    [[nodiscard]] MirrorWeldSettings weldSettings() const noexcept { return weld_; }
 
 private:
     MirrorAxis axis_;
     float planeOffset_ = 0.0F;
+    MirrorWeldSettings weld_;
 };
 
 } // namespace vortex
