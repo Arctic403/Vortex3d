@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gizmo_contract.hpp"
+
 #include "vortex/core/transform.hpp"
 #include "vortex/viewport/render_extract.hpp"
 
@@ -51,23 +53,23 @@ struct ViewportPick final {
     vortex::FaceId sourceFace;
 };
 
-enum class GizmoAxis : std::uint8_t {
-    X = 0U,
-    Y = 1U,
-    Z = 2U,
-};
-
-enum class GizmoMode : std::uint8_t {
-    Move = 0U,
-    Rotate = 1U,
-    Scale = 2U,
-};
-
 // Screen-space metadata captured when a touch hits the active gizmo control.
-// pixelsPerWorldUnit is measured at the selected object's depth and gives the editor host
-// a stable drag scale without giving Vulkan ownership of authored transforms.
+// The handle is interaction identity; mode remains separate editor state. pixelsPerWorldUnit
+// is measured at the selected object's depth and gives the editor host a stable drag scale
+// without giving Vulkan ownership of authored transforms.
 struct GizmoHit final {
-    GizmoAxis axis = GizmoAxis::X;
+    GizmoHit() = default;
+    GizmoHit(
+        const GizmoAxis axis,
+        const float directionX,
+        const float directionY,
+        const float pixelsPerWorldUnitValue) noexcept
+        : handle(axisGizmoHandle(axis)),
+          screenDirectionX(directionX),
+          screenDirectionY(directionY),
+          pixelsPerWorldUnit(pixelsPerWorldUnitValue) {}
+
+    GizmoHandle handle = GizmoHandle::AxisX;
     float screenDirectionX = 0.0F;
     float screenDirectionY = 0.0F;
     float pixelsPerWorldUnit = 0.0F;
