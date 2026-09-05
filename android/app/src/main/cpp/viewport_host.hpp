@@ -38,6 +38,18 @@ public:
     [[nodiscard]] bool zoomCamera(float scaleFactor) noexcept;
     [[nodiscard]] bool tap(float xPixels, float yPixels) noexcept;
 
+    [[nodiscard]] bool setTransformTool(const TransformToolMode mode) noexcept {
+        switch (mode) {
+            case TransformToolMode::Move:
+                return renderer_.setGizmoMode(GizmoMode::Move);
+            case TransformToolMode::Rotate:
+                return renderer_.setGizmoMode(GizmoMode::Rotate);
+            case TransformToolMode::Scale:
+                return renderer_.setGizmoMode(GizmoMode::Scale);
+        }
+        return false;
+    }
+
     [[nodiscard]] bool beginTransformGesture(
         TransformToolMode mode,
         float xPixels,
