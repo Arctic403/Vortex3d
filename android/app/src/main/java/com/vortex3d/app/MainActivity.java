@@ -40,6 +40,7 @@ public final class MainActivity extends Activity {
     private static native boolean nativePanCamera(long handle, float deltaX, float deltaY);
     private static native boolean nativeZoomCamera(long handle, float scaleFactor);
     private static native boolean nativeTapViewport(long handle, float x, float y);
+    private static native boolean nativeSetTransformTool(long handle, int mode);
     private static native boolean nativeBeginTransformGesture(long handle, int mode, float x, float y);
     private static native boolean nativeUpdateTransformGesture(long handle, float x, float y);
     private static native boolean nativeEndTransformGesture(long handle, boolean commit);
@@ -247,6 +248,10 @@ public final class MainActivity extends Activity {
         }
         cancelActiveTransformGesture();
         resetGestureState();
+        if (rendererHandle != 0L && !nativeSetTransformTool(rendererHandle, tool)) {
+            updateStatus();
+            return;
+        }
         transformTool = tool;
         refreshToolButtons();
         updateStatus();
