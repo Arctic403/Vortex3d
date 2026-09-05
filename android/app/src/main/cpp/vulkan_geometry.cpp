@@ -1,46 +1,13 @@
 #include "vulkan_viewport.hpp"
 #include "ViewportStage1ShadersGenerated.hpp"
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstring>
-#include <unordered_map>
 #include <vector>
 
 namespace vortex::android {
 namespace {
-
-struct EdgeKey final {
-    std::uint64_t a = 0U;
-    std::uint64_t b = 0U;
-
-    [[nodiscard]] bool operator==(const EdgeKey&) const noexcept = default;
-};
-
-struct EdgeKeyHash final {
-    [[nodiscard]] std::size_t operator()(const EdgeKey& key) const noexcept {
-        std::size_t value = std::hash<std::uint64_t>{}(key.a);
-        value ^= std::hash<std::uint64_t>{}(key.b) + std::size_t{0x9e3779b9U} +
-                 (value << 6U) + (value >> 2U);
-        return value;
-    }
-};
-
-struct EdgeInfo final {
-    std::array<float, 3> a{};
-    std::array<float, 3> b{};
-    vortex::FaceId firstFace;
-    std::uint32_t occurrences = 0U;
-    bool crossesFaces = false;
-};
-
-[[nodiscard]] EdgeKey edgeKey(const vortex::VertexId a, const vortex::VertexId b) noexcept {
-    if (a.value() <= b.value()) {
-        return {a.value(), b.value()};
-    }
-    return {b.value(), a.value()};
-}
 
 void addLine(
     std::vector<ViewportVertex>& output,
@@ -96,120 +63,6 @@ void addLine(
 }
 
 } // namespace
-
-bool VulkanViewport::setViewportMesh(const vortex::ViewportMesh& mesh) {
-    if (device_ != VK_NULL_HANDLE) {
-        return fail("Stage 5A viewport snapshots must be supplied before Vulkan device creation");
-    }
-    if (mesh.vertices.empty() || mesh.triangles.empty()) {
-        return fail("Viewport snapshot contains no renderable geometry");
-    }
-
-    sceneVertices_.clear();
-    sceneIndices_.clear();
-    selectionOverlayVertices_.clear();
-    pickTriangles_.clear();
-
-    sceneVertices_.reserve(mesh.vertices.size());
-    for (const vortex::ViewportVertex& source : mesh.vertices) {
-        const Vec3& n = source.normal;
-        sceneVertices_.push_back(ViewportVertex{
-            {source.position.x, source.position.y, source.position.z},
-            {
-                0.25F + 0.65F * (n.x * 0.5F + 0.5F),
-                0.25F + 0.65F * (n.y * 0.5F + 0.5F),
-                0.25F + 0.65F * (n.z * 0.5F + 0.5F),
-            },
-        });
-    }
-
-    sceneIndices_.reserve(mesh.triangles.size() * 3U);
-    pickTriangles_.reserve(mesh.triangles.size());
-    std::unordered_map<EdgeKey, EdgeInfo, EdgeKeyHash> edges;
-    edges.reserve(mesh.triangles.size() * 3U);
-
-    for (const vortex::ViewportTriangle& triangle : mesh.triangles) {
-        if (triangle.a >= mesh.vertices.size() ||
-            triangle.b >= mesh.vertices.size() ||
-            triangle.c >= mesh.vertices.size()) {
-            sceneVertices_.clear();
-            sceneIndices_.clear();
-            pickTriangles_.clear();
-            return fail("Viewport snapshot contains an out-of-range triangle index");
-        }
-
-        sceneIndices_.push_back(triangle.a);
-        sceneIndices_.push_back(triangle.b);
-        sceneIndices_.push_back(triangle.c);
-        pickTriangles_.push_back(PickTriangle{
-            sceneVertices_[triangle.a].position,
-            sceneVertices_[triangle.b].position,
-            sceneVertices_[triangle.c].position,
-            triangle.sourceFace,
-        });
-
-        const std::array<std::uint32_t, 3> indices{triangle.a, triangle.b, triangle.c};
-        for (std::size_t edge = 0; edge < 3U; ++edge) {
-            const std::uint32_t firstIndex = indices[edge];
-            const std::uint32_t secondIndex = indices[(edge + 1U) % 3U];
-            const vortex::VertexId firstSource = mesh.vertices[firstIndex].sourceVertex;
-            const vortex::VertexId secondSource = mesh.vertices[secondIndex].sourceVertex;
-            if (!firstSource || !secondSource || firstSource == secondSource) {
-                continue;
-            }
-
-            const EdgeKey key = edgeKey(firstSource, secondSource);
-            auto [iterator, inserted] = edges.try_emplace(key);
-            EdgeInfo& info = iterator->second;
-            if (inserted) {
-                info.a = sceneVertices_[firstIndex].position;
-                info.b = sceneVertices_[secondIndex].position;
-                info.firstFace = triangle.sourceFace;
-            } else if (triangle.sourceFace != info.firstFace) {
-                info.crossesFaces = true;
-            }
-            ++info.occurrences;
-        }
-    }
-
-    // Render only evaluated face boundaries. A triangulation diagonal appears twice with
-    // the same source FaceId and is omitted, while a real mesh edge either appears once
-    // or is shared by triangles carrying different source FaceIds.
-    constexpr std::array<float, 3> selectedColor{1.0F, 0.55F, 0.08F};
-    selectionOverlayVertices_.reserve(edges.size() * 2U + 18U);
-    for (const auto& [key, info] : edges) {
-        (void)key;
-        if (info.occurrences == 1U || info.crossesFaces) {
-            addLine(selectionOverlayVertices_, info.a, info.b, selectedColor);
-        }
-    }
-
-    // Stage 5A gizmo foundation. Object transforms are not authored yet, so the bootstrap
-    // cube's engine object origin is the world origin. These derived lines become a proper
-    // transform-gizmo draw item when object transforms land.
-    addLine(selectionOverlayVertices_, {-0.10F, 0.0F, 0.0F}, {0.10F, 0.0F, 0.0F}, {1.0F, 0.85F, 0.18F});
-    addLine(selectionOverlayVertices_, {0.0F, -0.10F, 0.0F}, {0.0F, 0.10F, 0.0F}, {1.0F, 0.85F, 0.18F});
-    addLine(selectionOverlayVertices_, {0.0F, 0.0F, -0.10F}, {0.0F, 0.0F, 0.10F}, {1.0F, 0.85F, 0.18F});
-    addLine(selectionOverlayVertices_, {0.0F, 0.0F, 0.0F}, {1.55F, 0.0F, 0.0F}, {0.95F, 0.16F, 0.14F});
-    addLine(selectionOverlayVertices_, {0.0F, 0.0F, 0.0F}, {0.0F, 1.55F, 0.0F}, {0.18F, 0.92F, 0.28F});
-    addLine(selectionOverlayVertices_, {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 1.55F}, {0.18F, 0.42F, 1.0F});
-
-    selectionVisible_ = false;
-    commandBuffersDirty_ = true;
-    return !sceneVertices_.empty() && !sceneIndices_.empty() && !pickTriangles_.empty();
-}
-
-bool VulkanViewport::setSelectionVisible(const bool visible) noexcept {
-    if (visible && selectionOverlayVertices_.empty()) {
-        return false;
-    }
-    if (selectionVisible_ == visible) {
-        return true;
-    }
-    selectionVisible_ = visible;
-    commandBuffersDirty_ = true;
-    return true;
-}
 
 std::uint32_t VulkanViewport::findMemoryType(
     const std::uint32_t typeBits,
