@@ -11,6 +11,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace vortex {
@@ -98,6 +99,19 @@ struct ChangeQueryResult final {
 };
 
 struct ObjectBlock final {
+    ObjectBlock() = default;
+    ObjectBlock(
+        ObjectId objectId,
+        std::string objectName,
+        MeshId objectMeshId = {},
+        ObjectId objectParentId = {},
+        std::uint64_t objectRevision = 1)
+        : id(objectId),
+          name(std::move(objectName)),
+          meshId(objectMeshId),
+          parentId(objectParentId),
+          revision(objectRevision) {}
+
     ObjectId id;
     std::string name;
     MeshId meshId;
