@@ -68,7 +68,7 @@ void setComponent(Vec3& value, const GizmoAxis axis, const float componentValue)
 
 std::optional<TransformMatrix> ViewportHost::previewWorldMatrix(
     const ObjectId objectId,
-    const ObjectTransform& transform) const noexcept {
+    const ObjectTransform& transform) const {
     const ObjectBlock* object = document_.object(objectId);
     if (object == nullptr || !isFiniteObjectTransform(transform)) {
         return std::nullopt;
@@ -88,7 +88,7 @@ std::optional<TransformMatrix> ViewportHost::previewWorldMatrix(
 bool ViewportHost::beginTransformGesture(
     const TransformToolMode mode,
     const float xPixels,
-    const float yPixels) noexcept {
+    const float yPixels) {
     if (!initialized_ || transformDrag_.active ||
         !std::isfinite(xPixels) || !std::isfinite(yPixels)) {
         return false;
@@ -146,7 +146,7 @@ bool ViewportHost::beginTransformGesture(
     return true;
 }
 
-bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixels) noexcept {
+bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixels) {
     if (!initialized_ || !transformDrag_.active ||
         !std::isfinite(xPixels) || !std::isfinite(yPixels)) {
         return false;
@@ -228,7 +228,7 @@ bool ViewportHost::endTransformGesture(const bool commit) {
     return syncRendererObjectTransforms();
 }
 
-bool ViewportHost::syncRendererObjectTransforms() noexcept {
+bool ViewportHost::syncRendererObjectTransforms() {
     for (ViewportObjectSnapshot& snapshot : viewportObjects_) {
         const auto world = document_.objectWorldMatrix(snapshot.objectId);
         if (!world || !renderer_.updateObjectWorldMatrix(snapshot.objectId, *world)) {
