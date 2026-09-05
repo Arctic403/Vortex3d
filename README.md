@@ -39,16 +39,16 @@ Derived Corner Normals + Evaluation Cache
         |
 RenderExtractor
         |
-future Vulkan backend
+Vulkan Viewport Backend
 ```
 
 Persistent authoring state never depends on Vulkan, Android, WebView, Three.js, WASM, OPFS, DOM APIs, platform event loops, or filesystem UI.
 
 ## Current foundation status
 
-The native bootstrap, mesh kernel, command/history layer, evaluation pipeline, and first production-hardening passes are complete enough to build upward from without rewriting the foundation.
+The native bootstrap, mesh kernel, command/history layer, evaluation pipeline, application architecture, and first production-hardening passes are complete enough to build upward from without rewriting the foundation.
 
-Current capabilities include:
+Current engine capabilities include:
 
 - Scene / Collection / Object / Mesh document data blocks.
 - shared mesh instances and explicit Make Unique.
@@ -60,16 +60,32 @@ Current capabilities include:
 - structured topology validation plus deliberate corruption fixtures.
 - deterministic randomized mutation tests.
 - authored `EditableMesh` -> packed `EvaluatedMesh` conversion with source-ID mappings.
-- ordered Transform, Mirror/Weld, and concave-safe Triangulate modifiers.
+- ordered Transform, Mirror/Weld, Triangulate, and Simple Deform Twist evaluation paths.
 - byte-budgeted deterministic LRU evaluation cache.
 - final derived Corner normals with flat/smooth policy, angle-weighted smooth fans, and sharp/manifold boundaries.
+- editor context, operators/tools, dependency graph, procedural geometry graph, project codec, and extension registries.
 - GCC + Clang warnings-as-errors builds.
 - ASan + UBSan.
 - clang-tidy with actionable bugprone/performance/portability checks.
 - Android NDK cross-compilation for ARMv7 32-bit and ARM64 with explicit pointer-width validation.
-- separate core and evaluation performance/memory benchmarks with 10k / 100k / 1M requested profiles where practical.
+- separate core and evaluation performance/memory benchmarks.
 
-The v0.2 architecture stack is now implemented above the hardened core: geometry operations, editor context, operators/tools, dependency graph, procedural geometry graph, renderer-facing extraction, exact-ID project serialization, extensibility registries/properties, and an Android JNI host shell. Production modeling breadth, Vulkan rendering, touch UI, assets/materials, and advanced procedural features remain product work rather than core rewrites.
+## Current Android viewport
+
+`android/app` now contains the live Vortex-owned Vulkan viewport rather than a text-only host proof. Current renderer stages provide:
+
+- Vulkan instance/device/surface/swapchain lifecycle,
+- evaluated engine cube upload through `RenderExtractor`,
+- indexed drawing and depth buffering,
+- XZ grid plus XYZ axes,
+- native camera matrices,
+- one-finger orbit,
+- coherent two-finger pan,
+- symmetric filtered pinch zoom,
+- split ARMv7/ARM64 debug APKs plus a universal APK,
+- ABI packaging verification in CI.
+
+The bootstrap cube is still temporary renderer-demo plumbing. The next editor-facing step is to introduce a persistent native viewport/editor session so picking and selection resolve to stable engine IDs through `EditorContext` rather than renderer-owned state.
 
 ## Repository layout
 
@@ -90,7 +106,7 @@ tests/               Native correctness and corruption tests
 benchmarks/          Core + evaluation performance measurement harnesses
 docs/                Architecture, decisions, roadmap, research
 scripts/             Portability/tooling checks
-android/             Android APK/JNI host; platform code stays outside the engine
+android/             Android APK/JNI/Vulkan host; platform code stays outside the engine
 ```
 
 ## Build and test
@@ -116,7 +132,7 @@ cmake --build build-bench --target vortex_mesh_bench vortex_eval_bench
 ./build-bench/vortex_eval_bench --scale 10000
 ```
 
-GitHub Actions provides explicit 10k, 100k, and 1M requested benchmark profiles. Nonlinear setup/topology-heavy cases are transparently capped and report `capped: true` rather than hiding current scaling limits.
+GitHub Actions provides benchmark smoke coverage and retains benchmark output as workflow artifacts. Nonlinear setup/topology-heavy cases report their capped workload rather than hiding current scaling limits.
 
 ## Engineering documents
 
