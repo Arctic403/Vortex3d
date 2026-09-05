@@ -93,6 +93,8 @@ bool DocumentHistory::applyRecord(Document& document, DocumentHistoryRecord& rec
                     return document.setObjectParent(value.objectId, direction ? value.after : value.before);
                 } else if constexpr (std::is_same_v<Delta, SetObjectMeshDelta>) {
                     return document.setObjectMesh(value.objectId, direction ? value.after : value.before);
+                } else if constexpr (std::is_same_v<Delta, SetObjectTransformDelta>) {
+                    return document.setObjectTransform(value.objectId, direction ? value.after : value.before);
                 } else if constexpr (std::is_same_v<Delta, MakeObjectMeshUniqueDelta>) {
                     auto objectIt = document.objects_.find(value.objectId);
                     if (objectIt == document.objects_.end() || !document.hasMesh(value.sourceMeshId)) {

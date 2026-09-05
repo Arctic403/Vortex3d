@@ -20,12 +20,12 @@ constexpr std::uint64_t fnv64Offset = 14695981039346656037ULL;
 constexpr std::uint64_t legacyFnv64Offset = 1469598103934665603ULL;
 constexpr std::uint64_t fnv64Prime = 1099511628211ULL;
 
-static_assert(std::endian::native == std::endian::little, "ProjectCodec schema v1 requires little-endian encoding");
-static_assert(sizeof(bool) == 1U, "ProjectCodec schema v1 requires one-byte bool");
+static_assert(std::endian::native == std::endian::little, "ProjectCodec schema v2 requires little-endian encoding");
+static_assert(sizeof(bool) == 1U, "ProjectCodec schema v2 requires one-byte bool");
 static_assert(sizeof(float) == 4U && std::numeric_limits<float>::is_iec559,
-              "ProjectCodec schema v1 requires IEEE-754 32-bit float");
+              "ProjectCodec schema v2 requires IEEE-754 32-bit float");
 static_assert(sizeof(Vec2) == 8U && sizeof(Vec3) == 12U && sizeof(Vec4) == 16U,
-              "ProjectCodec schema v1 requires tightly packed vector value types");
+              "ProjectCodec schema v2 requires tightly packed vector value types");
 
 class Writer final {
 public:
@@ -383,6 +383,9 @@ ProjectWriteResult ProjectCodec::encode(const Document& document) {
         out.string(object.name);
         writeId(out, object.meshId);
         writeId(out, object.parentId);
+        out.pod(object.transform.translation);
+        out.pod(object.transform.rotationRadians);
+        out.pod(object.transform.scale);
         out.pod(object.revision);
     }
 
@@ -409,7 +412,7 @@ ProjectReadResult ProjectCodec::decode(const std::span<const std::uint8_t> bytes
     if (!header.pod(version) || !header.pod(payloadSize) || !header.pod(expectedChecksum)) {
         return {Document{}, ProjectIoError::Truncated};
     }
-    if (version != schemaVersion) {
+    if (version < minimumSupportedSchemaVersion || version > schemaVersion) {
         return {Document{}, ProjectIoError::UnsupportedVersion};
     }
     if (payloadSize != bytes.size() - 28U) {
@@ -505,7 +508,18 @@ ProjectReadResult ProjectCodec::decode(const std::span<const std::uint8_t> bytes
     for (std::uint64_t index = 0; index < count; ++index) {
         ObjectBlock object{};
         if (!readId(reader, object.id) || !reader.string(object.name) || !readId(reader, object.meshId) ||
-            !readId(reader, object.parentId) || !reader.pod(object.revision)) {
+            !readId(reader, object.parentId)) {
+            return {Document{}, ProjectIoError::Truncated};
+        }
+        if (version >= 2U) {
+            if (!reader.pod(object.transform.translation) ||
+                !reader.pod(object.transform.rotationRadians) ||
+                !reader.pod(object.transform.scale) ||
+                !isFiniteObjectTransform(object.transform)) {
+                return {Document{}, ProjectIoError::InvalidData};
+            }
+        }
+        if (!reader.pod(object.revision)) {
             return {Document{}, ProjectIoError::Truncated};
         }
         if (!document.objects_.emplace(object.id, std::move(object)).second) {

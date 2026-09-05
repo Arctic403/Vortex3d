@@ -1,14 +1,17 @@
 #pragma once
 
 #include "vortex/core/id.hpp"
+#include "vortex/core/transform.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace vortex {
@@ -96,11 +99,26 @@ struct ChangeQueryResult final {
 };
 
 struct ObjectBlock final {
+    ObjectBlock() = default;
+    ObjectBlock(
+        ObjectId objectId,
+        std::string objectName,
+        MeshId objectMeshId = {},
+        ObjectId objectParentId = {},
+        std::uint64_t objectRevision = 1)
+        : id(objectId),
+          name(std::move(objectName)),
+          meshId(objectMeshId),
+          parentId(objectParentId),
+          revision(objectRevision) {}
+
     ObjectId id;
     std::string name;
     MeshId meshId;
     ObjectId parentId;
     std::uint64_t revision = 1;
+    // Authored local-to-parent transform. Identity is the durable default for legacy data.
+    ObjectTransform transform{};
 };
 
 struct CollectionBlock final {
@@ -157,6 +175,8 @@ public:
 
     [[nodiscard]] bool setObjectMesh(ObjectId objectId, MeshId meshId);
     [[nodiscard]] bool setObjectParent(ObjectId objectId, ObjectId parentId);
+    [[nodiscard]] bool setObjectTransform(ObjectId objectId, const ObjectTransform& transform);
+    [[nodiscard]] std::optional<TransformMatrix> objectWorldMatrix(ObjectId objectId) const;
     [[nodiscard]] MeshId makeObjectMeshUnique(ObjectId objectId);
 
     [[nodiscard]] bool executeMeshCommand(

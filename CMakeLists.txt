@@ -22,6 +22,7 @@ endif()
 add_library(vortex_core STATIC
     src/core/command.cpp
     src/core/document.cpp
+    src/core/transform.cpp
     src/core/editor_history.cpp
     src/mesh/editable_mesh.cpp
     src/mesh/validation.cpp
@@ -151,6 +152,11 @@ if(VORTEX_BUILD_TESTS)
     target_compile_features(vortex_editor_history_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.editor.history.smoke COMMAND vortex_editor_history_smoke)
 
+    add_executable(vortex_object_transform_smoke tests/object_transform_smoke.cpp)
+    target_link_libraries(vortex_object_transform_smoke PRIVATE Vortex3D::core)
+    target_compile_features(vortex_object_transform_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.object.transform.smoke COMMAND vortex_object_transform_smoke)
+
     add_executable(vortex_change_journal_smoke tests/change_journal_smoke.cpp)
     target_link_libraries(vortex_change_journal_smoke PRIVATE Vortex3D::core)
     target_compile_features(vortex_change_journal_smoke PRIVATE cxx_std_20)
@@ -265,6 +271,11 @@ if(VORTEX_BUILD_TESTS)
     target_link_libraries(vortex_project_format_v01_smoke PRIVATE Vortex3D::engine)
     target_compile_features(vortex_project_format_v01_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.project.format.v01.smoke COMMAND vortex_project_format_v01_smoke)
+
+    add_executable(vortex_project_format_v02_smoke tests/project_format_v02_smoke.cpp)
+    target_link_libraries(vortex_project_format_v02_smoke PRIVATE Vortex3D::engine)
+    target_compile_features(vortex_project_format_v02_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.project.format.v02.smoke COMMAND vortex_project_format_v02_smoke)
 endif()
 
 if(VORTEX_BUILD_BENCHMARKS)
