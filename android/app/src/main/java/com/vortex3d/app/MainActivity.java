@@ -5,9 +5,11 @@ import android.graphics.Color;
 import android.os.Bundle;
 import android.view.Choreographer;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.TextView;
@@ -17,6 +19,10 @@ public final class MainActivity extends Activity {
         System.loadLibrary("vortex_android");
     }
 
+    private static final int TWO_FINGER_UNDECIDED = 0;
+    private static final int TWO_FINGER_PAN = 1;
+    private static final int TWO_FINGER_ZOOM = 2;
+
     private static native String engineVersion();
     private static native long nativeCreateRenderer();
     private static native void nativeDestroyRenderer(long handle);
@@ -24,12 +30,31 @@ public final class MainActivity extends Activity {
     private static native boolean nativeSurfaceChanged(long handle);
     private static native void nativeSurfaceDestroyed(long handle);
     private static native boolean nativeRenderFrame(long handle);
+    private static native boolean nativeOrbitCamera(long handle, float deltaX, float deltaY);
+    private static native boolean nativePanCamera(long handle, float deltaX, float deltaY);
+    private static native boolean nativeZoomCamera(long handle, float scaleFactor);
     private static native String nativeRendererInfo(long handle);
 
     private long rendererHandle;
     private boolean surfaceReady;
     private boolean frameLoopRunning;
     private TextView statusView;
+
+    private int gesturePointerCount;
+    private int twoFingerMode = TWO_FINGER_UNDECIDED;
+    private float touchSlop;
+    private float lastTouchX;
+    private float lastTouchY;
+    private float lastCentroidX;
+    private float lastCentroidY;
+    private float lastSpan;
+    private float twoFingerStartCentroidX;
+    private float twoFingerStartCentroidY;
+    private float twoFingerStartSpan;
+    private float twoFingerStartX0;
+    private float twoFingerStartY0;
+    private float twoFingerStartX1;
+    private float twoFingerStartY1;
 
     private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
         @Override
@@ -51,10 +76,12 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         rendererHandle = nativeCreateRenderer();
+        touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
 
         FrameLayout root = new FrameLayout(this);
         SurfaceView viewport = new SurfaceView(this);
         viewport.setKeepScreenOn(true);
+        viewport.setOnTouchListener((view, event) -> handleViewportTouch(event));
         root.addView(
             viewport,
             new FrameLayout.LayoutParams(
@@ -97,6 +124,7 @@ public final class MainActivity extends Activity {
             @Override
             public void surfaceDestroyed(SurfaceHolder holder) {
                 stopFrameLoop();
+                resetGestureState();
                 if (rendererHandle != 0L) {
                     nativeSurfaceDestroyed(rendererHandle);
                 }
@@ -119,17 +147,206 @@ public final class MainActivity extends Activity {
     @Override
     protected void onPause() {
         stopFrameLoop();
+        resetGestureState();
         super.onPause();
     }
 
     @Override
     protected void onDestroy() {
         stopFrameLoop();
+        resetGestureState();
         if (rendererHandle != 0L) {
             nativeDestroyRenderer(rendererHandle);
             rendererHandle = 0L;
         }
         super.onDestroy();
+    }
+
+    private boolean handleViewportTouch(MotionEvent event) {
+        if (rendererHandle == 0L || !surfaceReady) {
+            resetGestureState();
+            return true;
+        }
+
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                gesturePointerCount = 1;
+                twoFingerMode = TWO_FINGER_UNDECIDED;
+                lastTouchX = event.getX(0);
+                lastTouchY = event.getY(0);
+                return true;
+
+            case MotionEvent.ACTION_POINTER_DOWN:
+                if (event.getPointerCount() >= 2) {
+                    beginTwoFingerGesture(event);
+                }
+                return true;
+
+            case MotionEvent.ACTION_MOVE:
+                if (event.getPointerCount() >= 2) {
+                    updateTwoFingerGesture(event);
+                } else if (event.getPointerCount() == 1) {
+                    updateOneFingerGesture(event);
+                }
+                return true;
+
+            case MotionEvent.ACTION_POINTER_UP:
+                gesturePointerCount = 0;
+                twoFingerMode = TWO_FINGER_UNDECIDED;
+                lastSpan = 0.0f;
+                twoFingerStartSpan = 0.0f;
+                return true;
+
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                resetGestureState();
+                return true;
+
+            default:
+                return true;
+        }
+    }
+
+    private void updateOneFingerGesture(MotionEvent event) {
+        float x = event.getX(0);
+        float y = event.getY(0);
+        if (gesturePointerCount == 1) {
+            nativeOrbitCamera(rendererHandle, x - lastTouchX, y - lastTouchY);
+        }
+        lastTouchX = x;
+        lastTouchY = y;
+        gesturePointerCount = 1;
+    }
+
+    private void beginTwoFingerGesture(MotionEvent event) {
+        float x0 = event.getX(0);
+        float y0 = event.getY(0);
+        float x1 = event.getX(1);
+        float y1 = event.getY(1);
+        float centroidX = (x0 + x1) * 0.5f;
+        float centroidY = (y0 + y1) * 0.5f;
+        float span = distance(x0, y0, x1, y1);
+
+        lastCentroidX = centroidX;
+        lastCentroidY = centroidY;
+        lastSpan = span;
+        twoFingerStartCentroidX = centroidX;
+        twoFingerStartCentroidY = centroidY;
+        twoFingerStartSpan = span;
+        twoFingerStartX0 = x0;
+        twoFingerStartY0 = y0;
+        twoFingerStartX1 = x1;
+        twoFingerStartY1 = y1;
+        twoFingerMode = TWO_FINGER_UNDECIDED;
+        gesturePointerCount = 2;
+    }
+
+    private void updateTwoFingerGesture(MotionEvent event) {
+        float x0 = event.getX(0);
+        float y0 = event.getY(0);
+        float x1 = event.getX(1);
+        float y1 = event.getY(1);
+        float centroidX = (x0 + x1) * 0.5f;
+        float centroidY = (y0 + y1) * 0.5f;
+        float span = distance(x0, y0, x1, y1);
+
+        if (gesturePointerCount != 2) {
+            beginTwoFingerGesture(event);
+            return;
+        }
+
+        if (twoFingerMode == TWO_FINGER_UNDECIDED) {
+            float move0X = x0 - twoFingerStartX0;
+            float move0Y = y0 - twoFingerStartY0;
+            float move1X = x1 - twoFingerStartX1;
+            float move1Y = y1 - twoFingerStartY1;
+            float move0 = magnitude(move0X, move0Y);
+            float move1 = magnitude(move1X, move1Y);
+            float totalFingerTravel = move0 + move1;
+
+            float centroidTravel = distance(
+                twoFingerStartCentroidX,
+                twoFingerStartCentroidY,
+                centroidX,
+                centroidY);
+            float spanTravel = Math.abs(span - twoFingerStartSpan);
+
+            // Symmetric pinch: the fingers must separate/approach while their combined
+            // translation remains small. This rejects the common "two fingers drifting
+            // together" case that should be interpreted as pan.
+            float combinedX = move0X + move1X;
+            float combinedY = move0Y + move1Y;
+            float combinedTravel = magnitude(combinedX, combinedY);
+            boolean symmetricPinch =
+                spanTravel >= touchSlop * 1.15f &&
+                centroidTravel <= Math.max(touchSlop, spanTravel * 0.40f) &&
+                totalFingerTravel >= touchSlop * 2.0f &&
+                combinedTravel <= totalFingerTravel * 0.40f;
+
+            // Deliberate pan: both fingers translate together while spacing remains
+            // nearly constant. The difference vector is small when their motion agrees.
+            float differentialX = move0X - move1X;
+            float differentialY = move0Y - move1Y;
+            float differentialTravel = magnitude(differentialX, differentialY);
+            boolean coherentPan =
+                centroidTravel >= touchSlop &&
+                spanTravel <= Math.max(touchSlop * 0.75f, centroidTravel * 0.30f) &&
+                totalFingerTravel >= touchSlop * 2.0f &&
+                differentialTravel <= totalFingerTravel * 0.45f;
+
+            if (symmetricPinch) {
+                twoFingerMode = TWO_FINGER_ZOOM;
+            } else if (coherentPan) {
+                twoFingerMode = TWO_FINGER_PAN;
+            } else {
+                // Ambiguous two-finger motion stays undecided instead of leaking pan
+                // and zoom into one another.
+                return;
+            }
+
+            lastCentroidX = centroidX;
+            lastCentroidY = centroidY;
+            lastSpan = span;
+            return;
+        }
+
+        if (twoFingerMode == TWO_FINGER_PAN) {
+            float spanDelta = Math.abs(span - lastSpan);
+            float centroidDelta = distance(lastCentroidX, lastCentroidY, centroidX, centroidY);
+            // Keep pan strict even after lock. If spacing suddenly changes a lot, ignore
+            // the frame rather than sneaking zoom-like motion into the pan.
+            if (spanDelta <= Math.max(touchSlop * 0.60f, centroidDelta * 0.45f)) {
+                nativePanCamera(rendererHandle, centroidX - lastCentroidX, centroidY - lastCentroidY);
+            }
+        } else if (twoFingerMode == TWO_FINGER_ZOOM) {
+            float centroidDelta = distance(lastCentroidX, lastCentroidY, centroidX, centroidY);
+            float spanDelta = Math.abs(span - lastSpan);
+            // Zoom only while the pinch remains substantially more radial than
+            // translational. This is the per-frame symmetry guard.
+            if (lastSpan > 1.0f && span > 1.0f &&
+                spanDelta >= centroidDelta * 1.30f) {
+                nativeZoomCamera(rendererHandle, span / lastSpan);
+            }
+        }
+
+        lastCentroidX = centroidX;
+        lastCentroidY = centroidY;
+        lastSpan = span;
+    }
+
+    private static float distance(float x0, float y0, float x1, float y1) {
+        return magnitude(x1 - x0, y1 - y0);
+    }
+
+    private static float magnitude(float x, float y) {
+        return (float) Math.sqrt(x * x + y * y);
+    }
+
+    private void resetGestureState() {
+        gesturePointerCount = 0;
+        twoFingerMode = TWO_FINGER_UNDECIDED;
+        lastSpan = 0.0f;
+        twoFingerStartSpan = 0.0f;
     }
 
     private void startFrameLoop() {

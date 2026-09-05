@@ -1,5 +1,6 @@
 #include "vulkan_viewport.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 
@@ -7,6 +8,11 @@ namespace vortex::android {
 namespace {
 
 using Mat4 = std::array<float, 16>;
+
+constexpr float kOrbitRadiansPerPixel = 0.0060F;
+constexpr float kPitchLimit = 1.5533430343F; // 89 degrees.
+constexpr float kMinDistance = 1.5F;
+constexpr float kMaxDistance = 50.0F;
 
 [[nodiscard]] constexpr Mat4 identity() noexcept {
     return {
@@ -53,9 +59,11 @@ using Mat4 = std::array<float, 16>;
     return result;
 }
 
-[[nodiscard]] Mat4 translateForward(const float distance) noexcept {
+[[nodiscard]] Mat4 translation(const float x, const float y, const float z) noexcept {
     Mat4 result = identity();
-    result[14] = distance;
+    result[12] = x;
+    result[13] = y;
+    result[14] = z;
     return result;
 }
 
@@ -79,11 +87,47 @@ using Mat4 = std::array<float, 16>;
 
 } // namespace
 
+bool VulkanViewport::orbitCamera(const float deltaXPixels, const float deltaYPixels) noexcept {
+    if (!std::isfinite(deltaXPixels) || !std::isfinite(deltaYPixels)) {
+        return false;
+    }
+    camera_.yawRadians += deltaXPixels * kOrbitRadiansPerPixel;
+    camera_.pitchRadians = std::clamp(
+        camera_.pitchRadians + deltaYPixels * kOrbitRadiansPerPixel,
+        -kPitchLimit,
+        kPitchLimit);
+    cameraDirty_ = true;
+    return true;
+}
+
+bool VulkanViewport::panCamera(const float deltaXPixels, const float deltaYPixels) noexcept {
+    if (!std::isfinite(deltaXPixels) || !std::isfinite(deltaYPixels) || swapchainExtent_.height == 0U) {
+        return false;
+    }
+
+    // Convert screen pixels to view-space world units at the current orbit distance.
+    const float visibleHeight = 2.0F * camera_.distance * std::tan(camera_.fovYRadians * 0.5F);
+    const float unitsPerPixel = visibleHeight / static_cast<float>(swapchainExtent_.height);
+    camera_.panX += deltaXPixels * unitsPerPixel;
+    camera_.panY += deltaYPixels * unitsPerPixel;
+    cameraDirty_ = true;
+    return true;
+}
+
+bool VulkanViewport::zoomCamera(const float scaleFactor) noexcept {
+    if (!std::isfinite(scaleFactor) || scaleFactor <= 0.0F) {
+        return false;
+    }
+    camera_.distance = std::clamp(camera_.distance / scaleFactor, kMinDistance, kMaxDistance);
+    cameraDirty_ = true;
+    return true;
+}
+
 CameraPushConstants VulkanViewport::cameraPushConstants(const float aspect) const noexcept {
     const Mat4 yaw = rotationY(camera_.yawRadians);
     const Mat4 pitch = rotationX(camera_.pitchRadians);
-    const Mat4 translation = translateForward(camera_.distance);
-    const Mat4 view = multiply(translation, multiply(pitch, yaw));
+    const Mat4 panAndDistance = translation(camera_.panX, camera_.panY, camera_.distance);
+    const Mat4 view = multiply(panAndDistance, multiply(pitch, yaw));
     const Mat4 projection = perspectiveVulkan(
         camera_.fovYRadians,
         aspect,
