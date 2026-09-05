@@ -398,6 +398,23 @@ vortex::TransformMatrix VulkanViewport::gizmoWorldMatrix(
     const vortex::Vec3 zAxis = normalizedOr({source[8], source[9], source[10]}, {0.0F, 0.0F, 1.0F});
     const vortex::Vec3 origin{source[12], source[13], source[14]};
 
+    auto matrixForScale = [&](const float scaleValue) noexcept {
+        vortex::TransformMatrix matrix = vortex::identityTransformMatrix();
+        matrix.values[0] = xAxis.x * scaleValue;
+        matrix.values[1] = xAxis.y * scaleValue;
+        matrix.values[2] = xAxis.z * scaleValue;
+        matrix.values[4] = yAxis.x * scaleValue;
+        matrix.values[5] = yAxis.y * scaleValue;
+        matrix.values[6] = yAxis.z * scaleValue;
+        matrix.values[8] = zAxis.x * scaleValue;
+        matrix.values[9] = zAxis.y * scaleValue;
+        matrix.values[10] = zAxis.z * scaleValue;
+        matrix.values[12] = origin.x;
+        matrix.values[13] = origin.y;
+        matrix.values[14] = origin.z;
+        return matrix;
+    };
+
     float worldScale = 1.0F;
     if (swapchainExtent_.width != 0U && swapchainExtent_.height != 0U) {
         const float aspect = static_cast<float>(swapchainExtent_.width) /
@@ -441,23 +458,102 @@ vortex::TransformMatrix VulkanViewport::gizmoWorldMatrix(
                     kMinGizmoWorldScale,
                     kMaxGizmoWorldScale);
             }
+
+            float referenceRadius = kMoveTip;
+            switch (gizmoMode_) {
+                case GizmoMode::Move:
+                    referenceRadius = kMoveTip;
+                    break;
+                case GizmoMode::Rotate:
+                    referenceRadius = kRotateRingRadius + kRotateTubeRadius;
+                    break;
+                case GizmoMode::Scale:
+                    referenceRadius = std::sqrt(
+                        (kScaleHandleCenter + kScaleHandleHalfExtent) *
+                            (kScaleHandleCenter + kScaleHandleHalfExtent) +
+                        2.0F * kScaleHandleHalfExtent * kScaleHandleHalfExtent);
+                    break;
+            }
+            const float targetRadiusPixels = referenceRadius * kTargetPixelsPerLocalUnit;
+            constexpr std::array<GizmoAxis, 3> axes{GizmoAxis::X, GizmoAxis::Y, GizmoAxis::Z};
+
+            // The small derivative probe above gets us close. Calibrate against the finite,
+            // actually visible handle footprint so perspective at the ends cannot make the
+            // control breathe as the orbit distance changes. Three passes converge well below
+            // a pixel on the supported phone zoom range while keeping the geometry fully 3D.
+            for (std::size_t iteration = 0U; iteration < 3U; ++iteration) {
+                const vortex::TransformMatrix candidate = matrixForScale(worldScale);
+                float measuredRadiusPixels = 0.0F;
+
+                const auto measureLocalPoint = [&](const vortex::Vec3 localPoint) {
+                    const vortex::Vec3 worldPoint = vortex::transformPoint(candidate, localPoint);
+                    ScreenPoint screen{};
+                    if (projectWorldPoint(camera, swapchainExtent_, worldPoint, screen)) {
+                        measuredRadiusPixels = std::max(
+                            measuredRadiusPixels,
+                            pointDistance(originScreen, screen));
+                    }
+                };
+
+                if (gizmoMode_ == GizmoMode::Move) {
+                    constexpr std::size_t sampleSegments = 8U;
+                    for (const GizmoAxis axis : axes) {
+                        measureLocalPoint(scale(axisVector(axis), kMoveTip));
+                        for (std::size_t segment = 0U; segment < sampleSegments; ++segment) {
+                            const float angle = (2.0F * kPi * static_cast<float>(segment)) /
+                                                static_cast<float>(sampleSegments);
+                            measureLocalPoint(axisCirclePoint(axis, kArrowBase, angle, kArrowRadius));
+                        }
+                    }
+                } else if (gizmoMode_ == GizmoMode::Scale) {
+                    constexpr std::array<float, 2> signs{-1.0F, 1.0F};
+                    for (const GizmoAxis axis : axes) {
+                        const vortex::Vec3 center = scale(axisVector(axis), kScaleHandleCenter);
+                        for (const float sx : signs) {
+                            for (const float sy : signs) {
+                                for (const float sz : signs) {
+                                    measureLocalPoint({
+                                        center.x + sx * kScaleHandleHalfExtent,
+                                        center.y + sy * kScaleHandleHalfExtent,
+                                        center.z + sz * kScaleHandleHalfExtent,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    constexpr std::size_t sampleSegments = 16U;
+                    const float outerRadius = kRotateRingRadius + kRotateTubeRadius;
+                    for (const GizmoAxis axis : axes) {
+                        for (std::size_t segment = 0U; segment < sampleSegments; ++segment) {
+                            const float angle = (2.0F * kPi * static_cast<float>(segment)) /
+                                                static_cast<float>(sampleSegments);
+                            measureLocalPoint(ringPoint(axis, angle, outerRadius));
+                        }
+                    }
+                }
+
+                if (!std::isfinite(measuredRadiusPixels) ||
+                    measuredRadiusPixels <= kProjectionEpsilon) {
+                    break;
+                }
+
+                const float correction = targetRadiusPixels / measuredRadiusPixels;
+                if (!std::isfinite(correction) || correction <= 0.0F) {
+                    break;
+                }
+                worldScale = std::clamp(
+                    worldScale * correction,
+                    kMinGizmoWorldScale,
+                    kMaxGizmoWorldScale);
+                if (std::abs(correction - 1.0F) <= 0.001F) {
+                    break;
+                }
+            }
         }
     }
 
-    vortex::TransformMatrix result = vortex::identityTransformMatrix();
-    result.values[0] = xAxis.x * worldScale;
-    result.values[1] = xAxis.y * worldScale;
-    result.values[2] = xAxis.z * worldScale;
-    result.values[4] = yAxis.x * worldScale;
-    result.values[5] = yAxis.y * worldScale;
-    result.values[6] = yAxis.z * worldScale;
-    result.values[8] = zAxis.x * worldScale;
-    result.values[9] = zAxis.y * worldScale;
-    result.values[10] = zAxis.z * worldScale;
-    result.values[12] = origin.x;
-    result.values[13] = origin.y;
-    result.values[14] = origin.z;
-    return result;
+    return matrixForScale(worldScale);
 }
 
 std::optional<GizmoHit> VulkanViewport::hitTestGizmo(
