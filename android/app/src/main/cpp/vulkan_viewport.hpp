@@ -106,6 +106,25 @@ private:
     [[nodiscard]] bool setSelectionVisible(bool visible) noexcept;
 
     struct PickTriangle final {
+        PickTriangle() = default;
+        PickTriangle(
+            const std::array<float, 3>& worldA,
+            const std::array<float, 3>& worldB,
+            const std::array<float, 3>& worldC,
+            const vortex::FaceId face) noexcept
+            : localA(worldA), localB(worldB), localC(worldC),
+              a(worldA), b(worldB), c(worldC), sourceFace(face) {}
+        PickTriangle(
+            const std::array<float, 3>& sourceA,
+            const std::array<float, 3>& sourceB,
+            const std::array<float, 3>& sourceC,
+            const std::array<float, 3>& worldA,
+            const std::array<float, 3>& worldB,
+            const std::array<float, 3>& worldC,
+            const vortex::FaceId face) noexcept
+            : localA(sourceA), localB(sourceB), localC(sourceC),
+              a(worldA), b(worldB), c(worldC), sourceFace(face) {}
+
         std::array<float, 3> localA{};
         std::array<float, 3> localB{};
         std::array<float, 3> localC{};
