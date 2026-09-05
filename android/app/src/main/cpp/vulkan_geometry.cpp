@@ -1,79 +1,54 @@
 #include "vulkan_viewport.hpp"
 #include "ViewportStage1ShadersGenerated.hpp"
 
-#include "vortex/engine.hpp"
-
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstring>
-#include <utility>
+#include <unordered_map>
 #include <vector>
 
 namespace vortex::android {
 namespace {
 
-[[nodiscard]] bool buildEngineCube(
-    std::vector<ViewportVertex>& vertices,
-    std::vector<std::uint32_t>& indices) {
-    EditableMesh authored;
-    const auto v0 = authored.addVertex({-1.0F, -1.0F, -1.0F});
-    const auto v1 = authored.addVertex({ 1.0F, -1.0F, -1.0F});
-    const auto v2 = authored.addVertex({ 1.0F,  1.0F, -1.0F});
-    const auto v3 = authored.addVertex({-1.0F,  1.0F, -1.0F});
-    const auto v4 = authored.addVertex({-1.0F, -1.0F,  1.0F});
-    const auto v5 = authored.addVertex({ 1.0F, -1.0F,  1.0F});
-    const auto v6 = authored.addVertex({ 1.0F,  1.0F,  1.0F});
-    const auto v7 = authored.addVertex({-1.0F,  1.0F,  1.0F});
-    if (!v0 || !v1 || !v2 || !v3 || !v4 || !v5 || !v6 || !v7) {
-        return false;
-    }
+struct EdgeKey final {
+    std::uint64_t a = 0U;
+    std::uint64_t b = 0U;
 
-    if (!authored.addFace({v0, v3, v2, v1}) ||
-        !authored.addFace({v4, v5, v6, v7}) ||
-        !authored.addFace({v0, v1, v5, v4}) ||
-        !authored.addFace({v1, v2, v6, v5}) ||
-        !authored.addFace({v2, v3, v7, v6}) ||
-        !authored.addFace({v3, v0, v4, v7}) ||
-        !authored.validateStrict()) {
-        return false;
-    }
+    [[nodiscard]] bool operator==(const EdgeKey&) const noexcept = default;
+};
 
-    Document document;
-    const MeshId meshId = document.createMesh("Stage3 Engine Cube", std::move(authored));
-    const MeshBlock* block = document.mesh(meshId);
-    if (!meshId || block == nullptr) {
-        return false;
+struct EdgeKeyHash final {
+    [[nodiscard]] std::size_t operator()(const EdgeKey& key) const noexcept {
+        std::size_t value = std::hash<std::uint64_t>{}(key.a);
+        value ^= std::hash<std::uint64_t>{}(key.b) + std::size_t{0x9e3779b9U} +
+                 (value << 6U) + (value >> 2U);
+        return value;
     }
+};
 
-    const MeshEvaluationResult evaluated = MeshEvaluator::evaluate(*block);
-    if (!evaluated || !evaluated.mesh) {
-        return false;
-    }
-    const RenderExtractResult extracted = RenderExtractor::extract(*evaluated.mesh);
-    if (!extracted || !extracted.mesh) {
-        return false;
-    }
+struct EdgeInfo final {
+    std::array<float, 3> a{};
+    std::array<float, 3> b{};
+    vortex::FaceId firstFace;
+    std::uint32_t occurrences = 0U;
+    bool crossesFaces = false;
+};
 
-    vertices.reserve(extracted.mesh->vertices.size());
-    for (const vortex::ViewportVertex& source : extracted.mesh->vertices) {
-        const Vec3& n = source.normal;
-        vertices.push_back(ViewportVertex{
-            {source.position.x, source.position.y, source.position.z},
-            {
-                0.25F + 0.65F * (n.x * 0.5F + 0.5F),
-                0.25F + 0.65F * (n.y * 0.5F + 0.5F),
-                0.25F + 0.65F * (n.z * 0.5F + 0.5F),
-            },
-        });
+[[nodiscard]] EdgeKey edgeKey(const vortex::VertexId a, const vortex::VertexId b) noexcept {
+    if (a.value() <= b.value()) {
+        return {a.value(), b.value()};
     }
+    return {b.value(), a.value()};
+}
 
-    indices.reserve(extracted.mesh->triangles.size() * 3U);
-    for (const ViewportTriangle& triangle : extracted.mesh->triangles) {
-        indices.push_back(triangle.a);
-        indices.push_back(triangle.b);
-        indices.push_back(triangle.c);
-    }
-    return !vertices.empty() && !indices.empty();
+void addLine(
+    std::vector<ViewportVertex>& output,
+    const std::array<float, 3>& a,
+    const std::array<float, 3>& b,
+    const std::array<float, 3>& color) {
+    output.push_back(ViewportVertex{a, color});
+    output.push_back(ViewportVertex{b, color});
 }
 
 [[nodiscard]] std::vector<ViewportVertex> buildGridVertices() {
@@ -83,14 +58,6 @@ namespace {
     std::vector<ViewportVertex> vertices;
     vertices.reserve(96U);
 
-    const auto addLine = [&vertices](
-        const std::array<float, 3>& a,
-        const std::array<float, 3>& b,
-        const std::array<float, 3>& color) {
-        vertices.push_back(ViewportVertex{a, color});
-        vertices.push_back(ViewportVertex{b, color});
-    };
-
     for (int coordinate = -halfExtent; coordinate <= halfExtent; ++coordinate) {
         if (coordinate == 0) {
             continue;
@@ -99,18 +66,20 @@ namespace {
         const float intensity = coordinate % 5 == 0 ? major : minor;
         const std::array<float, 3> color{intensity, intensity, intensity};
         addLine(
+            vertices,
             {-static_cast<float>(halfExtent), 0.0F, value},
             { static_cast<float>(halfExtent), 0.0F, value},
             color);
         addLine(
+            vertices,
             {value, 0.0F, -static_cast<float>(halfExtent)},
             {value, 0.0F,  static_cast<float>(halfExtent)},
             color);
     }
 
-    addLine({-10.0F, 0.0F, 0.0F}, {10.0F, 0.0F, 0.0F}, {0.90F, 0.18F, 0.16F});
-    addLine({0.0F, 0.0F, -10.0F}, {0.0F, 0.0F, 10.0F}, {0.18F, 0.38F, 0.95F});
-    addLine({0.0F, -3.0F, 0.0F}, {0.0F, 3.0F, 0.0F}, {0.20F, 0.85F, 0.28F});
+    addLine(vertices, {-10.0F, 0.0F, 0.0F}, {10.0F, 0.0F, 0.0F}, {0.90F, 0.18F, 0.16F});
+    addLine(vertices, {0.0F, 0.0F, -10.0F}, {0.0F, 0.0F, 10.0F}, {0.18F, 0.38F, 0.95F});
+    addLine(vertices, {0.0F, -3.0F, 0.0F}, {0.0F, 3.0F, 0.0F}, {0.20F, 0.85F, 0.28F});
     return vertices;
 }
 
@@ -127,6 +96,120 @@ namespace {
 }
 
 } // namespace
+
+bool VulkanViewport::setViewportMesh(const vortex::ViewportMesh& mesh) {
+    if (device_ != VK_NULL_HANDLE) {
+        return fail("Stage 5A viewport snapshots must be supplied before Vulkan device creation");
+    }
+    if (mesh.vertices.empty() || mesh.triangles.empty()) {
+        return fail("Viewport snapshot contains no renderable geometry");
+    }
+
+    sceneVertices_.clear();
+    sceneIndices_.clear();
+    selectionOverlayVertices_.clear();
+    pickTriangles_.clear();
+
+    sceneVertices_.reserve(mesh.vertices.size());
+    for (const vortex::ViewportVertex& source : mesh.vertices) {
+        const Vec3& n = source.normal;
+        sceneVertices_.push_back(ViewportVertex{
+            {source.position.x, source.position.y, source.position.z},
+            {
+                0.25F + 0.65F * (n.x * 0.5F + 0.5F),
+                0.25F + 0.65F * (n.y * 0.5F + 0.5F),
+                0.25F + 0.65F * (n.z * 0.5F + 0.5F),
+            },
+        });
+    }
+
+    sceneIndices_.reserve(mesh.triangles.size() * 3U);
+    pickTriangles_.reserve(mesh.triangles.size());
+    std::unordered_map<EdgeKey, EdgeInfo, EdgeKeyHash> edges;
+    edges.reserve(mesh.triangles.size() * 3U);
+
+    for (const vortex::ViewportTriangle& triangle : mesh.triangles) {
+        if (triangle.a >= mesh.vertices.size() ||
+            triangle.b >= mesh.vertices.size() ||
+            triangle.c >= mesh.vertices.size()) {
+            sceneVertices_.clear();
+            sceneIndices_.clear();
+            pickTriangles_.clear();
+            return fail("Viewport snapshot contains an out-of-range triangle index");
+        }
+
+        sceneIndices_.push_back(triangle.a);
+        sceneIndices_.push_back(triangle.b);
+        sceneIndices_.push_back(triangle.c);
+        pickTriangles_.push_back(PickTriangle{
+            sceneVertices_[triangle.a].position,
+            sceneVertices_[triangle.b].position,
+            sceneVertices_[triangle.c].position,
+            triangle.sourceFace,
+        });
+
+        const std::array<std::uint32_t, 3> indices{triangle.a, triangle.b, triangle.c};
+        for (std::size_t edge = 0; edge < 3U; ++edge) {
+            const std::uint32_t firstIndex = indices[edge];
+            const std::uint32_t secondIndex = indices[(edge + 1U) % 3U];
+            const vortex::VertexId firstSource = mesh.vertices[firstIndex].sourceVertex;
+            const vortex::VertexId secondSource = mesh.vertices[secondIndex].sourceVertex;
+            if (!firstSource || !secondSource || firstSource == secondSource) {
+                continue;
+            }
+
+            const EdgeKey key = edgeKey(firstSource, secondSource);
+            auto [iterator, inserted] = edges.try_emplace(key);
+            EdgeInfo& info = iterator->second;
+            if (inserted) {
+                info.a = sceneVertices_[firstIndex].position;
+                info.b = sceneVertices_[secondIndex].position;
+                info.firstFace = triangle.sourceFace;
+            } else if (triangle.sourceFace != info.firstFace) {
+                info.crossesFaces = true;
+            }
+            ++info.occurrences;
+        }
+    }
+
+    // Render only evaluated face boundaries. A triangulation diagonal appears twice with
+    // the same source FaceId and is omitted, while a real mesh edge either appears once
+    // or is shared by triangles carrying different source FaceIds.
+    constexpr std::array<float, 3> selectedColor{1.0F, 0.55F, 0.08F};
+    selectionOverlayVertices_.reserve(edges.size() * 2U + 18U);
+    for (const auto& [key, info] : edges) {
+        (void)key;
+        if (info.occurrences == 1U || info.crossesFaces) {
+            addLine(selectionOverlayVertices_, info.a, info.b, selectedColor);
+        }
+    }
+
+    // Stage 5A gizmo foundation. Object transforms are not authored yet, so the bootstrap
+    // cube's engine object origin is the world origin. These derived lines become a proper
+    // transform-gizmo draw item when object transforms land.
+    addLine(selectionOverlayVertices_, {-0.10F, 0.0F, 0.0F}, {0.10F, 0.0F, 0.0F}, {1.0F, 0.85F, 0.18F});
+    addLine(selectionOverlayVertices_, {0.0F, -0.10F, 0.0F}, {0.0F, 0.10F, 0.0F}, {1.0F, 0.85F, 0.18F});
+    addLine(selectionOverlayVertices_, {0.0F, 0.0F, -0.10F}, {0.0F, 0.0F, 0.10F}, {1.0F, 0.85F, 0.18F});
+    addLine(selectionOverlayVertices_, {0.0F, 0.0F, 0.0F}, {1.55F, 0.0F, 0.0F}, {0.95F, 0.16F, 0.14F});
+    addLine(selectionOverlayVertices_, {0.0F, 0.0F, 0.0F}, {0.0F, 1.55F, 0.0F}, {0.18F, 0.92F, 0.28F});
+    addLine(selectionOverlayVertices_, {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 1.55F}, {0.18F, 0.42F, 1.0F});
+
+    selectionVisible_ = false;
+    commandBuffersDirty_ = true;
+    return !sceneVertices_.empty() && !sceneIndices_.empty() && !pickTriangles_.empty();
+}
+
+bool VulkanViewport::setSelectionVisible(const bool visible) noexcept {
+    if (visible && selectionOverlayVertices_.empty()) {
+        return false;
+    }
+    if (selectionVisible_ == visible) {
+        return true;
+    }
+    selectionVisible_ = visible;
+    commandBuffersDirty_ = true;
+    return true;
+}
 
 std::uint32_t VulkanViewport::findMemoryType(
     const std::uint32_t typeBits,
@@ -183,15 +266,12 @@ bool VulkanViewport::createGeometryResources() {
     if (vertexBuffer_ != VK_NULL_HANDLE && indexBuffer_ != VK_NULL_HANDLE) {
         return true;
     }
-
-    std::vector<ViewportVertex> vertices;
-    std::vector<std::uint32_t> indices;
-    if (!buildEngineCube(vertices, indices)) {
-        return fail("Vortex engine failed to evaluate/extract the Stage 3 cube");
+    if (sceneVertices_.empty() || sceneIndices_.empty()) {
+        return fail("No evaluated viewport snapshot was supplied by the editor session");
     }
 
-    const VkDeviceSize vertexBytes = static_cast<VkDeviceSize>(vertices.size() * sizeof(ViewportVertex));
-    const VkDeviceSize indexBytes = static_cast<VkDeviceSize>(indices.size() * sizeof(std::uint32_t));
+    const VkDeviceSize vertexBytes = static_cast<VkDeviceSize>(sceneVertices_.size() * sizeof(ViewportVertex));
+    const VkDeviceSize indexBytes = static_cast<VkDeviceSize>(sceneIndices_.size() * sizeof(std::uint32_t));
     const VkMemoryPropertyFlags hostMemory =
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
     if (!createBuffer(vertexBytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, hostMemory, vertexBuffer_, vertexMemory_) ||
@@ -206,7 +286,7 @@ bool VulkanViewport::createGeometryResources() {
         destroyGeometry();
         return failVk("vkMapMemory(vertex)", result);
     }
-    std::memcpy(mapped, vertices.data(), static_cast<std::size_t>(vertexBytes));
+    std::memcpy(mapped, sceneVertices_.data(), static_cast<std::size_t>(vertexBytes));
     vkUnmapMemory(device_, vertexMemory_);
 
     mapped = nullptr;
@@ -215,9 +295,32 @@ bool VulkanViewport::createGeometryResources() {
         destroyGeometry();
         return failVk("vkMapMemory(index)", result);
     }
-    std::memcpy(mapped, indices.data(), static_cast<std::size_t>(indexBytes));
+    std::memcpy(mapped, sceneIndices_.data(), static_cast<std::size_t>(indexBytes));
     vkUnmapMemory(device_, indexMemory_);
-    indexCount_ = static_cast<std::uint32_t>(indices.size());
+    indexCount_ = static_cast<std::uint32_t>(sceneIndices_.size());
+
+    if (!selectionOverlayVertices_.empty()) {
+        const VkDeviceSize overlayBytes =
+            static_cast<VkDeviceSize>(selectionOverlayVertices_.size() * sizeof(ViewportVertex));
+        if (!createBuffer(
+                overlayBytes,
+                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                hostMemory,
+                selectionVertexBuffer_,
+                selectionVertexMemory_)) {
+            destroyGeometry();
+            return false;
+        }
+        mapped = nullptr;
+        result = vkMapMemory(device_, selectionVertexMemory_, 0U, overlayBytes, 0U, &mapped);
+        if (result != VK_SUCCESS) {
+            destroyGeometry();
+            return failVk("vkMapMemory(selection overlay)", result);
+        }
+        std::memcpy(mapped, selectionOverlayVertices_.data(), static_cast<std::size_t>(overlayBytes));
+        vkUnmapMemory(device_, selectionVertexMemory_);
+        selectionVertexCount_ = static_cast<std::uint32_t>(selectionOverlayVertices_.size());
+    }
     return true;
 }
 
@@ -332,7 +435,7 @@ bool VulkanViewport::createGraphicsPipeline() {
         if (fragmentModule != VK_NULL_HANDLE) {
             vkDestroyShaderModule(device_, fragmentModule, nullptr);
         }
-        return fail("Failed to create Stage 3 shader modules");
+        return fail("Failed to create viewport shader modules");
     }
 
     std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
@@ -446,6 +549,12 @@ void VulkanViewport::destroyGeometry() noexcept {
     if (device_ == VK_NULL_HANDLE) {
         return;
     }
+    if (selectionVertexBuffer_ != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device_, selectionVertexBuffer_, nullptr);
+    }
+    if (selectionVertexMemory_ != VK_NULL_HANDLE) {
+        vkFreeMemory(device_, selectionVertexMemory_, nullptr);
+    }
     if (gridVertexBuffer_ != VK_NULL_HANDLE) {
         vkDestroyBuffer(device_, gridVertexBuffer_, nullptr);
     }
@@ -464,6 +573,9 @@ void VulkanViewport::destroyGeometry() noexcept {
     if (vertexMemory_ != VK_NULL_HANDLE) {
         vkFreeMemory(device_, vertexMemory_, nullptr);
     }
+    selectionVertexBuffer_ = VK_NULL_HANDLE;
+    selectionVertexMemory_ = VK_NULL_HANDLE;
+    selectionVertexCount_ = 0U;
     gridVertexBuffer_ = VK_NULL_HANDLE;
     gridVertexMemory_ = VK_NULL_HANDLE;
     gridVertexCount_ = 0U;
