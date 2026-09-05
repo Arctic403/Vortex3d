@@ -94,6 +94,13 @@ bool VulkanViewport::rebuildCommandBuffers() {
         return false;
     }
 
+    // render() calls this only after the previous frame fence signals. Selection therefore
+    // gets a safe point to update the host-visible overlay buffer before command buffers are
+    // re-recorded to draw exactly the active object.
+    if (selectionOverlayDirty_ && !refreshSelectionOverlay()) {
+        return false;
+    }
+
     if (!commandBuffers_.empty()) {
         vkFreeCommandBuffers(
             device_, commandPool_, static_cast<std::uint32_t>(commandBuffers_.size()), commandBuffers_.data());
@@ -118,7 +125,7 @@ bool VulkanViewport::render() {
     }
 
     // Input only mutates cheap native state. Re-record after the previous frame fence
-    // signals so camera and selection visibility can safely change command-buffer content.
+    // signals so camera and active-object overlay changes cannot race an in-flight frame.
     if (commandBuffersDirty_ && !rebuildCommandBuffers()) {
         return false;
     }
@@ -189,7 +196,7 @@ std::string VulkanViewport::info() const {
     }
     if (graphicsPipeline_ != VK_NULL_HANDLE && gridPipeline_ != VK_NULL_HANDLE &&
         depthView_ != VK_NULL_HANDLE && indexCount_ != 0U && gridVertexCount_ != 0U) {
-        stream << " | Stage5 selection";
+        stream << " | Stage5B multi-object selection";
     }
     return stream.str();
 }
@@ -235,6 +242,9 @@ void VulkanViewport::shutdown() noexcept {
     presentQueueFamily_ = UINT32_MAX;
     physicalProperties_ = {};
     commandBuffersDirty_ = false;
+    selectionOverlayDirty_ = false;
+    selectedObject_ = {};
+    selectionVisible_ = false;
     if (instance_ != VK_NULL_HANDLE) {
         vkDestroyInstance(instance_, nullptr);
         instance_ = VK_NULL_HANDLE;

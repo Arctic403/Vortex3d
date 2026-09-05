@@ -57,6 +57,7 @@ add_library(vortex_android SHARED
     vulkan_camera.cpp
     vulkan_device.cpp
     vulkan_geometry.cpp
+    vulkan_scene.cpp
     vulkan_swapchain.cpp
     vulkan_viewport.cpp
 )
