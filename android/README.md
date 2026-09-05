@@ -17,10 +17,11 @@ The Android host runs the Vortex-owned Vulkan viewport inside a `SurfaceView`. T
 - coherent two-finger pan,
 - symmetric filtered pinch zoom,
 - nearest-hit CPU object picking with stable `ObjectId + FaceId` resolution,
-- active-object outline and XYZ transform gizmo,
+- active-object outline and Gizmo System v2 transform controls,
 - engine-owned object translation/rotation/scale,
 - engine-derived world transforms shared by rendering, picking, outline and gizmo placement,
-- touch-interactive Move / Rotate / Scale axis tools,
+- touch-interactive Move axes/planes/center, Rotate XYZ/view rings, and Scale axes/planes/uniform controls,
+- Global / Local / View transform-orientation controls in the Android test toolbar,
 - transient transform previews with one `SetObjectTransformCommand` committed per completed drag,
 - native Undo / Redo controls for committed transform edits,
 - safe cancellation when multitouch, lifecycle, tool changes, or `ACTION_CANCEL` interrupts a drag,
@@ -28,6 +29,8 @@ The Android host runs the Vortex-owned Vulkan viewport inside a `SurfaceView`. T
 - GPU/API/ABI diagnostics in the Android overlay.
 
 Authored object transforms stay in the portable engine. Vulkan receives only derived world matrices and local-space render geometry; it never becomes the source of truth for object placement. During a gizmo drag the preview remains transient host/renderer state. `ACTION_UP` commits exactly one command into `EditorHistory`, while cancellation restores the authored transform with no history entry.
+
+On the experimental `work/gizmo-visual-polish` branch, object rotation is quaternion-authoritative and gizmo constraints live in portable `include/vortex/editor/gizmo.hpp` / `src/editor/gizmo.cpp`. Vulkan is responsible for camera rays, picking and drawing only. See `docs/GIZMO_SYSTEM_V2.md`.
 
 All viewport JNI, touch routing, lifecycle callbacks, transform-tool calls and frame-loop callbacks currently execute on the Activity/UI-thread path. Do not move `SurfaceView` or Vulkan JNI work to background threads without first introducing an explicit synchronization/ownership design.
 

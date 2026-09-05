@@ -11,12 +11,6 @@ namespace {
 
 using Mat4 = std::array<float, 16>;
 
-struct Vec3f final {
-    float x = 0.0F;
-    float y = 0.0F;
-    float z = 0.0F;
-};
-
 struct Vec4f final {
     float x = 0.0F;
     float y = 0.0F;
@@ -24,13 +18,7 @@ struct Vec4f final {
     float w = 0.0F;
 };
 
-struct Ray3f final {
-    Vec3f origin{};
-    Vec3f direction{};
-};
-
 constexpr float kInteractionEpsilon = 1.0e-6F;
-constexpr float kParallelEpsilon = 1.0e-4F;
 
 [[nodiscard]] bool invert(const Mat4& source, Mat4& inverse) noexcept {
     float augmented[4][8]{};
@@ -98,7 +86,7 @@ constexpr float kParallelEpsilon = 1.0e-4F;
     };
 }
 
-[[nodiscard]] std::optional<Vec3f> unproject(
+[[nodiscard]] std::optional<vortex::Vec3> unproject(
     const Mat4& inverseViewProjection,
     const float x,
     const float y,
@@ -108,7 +96,7 @@ constexpr float kParallelEpsilon = 1.0e-4F;
         return std::nullopt;
     }
     const float inverseW = 1.0F / homogeneous.w;
-    const Vec3f result{
+    const vortex::Vec3 result{
         homogeneous.x * inverseW,
         homogeneous.y * inverseW,
         homogeneous.z * inverseW,
@@ -119,19 +107,19 @@ constexpr float kParallelEpsilon = 1.0e-4F;
     return result;
 }
 
-[[nodiscard]] Vec3f add(const Vec3f a, const Vec3f b) noexcept {
-    return {a.x + b.x, a.y + b.y, a.z + b.z};
-}
-
-[[nodiscard]] Vec3f subtract(const Vec3f a, const Vec3f b) noexcept {
+[[nodiscard]] vortex::Vec3 subtract(const vortex::Vec3 a, const vortex::Vec3 b) noexcept {
     return {a.x - b.x, a.y - b.y, a.z - b.z};
 }
 
-[[nodiscard]] Vec3f scale(const Vec3f value, const float factor) noexcept {
-    return {value.x * factor, value.y * factor, value.z * factor};
+[[nodiscard]] vortex::Vec3 scale(const vortex::Vec3 v, const float s) noexcept {
+    return {v.x * s, v.y * s, v.z * s};
 }
 
-[[nodiscard]] Vec3f cross(const Vec3f a, const Vec3f b) noexcept {
+[[nodiscard]] float dot(const vortex::Vec3 a, const vortex::Vec3 b) noexcept {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+[[nodiscard]] vortex::Vec3 cross(const vortex::Vec3 a, const vortex::Vec3 b) noexcept {
     return {
         a.y * b.z - a.z * b.y,
         a.z * b.x - a.x * b.z,
@@ -139,126 +127,17 @@ constexpr float kParallelEpsilon = 1.0e-4F;
     };
 }
 
-[[nodiscard]] float dot(const Vec3f a, const Vec3f b) noexcept {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-[[nodiscard]] std::optional<Vec3f> normalized(const Vec3f value) noexcept {
+[[nodiscard]] std::optional<vortex::Vec3> normalized(const vortex::Vec3 value) noexcept {
     const float lengthSquared = dot(value, value);
-    if (!std::isfinite(lengthSquared) || lengthSquared <= kInteractionEpsilon) {
+    if (!std::isfinite(lengthSquared) || lengthSquared <= kInteractionEpsilon * kInteractionEpsilon) {
         return std::nullopt;
     }
     return scale(value, 1.0F / std::sqrt(lengthSquared));
 }
 
-[[nodiscard]] Vec3f toVec3f(const vortex::Vec3 value) noexcept {
-    return {value.x, value.y, value.z};
-}
-
-[[nodiscard]] vortex::Vec3 axisVector(const GizmoAxis axis) noexcept {
-    switch (axis) {
-        case GizmoAxis::X:
-            return {1.0F, 0.0F, 0.0F};
-        case GizmoAxis::Y:
-            return {0.0F, 1.0F, 0.0F};
-        case GizmoAxis::Z:
-            return {0.0F, 0.0F, 1.0F};
-    }
-    return {1.0F, 0.0F, 0.0F};
-}
-
-[[nodiscard]] vortex::Vec3 perpendicularA(const GizmoAxis axis) noexcept {
-    switch (axis) {
-        case GizmoAxis::X:
-            return {0.0F, 1.0F, 0.0F};
-        case GizmoAxis::Y:
-        case GizmoAxis::Z:
-            return {1.0F, 0.0F, 0.0F};
-    }
-    return {0.0F, 1.0F, 0.0F};
-}
-
-[[nodiscard]] vortex::Vec3 perpendicularB(const GizmoAxis axis) noexcept {
-    switch (axis) {
-        case GizmoAxis::X:
-        case GizmoAxis::Y:
-            return {0.0F, 0.0F, 1.0F};
-        case GizmoAxis::Z:
-            return {0.0F, 1.0F, 0.0F};
-    }
-    return {0.0F, 0.0F, 1.0F};
-}
-
-[[nodiscard]] std::optional<Vec3f> projectedPlaneBasis(
-    const vortex::TransformMatrix& matrix,
-    const vortex::Vec3 localBasis,
-    const Vec3f normal,
-    const std::optional<Vec3f>& rejectBasis = std::nullopt) noexcept {
-    Vec3f basis = toVec3f(vortex::transformVector(matrix, localBasis));
-    basis = subtract(basis, scale(normal, dot(normal, basis)));
-    if (rejectBasis) {
-        basis = subtract(basis, scale(*rejectBasis, dot(*rejectBasis, basis)));
-    }
-    return normalized(basis);
-}
-
-[[nodiscard]] std::optional<Ray3f> screenRay(
-    const Mat4& inverseViewProjection,
-    const float width,
-    const float height,
-    const float xPixels,
-    const float yPixels) noexcept {
-    const float ndcX = (2.0F * xPixels / width) - 1.0F;
-    const float ndcY = (2.0F * yPixels / height) - 1.0F;
-    const auto nearPoint = unproject(inverseViewProjection, ndcX, ndcY, 0.0F);
-    const auto farPoint = unproject(inverseViewProjection, ndcX, ndcY, 1.0F);
-    if (!nearPoint || !farPoint) {
-        return std::nullopt;
-    }
-    const auto direction = normalized(subtract(*farPoint, *nearPoint));
-    if (!direction) {
-        return std::nullopt;
-    }
-    return Ray3f{*nearPoint, *direction};
-}
-
-[[nodiscard]] std::optional<Vec3f> intersectPlane(
-    const Ray3f& ray,
-    const Vec3f planePoint,
-    const Vec3f planeNormal) noexcept {
-    const float denominator = dot(planeNormal, ray.direction);
-    if (!std::isfinite(denominator) || std::abs(denominator) <= kParallelEpsilon) {
-        return std::nullopt;
-    }
-    const float distance = dot(planeNormal, subtract(planePoint, ray.origin)) / denominator;
-    if (!std::isfinite(distance) || distance < 0.0F) {
-        return std::nullopt;
-    }
-    return add(ray.origin, scale(ray.direction, distance));
-}
-
-[[nodiscard]] std::optional<Ray3f> pointerRay(
-    const CameraPushConstants& camera,
-    const VkExtent2D extent,
-    const float xPixels,
-    const float yPixels) noexcept {
-    Mat4 inverseViewProjection{};
-    if (!invert(camera.viewProjection, inverseViewProjection)) {
-        return std::nullopt;
-    }
-    return screenRay(
-        inverseViewProjection,
-        static_cast<float>(extent.width),
-        static_cast<float>(extent.height),
-        xPixels,
-        yPixels);
-}
-
 } // namespace
 
-std::optional<AxisConstraintSample> VulkanViewport::sampleAxisConstraint(
-    const vortex::TransformMatrix& interactionWorldMatrix,
-    const GizmoAxis axis,
+std::optional<PointerRay> VulkanViewport::gizmoPointerRay(
     const float xPixels,
     const float yPixels) const noexcept {
     if (!std::isfinite(xPixels) || !std::isfinite(yPixels) ||
@@ -273,119 +152,77 @@ std::optional<AxisConstraintSample> VulkanViewport::sampleAxisConstraint(
     }
 
     const CameraPushConstants camera = cameraPushConstants(width / height);
-    const auto ray = pointerRay(camera, swapchainExtent_, xPixels, yPixels);
-    if (!ray) {
+    Mat4 inverseViewProjection{};
+    if (!invert(camera.viewProjection, inverseViewProjection)) {
         return std::nullopt;
     }
 
-    const Vec3f axisOrigin = toVec3f(vortex::transformPoint(
-        interactionWorldMatrix, {0.0F, 0.0F, 0.0F}));
-    const auto axisDirection = normalized(toVec3f(vortex::transformVector(
-        interactionWorldMatrix, axisVector(axis))));
-    if (!axisDirection) {
+    const float ndcX = (2.0F * xPixels / width) - 1.0F;
+    const float ndcY = (2.0F * yPixels / height) - 1.0F;
+    const auto nearPoint = unproject(inverseViewProjection, ndcX, ndcY, 0.0F);
+    const auto farPoint = unproject(inverseViewProjection, ndcX, ndcY, 1.0F);
+    if (!nearPoint || !farPoint) {
         return std::nullopt;
     }
-
-    // Closest points between the infinite gizmo axis and the pointer ray. Because the
-    // axis direction is normalized, the resulting axis parameter is signed world distance
-    // from the pivot. This avoids frozen pixels-per-world-unit approximations under perspective.
-    const float b = dot(*axisDirection, ray->direction);
-    const Vec3f originDelta = subtract(axisOrigin, ray->origin);
-    const float d = dot(*axisDirection, originDelta);
-    const float e = dot(ray->direction, originDelta);
-    const float denominator = 1.0F - b * b;
-    if (!std::isfinite(denominator) || denominator <= kParallelEpsilon) {
+    const auto direction = normalized(subtract(*farPoint, *nearPoint));
+    if (!direction) {
         return std::nullopt;
     }
-
-    const float axisParameter = (b * e - d) / denominator;
-    const float rayParameter = (e - b * d) / denominator;
-    if (!std::isfinite(axisParameter) || !std::isfinite(rayParameter) || rayParameter < 0.0F) {
-        return std::nullopt;
-    }
-    return AxisConstraintSample{axisParameter};
+    return PointerRay{*nearPoint, *direction};
 }
 
-std::optional<RotationConstraintSample> VulkanViewport::sampleRotationConstraint(
-    const vortex::TransformMatrix& interactionWorldMatrix,
-    const GizmoAxis axis,
-    const float previousXPixels,
-    const float previousYPixels,
-    const float currentXPixels,
-    const float currentYPixels) const noexcept {
-    if (!std::isfinite(previousXPixels) || !std::isfinite(previousYPixels) ||
-        !std::isfinite(currentXPixels) || !std::isfinite(currentYPixels) ||
-        swapchainExtent_.width == 0U || swapchainExtent_.height == 0U) {
+std::optional<GizmoCameraFrame> VulkanViewport::gizmoCameraFrame() const noexcept {
+    if (swapchainExtent_.width < 4U || swapchainExtent_.height < 4U) {
+        return std::nullopt;
+    }
+    const float cx = static_cast<float>(swapchainExtent_.width) * 0.5F;
+    const float cy = static_cast<float>(swapchainExtent_.height) * 0.5F;
+    constexpr float probe = 2.0F;
+
+    const auto center = gizmoPointerRay(cx, cy);
+    const auto left = gizmoPointerRay(cx - probe, cy);
+    const auto rightRay = gizmoPointerRay(cx + probe, cy);
+    const auto top = gizmoPointerRay(cx, cy - probe);
+    const auto bottom = gizmoPointerRay(cx, cy + probe);
+    if (!center || !left || !rightRay || !top || !bottom) {
         return std::nullopt;
     }
 
-    const float width = static_cast<float>(swapchainExtent_.width);
-    const float height = static_cast<float>(swapchainExtent_.height);
-    const CameraPushConstants camera = cameraPushConstants(width / height);
-    const auto previousRay = pointerRay(
-        camera, swapchainExtent_, previousXPixels, previousYPixels);
-    const auto currentRay = pointerRay(
-        camera, swapchainExtent_, currentXPixels, currentYPixels);
-    if (!previousRay || !currentRay) {
+    const auto forward = normalized(center->direction);
+    if (!forward) {
         return std::nullopt;
     }
 
-    const Vec3f origin = toVec3f(vortex::transformPoint(
-        interactionWorldMatrix, {0.0F, 0.0F, 0.0F}));
-    const auto normal = normalized(toVec3f(vortex::transformVector(
-        interactionWorldMatrix, axisVector(axis))));
-    if (!normal) {
+    vortex::Vec3 screenRight = subtract(rightRay->direction, left->direction);
+    screenRight = subtract(screenRight, scale(*forward, dot(screenRight, *forward)));
+    const auto right = normalized(screenRight);
+    if (!right) {
         return std::nullopt;
     }
 
-    const auto previousPoint = intersectPlane(*previousRay, origin, *normal);
-    const auto currentPoint = intersectPlane(*currentRay, origin, *normal);
-    if (!previousPoint || !currentPoint) {
+    // Android screen Y grows downward, so screen-up is top minus bottom.
+    vortex::Vec3 screenUp = subtract(top->direction, bottom->direction);
+    screenUp = subtract(screenUp, scale(*forward, dot(screenUp, *forward)));
+    screenUp = subtract(screenUp, scale(*right, dot(screenUp, *right)));
+    auto up = normalized(screenUp);
+    if (!up) {
         return std::nullopt;
     }
 
-    const auto previousRadial = normalized(subtract(*previousPoint, origin));
-    const auto currentRadial = normalized(subtract(*currentPoint, origin));
-    if (!previousRadial || !currentRadial) {
+    // Force a stable right-handed frame while keeping forward pointed into the scene.
+    auto rebuiltForward = normalized(cross(*right, *up));
+    if (!rebuiltForward) {
         return std::nullopt;
+    }
+    if (dot(*rebuiltForward, *forward) < 0.0F) {
+        up = scale(*up, -1.0F);
+        rebuiltForward = normalized(cross(*right, *up));
+        if (!rebuiltForward) {
+            return std::nullopt;
+        }
     }
 
-    const float cosine = std::clamp(dot(*previousRadial, *currentRadial), -1.0F, 1.0F);
-    const float sine = dot(*normal, cross(*previousRadial, *currentRadial));
-    const float deltaRadians = std::atan2(sine, cosine);
-    if (!std::isfinite(deltaRadians)) {
-        return std::nullopt;
-    }
-
-    // The interaction result also exposes the pointer's phase around the visible ring.
-    // Rendering uses this only for feedback (reference/current spokes and arc); transform
-    // semantics still come exclusively from the signed geometric delta above.
-    const auto basisA = projectedPlaneBasis(
-        interactionWorldMatrix, perpendicularA(axis), *normal);
-    if (!basisA) {
-        return std::nullopt;
-    }
-    const auto basisB = projectedPlaneBasis(
-        interactionWorldMatrix, perpendicularB(axis), *normal, basisA);
-    if (!basisB) {
-        return std::nullopt;
-    }
-
-    const float previousRingRadians = std::atan2(
-        dot(*previousRadial, *basisB),
-        dot(*previousRadial, *basisA));
-    const float currentRingRadians = std::atan2(
-        dot(*currentRadial, *basisB),
-        dot(*currentRadial, *basisA));
-    if (!std::isfinite(previousRingRadians) || !std::isfinite(currentRingRadians)) {
-        return std::nullopt;
-    }
-
-    return RotationConstraintSample{
-        deltaRadians,
-        previousRingRadians,
-        currentRingRadians,
-    };
+    return GizmoCameraFrame{*rebuiltForward, *right, *up};
 }
 
 } // namespace vortex::android

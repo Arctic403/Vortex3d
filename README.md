@@ -66,7 +66,7 @@ Current engine capabilities include:
 - editor context, operators/tools, dependency graph, procedural geometry graph, project codec, and extension registries.
 - persistent object translation/rotation/scale with parent-composed world matrices.
 - chronological object-transform undo/redo through the unified `EditorHistory`.
-- project schema v2 transform persistence with explicit schema-v1 identity migration.
+- project schema v3 quaternion transform persistence with explicit schema-v1 identity and schema-v2 Euler migration.
 - GCC + Clang warnings-as-errors builds.
 - ASan + UBSan.
 - clang-tidy with actionable bugprone/performance/portability checks.
@@ -90,7 +90,7 @@ Current engine capabilities include:
 - nearest-hit CPU ray/triangle object picking,
 - stable `ObjectId + source FaceId` mapping back to editor state,
 - engine-derived object world matrices shared by drawing, picking, selection outlines, and gizmos,
-- interactive axis-constrained Move / Rotate / Scale gizmo tools,
+- experimental Gizmo System v2 on `work/gizmo-visual-polish`: portable geometric constraints, quaternion rotation, Move/Scale plane handles, Move center, Rotate view ring, and uniform scale,
 - transient transform previews that do not mutate authored state on every touch move,
 - exactly one `SetObjectTransformCommand` undo step per completed transform drag,
 - cancel-safe transform gestures across multitouch, tool changes, lifecycle interruption, and `ACTION_CANCEL`,
@@ -99,6 +99,8 @@ Current engine capabilities include:
 - ABI packaging verification in CI.
 
 Phase 6 is complete, merged, CI-green, and verified on the 32-bit Android target. Phase 6A established authored transform state and persistence, Phase 6B connected engine-derived world matrices to the renderer, and Phase 6C delivered working Move / Rotate / Scale manipulation with command-based commit and undo/redo while preserving the established camera and selection behavior.
+
+The current `work/gizmo-visual-polish` branch is an experimental post-Phase-6 refactor and should not be confused with the merged baseline. See `docs/GIZMO_SYSTEM_V2.md` for its architecture and remaining device-validation work.
 
 ## Repository layout
 

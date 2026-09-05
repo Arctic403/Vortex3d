@@ -166,7 +166,8 @@ bool VulkanViewport::setViewportObjects(const std::vector<ViewportObjectSnapshot
     for (const ViewportObjectSnapshot& object : objects) {
         if (!object.mesh.sourceMeshId ||
             object.mesh.sourceDocumentRuntimeId != sourceDocument ||
-            !finiteMatrix(object.worldMatrix)) {
+            !finiteMatrix(object.worldMatrix) ||
+            !vortex::isFiniteQuaternion(object.worldRotation)) {
             return fail("Phase 6 render list contains inconsistent source identity or world transform");
         }
         if (object.mesh.vertices.size() > maxVertexCount - totalVertices ||
@@ -260,11 +261,13 @@ bool VulkanViewport::setViewportObjects(const std::vector<ViewportObjectSnapshot
             firstPickTriangle,
             pickTriangleCount,
             object.worldMatrix,
+            object.worldRotation,
         });
 
         SelectionOverlay overlay;
         overlay.objectId = object.objectId;
         overlay.worldMatrix = object.worldMatrix;
+        overlay.worldRotation = object.worldRotation;
         if (!buildSelectionOverlay(object, overlay.vertices)) {
             return fail("Phase 6 failed to build an object selection overlay");
         }
@@ -289,6 +292,7 @@ bool VulkanViewport::setViewportObjects(const std::vector<ViewportObjectSnapshot
     selectionVisible_ = false;
     selectedObject_ = {};
     selectionWorldMatrix_ = vortex::identityTransformMatrix();
+    selectionWorldRotation_ = {};
     selectionOverlayDirty_ = false;
     commandBuffersDirty_ = true;
     return true;
@@ -328,10 +332,11 @@ bool VulkanViewport::setSelectedObject(const vortex::ObjectId objectId) noexcept
     return true;
 }
 
-bool VulkanViewport::updateObjectWorldMatrix(
+bool VulkanViewport::updateObjectTransform(
     const vortex::ObjectId objectId,
-    const vortex::TransformMatrix& worldMatrix) noexcept {
-    if (!objectId || !finiteMatrix(worldMatrix)) {
+    const vortex::TransformMatrix& worldMatrix,
+    const vortex::Quaternion& worldRotation) noexcept {
+    if (!objectId || !finiteMatrix(worldMatrix) || !vortex::isFiniteQuaternion(worldRotation)) {
         return false;
     }
 
@@ -374,9 +379,12 @@ bool VulkanViewport::updateObjectWorldMatrix(
     }
 
     draw->worldMatrix = worldMatrix;
+    draw->worldRotation = worldRotation;
     overlay->worldMatrix = worldMatrix;
+    overlay->worldRotation = worldRotation;
     if (selectedObject_ == objectId) {
         selectionWorldMatrix_ = worldMatrix;
+        selectionWorldRotation_ = worldRotation;
     }
     commandBuffersDirty_ = true;
     return true;
@@ -394,6 +402,7 @@ bool VulkanViewport::refreshSelectionOverlay() {
         gizmoVertexCount_ = 0U;
         selectionVisible_ = false;
         selectionWorldMatrix_ = vortex::identityTransformMatrix();
+        selectionWorldRotation_ = {};
         selectionOverlayDirty_ = false;
         return true;
     }
@@ -433,6 +442,7 @@ bool VulkanViewport::refreshSelectionOverlay() {
     vkUnmapMemory(device_, selectionVertexMemory_);
 
     selectionWorldMatrix_ = iterator->worldMatrix;
+    selectionWorldRotation_ = iterator->worldRotation;
     selectionOutlineVertexCount_ = static_cast<std::uint32_t>(iterator->vertices.size());
     gizmoFirstVertex_ = selectionOutlineVertexCount_;
     gizmoVertexCount_ = static_cast<std::uint32_t>(gizmoVertices.size());

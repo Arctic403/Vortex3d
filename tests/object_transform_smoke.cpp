@@ -64,7 +64,10 @@ int main() {
 
     vortex::ObjectTransform parentTransform;
     parentTransform.translation = {2.0F, 0.0F, 0.0F};
-    parentTransform.rotationRadians = {0.0F, 0.0F, std::numbers::pi_v<float> * 0.5F};
+    const auto parentRotation = vortex::quaternionFromAxisAngle(
+        {0.0F, 0.0F, 1.0F}, std::numbers::pi_v<float> * 0.5F);
+    assert(parentRotation.has_value());
+    parentTransform.rotation = *parentRotation;
     parentTransform.scale = {2.0F, 2.0F, 2.0F};
     assert(document.setObjectTransform(parent, parentTransform));
 
@@ -78,52 +81,47 @@ int main() {
     assert(nearVec3(childOrigin, {2.0F, 2.0F, 0.0F}));
     assert(document.validate());
 
-    // Local gizmo rotation must compose an axis-angle delta with the existing orientation,
-    // not mutate one Euler component. This specifically covers the former blue/Z-ring failure
-    // after the object had already been rotated around X and Y.
+    // Local gizmo rotation is quaternion-authoritative. Composing X/Y/Z after an existing
+    // mixed orientation must exactly match matrix post-multiplication, with no Euler round-trip.
     const vortex::Vec3 mixedEuler{0.63F, -0.47F, 0.81F};
     const auto startQuaternion = vortex::quaternionFromEulerRadians(mixedEuler);
     assert(startQuaternion.has_value());
 
     struct LocalRotationCase final {
         vortex::Vec3 axis;
-        vortex::Vec3 deltaEuler;
+        float angle = 0.0F;
     };
     constexpr LocalRotationCase localRotationCases[] = {
-        {{1.0F, 0.0F, 0.0F}, {0.38F, 0.0F, 0.0F}},
-        {{0.0F, 1.0F, 0.0F}, {0.0F, -0.42F, 0.0F}},
-        {{0.0F, 0.0F, 1.0F}, {0.0F, 0.0F, 0.51F}},
+        {{1.0F, 0.0F, 0.0F}, 0.38F},
+        {{0.0F, 1.0F, 0.0F}, -0.42F},
+        {{0.0F, 0.0F, 1.0F}, 0.51F},
     };
 
     vortex::ObjectTransform startRotationTransform;
-    startRotationTransform.rotationRadians = mixedEuler;
+    startRotationTransform.rotation = *startQuaternion;
     const vortex::TransformMatrix startRotationMatrix =
         vortex::objectTransformMatrix(startRotationTransform);
 
     for (const LocalRotationCase& testCase : localRotationCases) {
-        const float deltaAngle =
-            testCase.deltaEuler.x + testCase.deltaEuler.y + testCase.deltaEuler.z;
         const auto deltaQuaternion =
-            vortex::quaternionFromAxisAngle(testCase.axis, deltaAngle);
+            vortex::quaternionFromAxisAngle(testCase.axis, testCase.angle);
         assert(deltaQuaternion.has_value());
         const auto composedQuaternion =
             vortex::multiplyQuaternions(*startQuaternion, *deltaQuaternion);
         assert(composedQuaternion.has_value());
-        const auto composedEuler = vortex::eulerRadiansFromQuaternionNearest(
-            *composedQuaternion, mixedEuler);
-        assert(composedEuler.has_value());
 
-        vortex::ObjectTransform deltaTransform;
-        deltaTransform.rotationRadians = testCase.deltaEuler;
         const vortex::TransformMatrix expected = vortex::multiplyTransformMatrices(
             startRotationMatrix,
-            vortex::objectTransformMatrix(deltaTransform));
+            vortex::rotationTransformMatrix(*deltaQuaternion));
 
         vortex::ObjectTransform composedTransform;
-        composedTransform.rotationRadians = *composedEuler;
+        composedTransform.rotation = *composedQuaternion;
         const vortex::TransformMatrix actual = vortex::objectTransformMatrix(composedTransform);
         assert(nearRotation(actual, expected));
     }
+
+    const auto childWorldRotation = document.objectWorldRotation(child);
+    assert(childWorldRotation.has_value());
 
     // Reset to identity so the unified-history sequence has an unambiguous baseline.
     assert(document.setObjectTransform(parent, identity));
@@ -136,7 +134,9 @@ int main() {
 
     vortex::ObjectTransform moved;
     moved.translation = {3.0F, 4.0F, 5.0F};
-    moved.rotationRadians = {0.1F, -0.2F, 0.3F};
+    const auto movedRotation = vortex::quaternionFromEulerRadians({0.1F, -0.2F, 0.3F});
+    assert(movedRotation.has_value());
+    moved.rotation = *movedRotation;
     moved.scale = {1.5F, 0.75F, 2.0F};
     vortex::SetObjectTransformCommand transformCommand{child, moved};
     assert(history.execute(document, transformCommand));

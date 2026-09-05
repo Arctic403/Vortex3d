@@ -98,6 +98,7 @@ endif()
 
 add_library(vortex_engine STATIC
     src/editor/context.cpp
+    src/editor/gizmo.cpp
     src/editor/operator.cpp
     src/tool/tool_session.cpp
     src/graph/dependency_graph.cpp
@@ -156,6 +157,11 @@ if(VORTEX_BUILD_TESTS)
     target_link_libraries(vortex_object_transform_smoke PRIVATE Vortex3D::core)
     target_compile_features(vortex_object_transform_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.object.transform.smoke COMMAND vortex_object_transform_smoke)
+
+    add_executable(vortex_gizmo_solver_smoke tests/gizmo_solver_smoke.cpp)
+    target_link_libraries(vortex_gizmo_solver_smoke PRIVATE Vortex3D::engine)
+    target_compile_features(vortex_gizmo_solver_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.gizmo.solver.smoke COMMAND vortex_gizmo_solver_smoke)
 
     add_executable(vortex_change_journal_smoke tests/change_journal_smoke.cpp)
     target_link_libraries(vortex_change_journal_smoke PRIVATE Vortex3D::core)

@@ -9,50 +9,63 @@
 namespace vortex::android {
 namespace {
 
-constexpr float kMathEpsilon = 1.0e-6F;
+constexpr float kScaleSampleEpsilon = 1.0e-4F;
 constexpr float kMaxScaleMagnitude = 20.0F;
+constexpr float kScaleZeroHysteresis = 0.02F;
+constexpr float kTwoPi = 6.2831853071795864769F;
 
 [[nodiscard]] Vec3 axisVector(const GizmoAxis axis) noexcept {
     switch (axis) {
-        case GizmoAxis::X:
-            return {1.0F, 0.0F, 0.0F};
-        case GizmoAxis::Y:
-            return {0.0F, 1.0F, 0.0F};
-        case GizmoAxis::Z:
-            return {0.0F, 0.0F, 1.0F};
+        case GizmoAxis::X: return {1.0F, 0.0F, 0.0F};
+        case GizmoAxis::Y: return {0.0F, 1.0F, 0.0F};
+        case GizmoAxis::Z: return {0.0F, 0.0F, 1.0F};
     }
     return {1.0F, 0.0F, 0.0F};
 }
 
-[[nodiscard]] float length3(const Vec3 value) noexcept {
-    return std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
-}
-
-[[nodiscard]] float component(const Vec3 value, const GizmoAxis axis) noexcept {
-    switch (axis) {
-        case GizmoAxis::X:
-            return value.x;
-        case GizmoAxis::Y:
-            return value.y;
-        case GizmoAxis::Z:
-            return value.z;
-    }
-    return value.x;
-}
-
 void setComponent(Vec3& value, const GizmoAxis axis, const float componentValue) noexcept {
     switch (axis) {
-        case GizmoAxis::X:
-            value.x = componentValue;
-            return;
-        case GizmoAxis::Y:
-            value.y = componentValue;
-            return;
-        case GizmoAxis::Z:
-            value.z = componentValue;
-            return;
+        case GizmoAxis::X: value.x = componentValue; return;
+        case GizmoAxis::Y: value.y = componentValue; return;
+        case GizmoAxis::Z: value.z = componentValue; return;
     }
 }
+
+[[nodiscard]] Vec3 subtract(const Vec3 a, const Vec3 b) noexcept {
+    return {a.x - b.x, a.y - b.y, a.z - b.z};
+}
+
+[[nodiscard]] Vec3 scale(const Vec3 value, const float factor) noexcept {
+    return {value.x * factor, value.y * factor, value.z * factor};
+}
+
+[[nodiscard]] float dot2(
+    const float ax,
+    const float ay,
+    const float bx,
+    const float by) noexcept {
+    return ax * bx + ay * by;
+}
+
+[[nodiscard]] std::optional<std::pair<GizmoAxis, GizmoAxis>> planeAxes(
+    const GizmoPlane plane) noexcept {
+    switch (plane) {
+        case GizmoPlane::XY: return std::pair{GizmoAxis::X, GizmoAxis::Y};
+        case GizmoPlane::XZ: return std::pair{GizmoAxis::X, GizmoAxis::Z};
+        case GizmoPlane::YZ: return std::pair{GizmoAxis::Y, GizmoAxis::Z};
+        case GizmoPlane::View: return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] float stabilizedScaleFactor(const float factor) noexcept {
+    if (!std::isfinite(factor)) {
+        return factor;
+    }
+    const float clamped = std::clamp(factor, -kMaxScaleMagnitude, kMaxScaleMagnitude);
+    return std::abs(clamped) < kScaleZeroHysteresis ? 0.0F : clamped;
+}
+
 
 } // namespace
 
@@ -75,6 +88,23 @@ std::optional<TransformMatrix> ViewportHost::previewWorldMatrix(
     return multiplyTransformMatrices(*parentWorld, local);
 }
 
+std::optional<Quaternion> ViewportHost::previewWorldRotation(
+    const ObjectId objectId,
+    const ObjectTransform& transform) const {
+    const ObjectBlock* object = document_.object(objectId);
+    if (object == nullptr || !isFiniteObjectTransform(transform)) {
+        return std::nullopt;
+    }
+    if (!object->parentId) {
+        return normalizedQuaternion(transform.rotation);
+    }
+    const auto parentRotation = document_.objectWorldRotation(object->parentId);
+    if (!parentRotation) {
+        return std::nullopt;
+    }
+    return multiplyQuaternions(*parentRotation, transform.rotation);
+}
+
 bool ViewportHost::beginTransformGesture(
     const TransformToolMode mode,
     const float xPixels,
@@ -91,101 +121,120 @@ bool ViewportHost::beginTransformGesture(
     }
 
     const auto hit = renderer_.hitTestGizmo(objectId, gizmoMode(mode), xPixels, yPixels);
-    if (!hit) {
+    const auto ray = renderer_.gizmoPointerRay(xPixels, yPixels);
+    const auto camera = renderer_.gizmoCameraFrame();
+    if (!hit || !ray || !camera) {
         return false;
     }
-    const auto hitAxis = gizmoAxis(hit->handle);
-    if (!hitAxis) {
-        return false;
-    }
-    const GizmoAxis axis = *hitAxis;
-    const GizmoConstraint constraint{
-        mode,
-        hit->handle,
-        TransformOrientation::Local,
-    };
-    if (!gizmoConstraintKind(constraint)) {
+
+    const GizmoConstraint constraint{mode, hit->handle, transformOrientation_};
+    const auto kind = gizmoConstraintKind(constraint);
+    if (!kind) {
         return false;
     }
 
     const auto interactionWorld = previewWorldMatrix(objectId, object->transform);
-    if (!interactionWorld) {
+    const auto localWorldRotation = previewWorldRotation(objectId, object->transform);
+    if (!interactionWorld || !localWorldRotation) {
         return false;
     }
 
-    float startAxisParameter = 0.0F;
-    if (mode == TransformToolMode::Move || mode == TransformToolMode::Scale) {
-        const auto parameter = renderer_.sampleAxisConstraint(
-            *interactionWorld, axis, xPixels, yPixels);
-        if (!parameter ||
-            (mode == TransformToolMode::Scale &&
-             std::abs(parameter->parameter) <= kMathEpsilon)) {
+    Quaternion frameOrientation = *localWorldRotation;
+    if (transformOrientation_ == TransformOrientation::Global) {
+        frameOrientation = {};
+    } else if (transformOrientation_ == TransformOrientation::View) {
+        const auto viewOrientation = quaternionFromBasis(camera->right, camera->up, camera->forward);
+        if (!viewOrientation) {
             return false;
         }
-        startAxisParameter = parameter->parameter;
+        frameOrientation = *viewOrientation;
     }
 
-    Vec3 translationAxisParent{};
-    float worldUnitsPerTranslationUnit = 1.0F;
-    if (mode == TransformToolMode::Move) {
-        const Vec3 basis = axisVector(axis);
-        const TransformMatrix localMatrix = objectTransformMatrix(object->transform);
-        translationAxisParent = transformVector(localMatrix, basis);
-        const float parentAxisLength = length3(translationAxisParent);
-        if (!std::isfinite(parentAxisLength) || parentAxisLength <= kMathEpsilon) {
+    const GizmoFrame frame{
+        transformPoint(*interactionWorld, {}),
+        frameOrientation,
+    };
+
+    TransformMatrix parentWorld = identityTransformMatrix();
+    Quaternion parentWorldRotation{};
+    if (object->parentId) {
+        const auto parentMatrix = document_.objectWorldMatrix(object->parentId);
+        const auto parentRotation = document_.objectWorldRotation(object->parentId);
+        if (!parentMatrix || !parentRotation) {
             return false;
         }
-        translationAxisParent.x /= parentAxisLength;
-        translationAxisParent.y /= parentAxisLength;
-        translationAxisParent.z /= parentAxisLength;
+        parentWorld = *parentMatrix;
+        parentWorldRotation = *parentRotation;
+    }
 
-        TransformMatrix parentWorld = identityTransformMatrix();
-        if (object->parentId) {
-            const auto resolvedParentWorld = document_.objectWorldMatrix(object->parentId);
-            if (!resolvedParentWorld) {
+    TransformDragState next{};
+    next.active = true;
+    next.constraint = constraint;
+    next.objectId = objectId;
+    next.before = object->transform;
+    next.preview = object->transform;
+    next.frame = frame;
+    next.camera = *camera;
+    next.parentWorldMatrix = parentWorld;
+    next.parentWorldRotation = parentWorldRotation;
+
+    switch (*kind) {
+        case GizmoConstraintKind::AxisTranslation:
+        case GizmoConstraintKind::AxisScale: {
+            const auto axis = gizmoAxis(hit->handle);
+            if (!axis) return false;
+            const auto sample = vortex::sampleAxisConstraint(frame, *axis, *ray);
+            if (!sample || (*kind == GizmoConstraintKind::AxisScale &&
+                            std::abs(sample->parameter) <= kScaleSampleEpsilon)) {
                 return false;
             }
-            parentWorld = *resolvedParentWorld;
+            next.startAxisParameter = sample->parameter;
+            next.hasAxisSample = true;
+            break;
         }
-        const Vec3 worldTranslationUnit = transformVector(parentWorld, translationAxisParent);
-        worldUnitsPerTranslationUnit = length3(worldTranslationUnit);
-        if (!std::isfinite(worldUnitsPerTranslationUnit) ||
-            worldUnitsPerTranslationUnit <= kMathEpsilon) {
-            return false;
+        case GizmoConstraintKind::PlaneTranslation:
+        case GizmoConstraintKind::ViewPlaneTranslation:
+        case GizmoConstraintKind::PlaneScale:
+        case GizmoConstraintKind::UniformScale: {
+            const auto plane = gizmoPlane(hit->handle);
+            if (!plane) return false;
+            const auto sample = vortex::samplePlaneConstraint(frame, *plane, *ray, *camera);
+            if (!sample) return false;
+            next.startPlaneSample = *sample;
+            next.hasPlaneSample = true;
+            if (*kind == GizmoConstraintKind::UniformScale) {
+                next.startUniformProjection =
+                    sample->u * sample->u + sample->v * sample->v;
+                if (next.startUniformProjection <= kScaleSampleEpsilon) return false;
+            } else if (*kind == GizmoConstraintKind::PlaneScale) {
+                if (std::abs(sample->u) <= kScaleSampleEpsilon ||
+                    std::abs(sample->v) <= kScaleSampleEpsilon) {
+                    return false;
+                }
+            }
+            break;
+        }
+        case GizmoConstraintKind::AxisRotation:
+        case GizmoConstraintKind::ViewRotation: {
+            const auto sample = vortex::sampleRotationConstraint(frame, hit->handle, *ray, *camera);
+            if (!sample) return false;
+            next.rotationStartPhase = sample->phaseRadians;
+            next.rotationPreviousPhase = sample->phaseRadians;
+            next.hasRotationSample = true;
+            break;
         }
     }
 
-    transformDrag_.active = true;
-    transformDrag_.constraint = constraint;
-    transformDrag_.axis = axis;
-    transformDrag_.objectId = objectId;
-    transformDrag_.before = object->transform;
-    transformDrag_.preview = object->transform;
-    transformDrag_.translationAxisParent = translationAxisParent;
-    transformDrag_.interactionWorldMatrix = *interactionWorld;
-    transformDrag_.worldUnitsPerTranslationUnit = worldUnitsPerTranslationUnit;
-    transformDrag_.startAxisParameter = startAxisParameter;
-    transformDrag_.previousX = xPixels;
-    transformDrag_.previousY = yPixels;
-    transformDrag_.accumulatedRotationRadians = 0.0F;
-    transformDrag_.rotationStartRingRadians = 0.0F;
-    transformDrag_.rotationCurrentRingRadians = 0.0F;
-    transformDrag_.hasRotationReference = false;
-
-    const GizmoInteractionFeedback feedback{
+    transformDrag_ = next;
+    return renderer_.setGizmoInteractionFeedback(GizmoInteractionFeedback{
         true,
         gizmoMode(mode),
         hit->handle,
         0.0F,
-        0.0F,
-        0.0F,
-        false,
-    };
-    if (!renderer_.setGizmoInteractionFeedback(feedback)) {
-        transformDrag_ = {};
-        return false;
-    }
-    return true;
+        next.rotationStartPhase,
+        next.rotationStartPhase,
+        next.hasRotationSample,
+    });
 }
 
 bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixels) {
@@ -194,137 +243,175 @@ bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixe
         return false;
     }
 
+    const auto ray = renderer_.gizmoPointerRay(xPixels, yPixels);
+    if (!ray) {
+        return true;
+    }
+
+    const auto kind = gizmoConstraintKind(transformDrag_.constraint);
+    if (!kind) {
+        return false;
+    }
+
     ObjectTransform preview = transformDrag_.before;
+    std::optional<TransformDelta> pendingDelta;
+    const TransformComposeContext composeContext{
+        transformDrag_.parentWorldMatrix,
+        transformDrag_.parentWorldRotation,
+    };
     float nextAccumulatedRotation = transformDrag_.accumulatedRotationRadians;
-    float nextRotationStartRingRadians = transformDrag_.rotationStartRingRadians;
-    float nextRotationCurrentRingRadians = transformDrag_.rotationCurrentRingRadians;
-    bool nextHasRotationReference = transformDrag_.hasRotationReference;
-    bool commitRotationStep = false;
+    float nextRotationPhase = transformDrag_.rotationPreviousPhase;
+    bool updateRotationContinuity = false;
 
-    switch (transformDrag_.constraint.mode) {
-        case TransformToolMode::Move: {
-            const auto currentParameter = renderer_.sampleAxisConstraint(
-                transformDrag_.interactionWorldMatrix,
-                transformDrag_.axis,
-                xPixels,
-                yPixels);
-            if (!currentParameter) {
-                // A view-aligned axis is geometrically ambiguous. Keep the last valid preview
-                // instead of changing interaction models or cancelling the gesture.
-                return true;
-            }
-            const float worldDistance = currentParameter->parameter - transformDrag_.startAxisParameter;
-            const float localDistance = worldDistance / transformDrag_.worldUnitsPerTranslationUnit;
-            preview.translation.x += transformDrag_.translationAxisParent.x * localDistance;
-            preview.translation.y += transformDrag_.translationAxisParent.y * localDistance;
-            preview.translation.z += transformDrag_.translationAxisParent.z * localDistance;
+    switch (*kind) {
+        case GizmoConstraintKind::AxisTranslation: {
+            const auto axis = gizmoAxis(transformDrag_.constraint.handle);
+            if (!axis || !transformDrag_.hasAxisSample) return false;
+            const auto current = vortex::sampleAxisConstraint(transformDrag_.frame, *axis, *ray);
+            const auto axisWorld = gizmoAxisDirection(transformDrag_.frame, *axis);
+            if (!current || !axisWorld) return true;
+            const Vec3 worldDelta = scale(
+                *axisWorld,
+                current->parameter - transformDrag_.startAxisParameter);
+            pendingDelta = TranslateDelta{worldDelta};
             break;
         }
-        case TransformToolMode::Rotate: {
-            const auto rotationSample = renderer_.sampleRotationConstraint(
-                transformDrag_.interactionWorldMatrix,
-                transformDrag_.axis,
-                transformDrag_.previousX,
-                transformDrag_.previousY,
-                xPixels,
-                yPixels);
-            if (!rotationSample) {
-                // Keep the previous valid angular state. Once the ray/plane geometry becomes
-                // valid again, rotation resumes from that same pointer sample with no mode swap.
+        case GizmoConstraintKind::PlaneTranslation:
+        case GizmoConstraintKind::ViewPlaneTranslation: {
+            const auto plane = gizmoPlane(transformDrag_.constraint.handle);
+            if (!plane || !transformDrag_.hasPlaneSample) return false;
+            const auto current = vortex::samplePlaneConstraint(
+                transformDrag_.frame, *plane, *ray, transformDrag_.camera);
+            if (!current) return true;
+            const Vec3 worldDelta = subtract(
+                current->pointWorld,
+                transformDrag_.startPlaneSample.pointWorld);
+            pendingDelta = TranslateDelta{worldDelta};
+            break;
+        }
+        case GizmoConstraintKind::AxisRotation:
+        case GizmoConstraintKind::ViewRotation: {
+            if (!transformDrag_.hasRotationSample) return false;
+            const auto current = vortex::sampleRotationConstraint(
+                transformDrag_.frame,
+                transformDrag_.constraint.handle,
+                *ray,
+                transformDrag_.camera);
+            if (!current) {
+                // Edge-on ring samples are genuinely undefined. Hold the last valid state rather
+                // than changing rotation semantics; resume when the same constraint is valid again.
                 return true;
             }
+            const float step = std::remainder(
+                current->phaseRadians - transformDrag_.rotationPreviousPhase,
+                kTwoPi);
+            if (!std::isfinite(step)) return false;
+            nextAccumulatedRotation += step;
+            nextRotationPhase = current->phaseRadians;
+            updateRotationContinuity = true;
 
-            if (!nextHasRotationReference) {
-                nextRotationStartRingRadians = rotationSample->previousRingRadians;
-                nextHasRotationReference = true;
-            }
-            nextRotationCurrentRingRadians = rotationSample->currentRingRadians;
-            nextAccumulatedRotation += rotationSample->deltaRadians;
-            if (!std::isfinite(nextAccumulatedRotation)) {
-                return false;
-            }
-
-            // The ring solver returns a signed delta around the selected *local* gizmo axis.
-            // Compose that delta with the touch-down orientation as a quaternion instead of
-            // editing one Euler component. Euler angles remain only the current document-format
-            // boundary, so mixed-axis rotations preserve the same orientation the gizmo shows.
-            if (std::abs(nextAccumulatedRotation) <= kMathEpsilon) {
-                preview.rotationRadians = transformDrag_.before.rotationRadians;
+            if (*kind == GizmoConstraintKind::AxisRotation &&
+                transformDrag_.constraint.orientation == TransformOrientation::Local) {
+                const auto axis = gizmoAxis(transformDrag_.constraint.handle);
+                if (!axis) return false;
+                const auto delta = quaternionFromAxisAngle(axisVector(*axis), nextAccumulatedRotation);
+                if (!delta) return false;
+                pendingDelta = RotateDelta{*delta, RotationComposeSpace::Local};
             } else {
-                const auto startOrientation = quaternionFromEulerRadians(
-                    transformDrag_.before.rotationRadians);
-                const auto localDelta = quaternionFromAxisAngle(
-                    axisVector(transformDrag_.axis),
-                    nextAccumulatedRotation);
-                if (!startOrientation || !localDelta) {
-                    return false;
+                Vec3 worldAxis = transformDrag_.camera.forward;
+                if (*kind == GizmoConstraintKind::AxisRotation) {
+                    const auto axis = gizmoAxis(transformDrag_.constraint.handle);
+                    const auto resolved = axis ? gizmoAxisDirection(transformDrag_.frame, *axis) : std::nullopt;
+                    if (!resolved) return false;
+                    worldAxis = *resolved;
                 }
-                const auto composed = multiplyQuaternions(*startOrientation, *localDelta);
-                if (!composed) {
-                    return false;
-                }
-                const auto euler = eulerRadiansFromQuaternionNearest(
-                    *composed,
-                    transformDrag_.before.rotationRadians);
-                if (!euler) {
-                    return false;
-                }
-                preview.rotationRadians = *euler;
+                const auto delta = quaternionFromAxisAngle(worldAxis, nextAccumulatedRotation);
+                if (!delta) return false;
+                pendingDelta = RotateDelta{*delta, RotationComposeSpace::World};
             }
-            commitRotationStep = true;
             break;
         }
-        case TransformToolMode::Scale: {
-            const auto currentParameter = renderer_.sampleAxisConstraint(
-                transformDrag_.interactionWorldMatrix,
-                transformDrag_.axis,
-                xPixels,
-                yPixels);
-            if (!currentParameter) {
-                return true;
-            }
+        case GizmoConstraintKind::AxisScale: {
+            const auto axis = gizmoAxis(transformDrag_.constraint.handle);
+            if (!axis || !transformDrag_.hasAxisSample) return false;
+            const auto current = vortex::sampleAxisConstraint(transformDrag_.frame, *axis, *ray);
+            if (!current) return true;
+            const float ratio = current->parameter / transformDrag_.startAxisParameter;
+            if (!std::isfinite(ratio)) return false;
+            Vec3 factor{1.0F, 1.0F, 1.0F};
+            setComponent(factor, *axis, stabilizedScaleFactor(ratio));
+            pendingDelta = ScaleDelta{factor};
+            break;
+        }
+        case GizmoConstraintKind::PlaneScale: {
+            const auto plane = gizmoPlane(transformDrag_.constraint.handle);
+            const auto axes = plane ? planeAxes(*plane) : std::nullopt;
+            if (!plane || !axes || !transformDrag_.hasPlaneSample) return false;
+            const auto current = vortex::samplePlaneConstraint(
+                transformDrag_.frame, *plane, *ray, transformDrag_.camera);
+            if (!current) return true;
+            const float uFactor = stabilizedScaleFactor(
+                current->u / transformDrag_.startPlaneSample.u);
+            const float vFactor = stabilizedScaleFactor(
+                current->v / transformDrag_.startPlaneSample.v);
+            if (!std::isfinite(uFactor) || !std::isfinite(vFactor)) return false;
+            Vec3 factor{1.0F, 1.0F, 1.0F};
+            setComponent(factor, axes->first, uFactor);
+            setComponent(factor, axes->second, vFactor);
+            pendingDelta = ScaleDelta{factor};
+            break;
+        }
+        case GizmoConstraintKind::UniformScale: {
+            if (!transformDrag_.hasPlaneSample) return false;
+            const auto current = vortex::samplePlaneConstraint(
+                transformDrag_.frame, GizmoPlane::View, *ray, transformDrag_.camera);
+            if (!current) return true;
+            const float numerator = dot2(
+                current->u,
+                current->v,
+                transformDrag_.startPlaneSample.u,
+                transformDrag_.startPlaneSample.v);
+            const float factor = stabilizedScaleFactor(
+                numerator / transformDrag_.startUniformProjection);
+            if (!std::isfinite(factor)) return false;
+            pendingDelta = ScaleDelta{{factor, factor, factor}};
+            break;
+        }
+    }
 
-            const float ratio = currentParameter->parameter / transformDrag_.startAxisParameter;
-            if (!std::isfinite(ratio)) {
-                return false;
-            }
-            const float beforeScale = component(preview.scale, transformDrag_.axis);
-            const float scaled = std::clamp(
-                beforeScale * ratio,
-                -kMaxScaleMagnitude,
-                kMaxScaleMagnitude);
-            setComponent(preview.scale, transformDrag_.axis, scaled);
-            break;
+    if (pendingDelta) {
+        const auto composed = composeTransformDelta(
+            transformDrag_.before, *pendingDelta, composeContext);
+        if (!composed) {
+            return false;
         }
+        preview = *composed;
     }
 
     if (!isFiniteObjectTransform(preview)) {
         return false;
     }
     const auto world = previewWorldMatrix(transformDrag_.objectId, preview);
-    if (!world || !renderer_.updateObjectWorldMatrix(transformDrag_.objectId, *world)) {
+    const auto worldRotation = previewWorldRotation(transformDrag_.objectId, preview);
+    if (!world || !worldRotation ||
+        !renderer_.updateObjectTransform(transformDrag_.objectId, *world, *worldRotation)) {
         return false;
     }
 
-    if (commitRotationStep) {
-        const GizmoInteractionFeedback feedback{
-            true,
-            GizmoMode::Rotate,
-            axisGizmoHandle(transformDrag_.axis),
-            nextAccumulatedRotation,
-            nextRotationStartRingRadians,
-            nextRotationCurrentRingRadians,
-            nextHasRotationReference,
-        };
-        if (!renderer_.setGizmoInteractionFeedback(feedback)) {
+    if (updateRotationContinuity) {
+        transformDrag_.accumulatedRotationRadians = nextAccumulatedRotation;
+        transformDrag_.rotationPreviousPhase = nextRotationPhase;
+        if (!renderer_.setGizmoInteractionFeedback(GizmoInteractionFeedback{
+                true,
+                GizmoMode::Rotate,
+                transformDrag_.constraint.handle,
+                nextAccumulatedRotation,
+                transformDrag_.rotationStartPhase,
+                nextRotationPhase,
+                true,
+            })) {
             return false;
         }
-        transformDrag_.accumulatedRotationRadians = nextAccumulatedRotation;
-        transformDrag_.rotationStartRingRadians = nextRotationStartRingRadians;
-        transformDrag_.rotationCurrentRingRadians = nextRotationCurrentRingRadians;
-        transformDrag_.hasRotationReference = nextHasRotationReference;
-        transformDrag_.previousX = xPixels;
-        transformDrag_.previousY = yPixels;
     }
     transformDrag_.preview = preview;
     return true;
@@ -343,14 +430,16 @@ bool ViewportHost::endTransformGesture(const bool commit) {
 
     if (!commit || completed.preview == completed.before) {
         const auto world = previewWorldMatrix(completed.objectId, completed.before);
-        return world && renderer_.updateObjectWorldMatrix(completed.objectId, *world);
+        const auto rotation = previewWorldRotation(completed.objectId, completed.before);
+        return world && rotation && renderer_.updateObjectTransform(completed.objectId, *world, *rotation);
     }
 
     SetObjectTransformCommand command{completed.objectId, completed.preview};
     if (!history_.execute(document_, command)) {
         const auto beforeWorld = previewWorldMatrix(completed.objectId, completed.before);
-        if (beforeWorld) {
-            (void)renderer_.updateObjectWorldMatrix(completed.objectId, *beforeWorld);
+        const auto beforeRotation = previewWorldRotation(completed.objectId, completed.before);
+        if (beforeWorld && beforeRotation) {
+            (void)renderer_.updateObjectTransform(completed.objectId, *beforeWorld, *beforeRotation);
         }
         return false;
     }
@@ -361,10 +450,13 @@ bool ViewportHost::endTransformGesture(const bool commit) {
 bool ViewportHost::syncRendererObjectTransforms() {
     for (ViewportObjectSnapshot& snapshot : viewportObjects_) {
         const auto world = document_.objectWorldMatrix(snapshot.objectId);
-        if (!world || !renderer_.updateObjectWorldMatrix(snapshot.objectId, *world)) {
+        const auto rotation = document_.objectWorldRotation(snapshot.objectId);
+        if (!world || !rotation ||
+            !renderer_.updateObjectTransform(snapshot.objectId, *world, *rotation)) {
             return false;
         }
         snapshot.worldMatrix = *world;
+        snapshot.worldRotation = *rotation;
     }
     return true;
 }

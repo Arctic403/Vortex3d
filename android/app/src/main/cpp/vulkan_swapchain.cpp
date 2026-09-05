@@ -341,7 +341,7 @@ bool VulkanViewport::recordCommandBuffers() {
             }
 
             if (gizmoVertexCount_ != 0U) {
-                const vortex::TransformMatrix gizmoWorld = gizmoWorldMatrix(selectionWorldMatrix_);
+                const vortex::TransformMatrix gizmoWorld = gizmoWorldMatrix(selectionWorldMatrix_, selectionWorldRotation_);
                 const CameraPushConstants gizmoPush = objectPushConstants(aspect, gizmoWorld);
                 vkCmdPushConstants(
                     commandBuffers_[index],

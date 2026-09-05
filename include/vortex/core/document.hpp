@@ -177,6 +177,7 @@ public:
     [[nodiscard]] bool setObjectParent(ObjectId objectId, ObjectId parentId);
     [[nodiscard]] bool setObjectTransform(ObjectId objectId, const ObjectTransform& transform);
     [[nodiscard]] std::optional<TransformMatrix> objectWorldMatrix(ObjectId objectId) const;
+    [[nodiscard]] std::optional<Quaternion> objectWorldRotation(ObjectId objectId) const;
     [[nodiscard]] MeshId makeObjectMeshUnique(ObjectId objectId);
 
     [[nodiscard]] bool executeMeshCommand(

@@ -29,6 +29,10 @@ public final class MainActivity extends Activity {
     private static final int TOOL_ROTATE = 1;
     private static final int TOOL_SCALE = 2;
 
+    private static final int ORIENTATION_GLOBAL = 0;
+    private static final int ORIENTATION_LOCAL = 1;
+    private static final int ORIENTATION_VIEW = 2;
+
     private static native String engineVersion();
     private static native long nativeCreateRenderer();
     private static native boolean nativeSetDisplayDensity(long handle, float density);
@@ -42,6 +46,7 @@ public final class MainActivity extends Activity {
     private static native boolean nativeZoomCamera(long handle, float scaleFactor);
     private static native boolean nativeTapViewport(long handle, float x, float y);
     private static native boolean nativeSetTransformTool(long handle, int mode);
+    private static native boolean nativeSetTransformOrientation(long handle, int orientation);
     private static native boolean nativeBeginTransformGesture(long handle, int mode, float x, float y);
     private static native boolean nativeUpdateTransformGesture(long handle, float x, float y);
     private static native boolean nativeEndTransformGesture(long handle, boolean commit);
@@ -56,8 +61,12 @@ public final class MainActivity extends Activity {
     private Button moveButton;
     private Button rotateButton;
     private Button scaleButton;
+    private Button globalOrientationButton;
+    private Button localOrientationButton;
+    private Button viewOrientationButton;
 
     private int transformTool = TOOL_MOVE;
+    private int transformOrientation = ORIENTATION_LOCAL;
     private boolean gizmoDragging;
 
     private int gesturePointerCount;
@@ -126,11 +135,30 @@ public final class MainActivity extends Activity {
         statusLayout.gravity = Gravity.TOP | Gravity.START;
         root.addView(statusView, statusLayout);
 
+        LinearLayout controlsPanel = new LinearLayout(this);
+        controlsPanel.setOrientation(LinearLayout.VERTICAL);
+        controlsPanel.setBackgroundColor(0x66000000);
+
+        LinearLayout orientationBar = new LinearLayout(this);
+        orientationBar.setOrientation(LinearLayout.HORIZONTAL);
+        orientationBar.setGravity(Gravity.CENTER);
+        orientationBar.setPadding(8, 2, 8, 0);
+        globalOrientationButton = addToolButton(
+            orientationBar, "Global", () -> setTransformOrientation(ORIENTATION_GLOBAL));
+        localOrientationButton = addToolButton(
+            orientationBar, "Local", () -> setTransformOrientation(ORIENTATION_LOCAL));
+        viewOrientationButton = addToolButton(
+            orientationBar, "View", () -> setTransformOrientation(ORIENTATION_VIEW));
+        controlsPanel.addView(
+            orientationBar,
+            new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
         LinearLayout toolBar = new LinearLayout(this);
         toolBar.setOrientation(LinearLayout.HORIZONTAL);
         toolBar.setGravity(Gravity.CENTER);
-        toolBar.setPadding(8, 4, 8, 8);
-        toolBar.setBackgroundColor(0x66000000);
+        toolBar.setPadding(8, 2, 8, 8);
 
         moveButton = addToolButton(toolBar, "Move", () -> setTransformTool(TOOL_MOVE));
         rotateButton = addToolButton(toolBar, "Rotate", () -> setTransformTool(TOOL_ROTATE));
@@ -151,15 +179,21 @@ public final class MainActivity extends Activity {
             }
             updateStatus();
         });
+        controlsPanel.addView(
+            toolBar,
+            new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
 
         FrameLayout.LayoutParams toolsLayout = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT);
         toolsLayout.gravity = Gravity.BOTTOM;
-        root.addView(toolBar, toolsLayout);
+        root.addView(controlsPanel, toolsLayout);
 
         setContentView(root);
         refreshToolButtons();
+        refreshOrientationButtons();
 
         viewport.getHolder().addCallback(new SurfaceHolder.Callback() {
             @Override
@@ -270,6 +304,39 @@ public final class MainActivity extends Activity {
         }
         if (scaleButton != null) {
             scaleButton.setAlpha(transformTool == TOOL_SCALE ? 1.0f : 0.58f);
+        }
+    }
+
+    private void setTransformOrientation(int orientation) {
+        if (orientation != ORIENTATION_GLOBAL &&
+            orientation != ORIENTATION_LOCAL &&
+            orientation != ORIENTATION_VIEW) {
+            return;
+        }
+        cancelActiveTransformGesture();
+        resetGestureState();
+        if (rendererHandle != 0L &&
+            !nativeSetTransformOrientation(rendererHandle, orientation)) {
+            updateStatus();
+            return;
+        }
+        transformOrientation = orientation;
+        refreshOrientationButtons();
+        updateStatus();
+    }
+
+    private void refreshOrientationButtons() {
+        if (globalOrientationButton != null) {
+            globalOrientationButton.setAlpha(
+                transformOrientation == ORIENTATION_GLOBAL ? 1.0f : 0.58f);
+        }
+        if (localOrientationButton != null) {
+            localOrientationButton.setAlpha(
+                transformOrientation == ORIENTATION_LOCAL ? 1.0f : 0.58f);
+        }
+        if (viewOrientationButton != null) {
+            viewOrientationButton.setAlpha(
+                transformOrientation == ORIENTATION_VIEW ? 1.0f : 0.58f);
         }
     }
 
@@ -542,6 +609,18 @@ public final class MainActivity extends Activity {
         Choreographer.getInstance().removeFrameCallback(frameCallback);
     }
 
+    private String transformOrientationName() {
+        switch (transformOrientation) {
+            case ORIENTATION_GLOBAL:
+                return "Global";
+            case ORIENTATION_VIEW:
+                return "View";
+            case ORIENTATION_LOCAL:
+            default:
+                return "Local";
+        }
+    }
+
     private String transformToolName() {
         switch (transformTool) {
             case TOOL_ROTATE:
@@ -563,6 +642,7 @@ public final class MainActivity extends Activity {
             : nativeRendererInfo(rendererHandle);
         statusView.setText(
             "Vortex3D DEV viewport v0.6\nEngine " + engineVersion() +
-            "\nTool " + transformToolName() + " | " + rendererInfo);
+            "\nTool " + transformToolName() + " | " + transformOrientationName() +
+            " | " + rendererInfo);
     }
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gizmo_contract.hpp"
+#include "vortex/editor/gizmo.hpp"
 
 #include "vortex/core/transform.hpp"
 #include "vortex/viewport/render_extract.hpp"
@@ -46,6 +46,7 @@ struct ViewportObjectSnapshot final {
     vortex::ObjectId objectId;
     vortex::ViewportMesh mesh;
     vortex::TransformMatrix worldMatrix;
+    vortex::Quaternion worldRotation{};
 };
 
 struct ViewportPick final {
@@ -57,10 +58,18 @@ struct ViewportPick final {
 // solved geometrically from pointer rays after the gesture begins, so hit metadata cannot
 // silently become a second transform-input model.
 struct GizmoHit final {
-    GizmoHit() = default;
-    explicit GizmoHit(const GizmoAxis axis) noexcept : handle(axisGizmoHandle(axis)) {}
-
     GizmoHandle handle = GizmoHandle::AxisX;
+    float score = 0.0F;
+};
+
+struct GizmoInteractionFeedback final {
+    bool active = false;
+    GizmoMode mode = GizmoMode::Move;
+    GizmoHandle handle = GizmoHandle::AxisX;
+    float rotationRadians = 0.0F;
+    float rotationStartRingRadians = 0.0F;
+    float rotationCurrentRingRadians = 0.0F;
+    bool hasRotationReference = false;
 };
 
 class VulkanViewport final {
@@ -75,27 +84,21 @@ public:
     [[nodiscard]] std::optional<ViewportPick> pickObject(float xPixels, float yPixels) const noexcept;
     [[nodiscard]] bool setSelectedObject(vortex::ObjectId objectId) noexcept;
     [[nodiscard]] bool setGizmoMode(GizmoMode mode) noexcept;
+    [[nodiscard]] bool setGizmoOrientation(TransformOrientation orientation) noexcept;
     [[nodiscard]] bool setDisplayDensity(float density) noexcept;
-    [[nodiscard]] bool updateObjectWorldMatrix(
+    [[nodiscard]] bool updateObjectTransform(
         vortex::ObjectId objectId,
-        const vortex::TransformMatrix& worldMatrix) noexcept;
+        const vortex::TransformMatrix& worldMatrix,
+        const vortex::Quaternion& worldRotation) noexcept;
     [[nodiscard]] std::optional<GizmoHit> hitTestGizmo(
         vortex::ObjectId objectId,
         GizmoMode mode,
         float xPixels,
         float yPixels) const noexcept;
-    [[nodiscard]] std::optional<AxisConstraintSample> sampleAxisConstraint(
-        const vortex::TransformMatrix& interactionWorldMatrix,
-        GizmoAxis axis,
+    [[nodiscard]] std::optional<PointerRay> gizmoPointerRay(
         float xPixels,
         float yPixels) const noexcept;
-    [[nodiscard]] std::optional<RotationConstraintSample> sampleRotationConstraint(
-        const vortex::TransformMatrix& interactionWorldMatrix,
-        GizmoAxis axis,
-        float previousXPixels,
-        float previousYPixels,
-        float currentXPixels,
-        float currentYPixels) const noexcept;
+    [[nodiscard]] std::optional<GizmoCameraFrame> gizmoCameraFrame() const noexcept;
     [[nodiscard]] bool setGizmoInteractionFeedback(
         const GizmoInteractionFeedback& feedback) noexcept;
 
@@ -115,12 +118,13 @@ public:
 private:
     // Fixed host-visible capacity keeps selection/gizmo refreshes allocation-free while a
     // selected object is active. The largest single solid gizmo mode fits comfortably below it.
-    static constexpr std::size_t kGizmoVertexCapacity = 8192U;
+    static constexpr std::size_t kGizmoVertexCapacity = 16384U;
 
     [[nodiscard]] std::optional<vortex::FaceId> pickFace(float xPixels, float yPixels) const noexcept;
     [[nodiscard]] std::vector<ViewportVertex> buildGizmoVertices() const;
     [[nodiscard]] vortex::TransformMatrix gizmoWorldMatrix(
-        const vortex::TransformMatrix& objectWorldMatrix) const noexcept;
+        const vortex::TransformMatrix& objectWorldMatrix,
+        const vortex::Quaternion& worldRotation) const noexcept;
 
     struct PickTriangle final {
         PickTriangle() = default;
@@ -156,11 +160,13 @@ private:
         std::uint32_t firstPickTriangle = 0U;
         std::uint32_t pickTriangleCount = 0U;
         vortex::TransformMatrix worldMatrix;
+        vortex::Quaternion worldRotation{};
     };
 
     struct SelectionOverlay final {
         vortex::ObjectId objectId;
         vortex::TransformMatrix worldMatrix;
+        vortex::Quaternion worldRotation{};
         std::vector<ViewportVertex> vertices;
     };
 
@@ -240,7 +246,9 @@ private:
     std::size_t selectionOverlayCapacity_ = 0U;
     vortex::ObjectId selectedObject_;
     vortex::TransformMatrix selectionWorldMatrix_{};
+    vortex::Quaternion selectionWorldRotation_{};
     GizmoMode gizmoMode_ = GizmoMode::Move;
+    TransformOrientation gizmoOrientation_ = TransformOrientation::Local;
     float displayDensity_ = 1.0F;
     GizmoInteractionFeedback gizmoInteractionFeedback_{};
     bool selectionOverlayDirty_ = false;

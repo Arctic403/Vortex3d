@@ -20,12 +20,14 @@ constexpr std::uint64_t fnv64Offset = 14695981039346656037ULL;
 constexpr std::uint64_t legacyFnv64Offset = 1469598103934665603ULL;
 constexpr std::uint64_t fnv64Prime = 1099511628211ULL;
 
-static_assert(std::endian::native == std::endian::little, "ProjectCodec schema v2 requires little-endian encoding");
-static_assert(sizeof(bool) == 1U, "ProjectCodec schema v2 requires one-byte bool");
+static_assert(std::endian::native == std::endian::little, "ProjectCodec schema v3 requires little-endian encoding");
+static_assert(sizeof(bool) == 1U, "ProjectCodec schema v3 requires one-byte bool");
 static_assert(sizeof(float) == 4U && std::numeric_limits<float>::is_iec559,
-              "ProjectCodec schema v2 requires IEEE-754 32-bit float");
+              "ProjectCodec schema v3 requires IEEE-754 32-bit float");
 static_assert(sizeof(Vec2) == 8U && sizeof(Vec3) == 12U && sizeof(Vec4) == 16U,
-              "ProjectCodec schema v2 requires tightly packed vector value types");
+              "ProjectCodec schema v3 requires tightly packed vector value types");
+static_assert(sizeof(Quaternion) == 16U,
+              "ProjectCodec schema v3 requires a tightly packed quaternion value type");
 
 class Writer final {
 public:
@@ -384,7 +386,7 @@ ProjectWriteResult ProjectCodec::encode(const Document& document) {
         writeId(out, object.meshId);
         writeId(out, object.parentId);
         out.pod(object.transform.translation);
-        out.pod(object.transform.rotationRadians);
+        out.pod(object.transform.rotation);
         out.pod(object.transform.scale);
         out.pod(object.revision);
     }
@@ -511,11 +513,26 @@ ProjectReadResult ProjectCodec::decode(const std::span<const std::uint8_t> bytes
             !readId(reader, object.parentId)) {
             return {Document{}, ProjectIoError::Truncated};
         }
-        if (version >= 2U) {
+        if (version >= 3U) {
             if (!reader.pod(object.transform.translation) ||
-                !reader.pod(object.transform.rotationRadians) ||
+                !reader.pod(object.transform.rotation) ||
                 !reader.pod(object.transform.scale) ||
                 !isFiniteObjectTransform(object.transform)) {
+                return {Document{}, ProjectIoError::InvalidData};
+            }
+        } else if (version == 2U) {
+            Vec3 legacyEuler{};
+            if (!reader.pod(object.transform.translation) ||
+                !reader.pod(legacyEuler) ||
+                !reader.pod(object.transform.scale)) {
+                return {Document{}, ProjectIoError::InvalidData};
+            }
+            const auto migratedRotation = quaternionFromEulerRadians(legacyEuler);
+            if (!migratedRotation) {
+                return {Document{}, ProjectIoError::InvalidData};
+            }
+            object.transform.rotation = *migratedRotation;
+            if (!isFiniteObjectTransform(object.transform)) {
                 return {Document{}, ProjectIoError::InvalidData};
             }
         }

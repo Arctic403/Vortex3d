@@ -35,7 +35,7 @@ struct ProjectReadResult final {
 class ProjectCodec final {
 public:
     static constexpr std::uint32_t minimumSupportedSchemaVersion = 1;
-    static constexpr std::uint32_t schemaVersion = 2;
+    static constexpr std::uint32_t schemaVersion = 3;
     [[nodiscard]] static ProjectWriteResult encode(const Document& document);
     [[nodiscard]] static ProjectReadResult decode(std::span<const std::uint8_t> bytes);
 };

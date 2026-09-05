@@ -20,8 +20,8 @@ namespace {
     return static_cast<jlong>(reinterpret_cast<std::uintptr_t>(host));
 }
 
-[[nodiscard]] std::optional<vortex::android::TransformToolMode> transformToolMode(const jint mode) noexcept {
-    using vortex::android::TransformToolMode;
+[[nodiscard]] std::optional<vortex::TransformToolMode> transformToolMode(const jint mode) noexcept {
+    using vortex::TransformToolMode;
     switch (mode) {
         case 0:
             return TransformToolMode::Move;
@@ -29,6 +29,21 @@ namespace {
             return TransformToolMode::Rotate;
         case 2:
             return TransformToolMode::Scale;
+        default:
+            return std::nullopt;
+    }
+}
+
+[[nodiscard]] std::optional<vortex::TransformOrientation> transformOrientation(
+    const jint orientation) noexcept {
+    using vortex::TransformOrientation;
+    switch (orientation) {
+        case 0:
+            return TransformOrientation::Global;
+        case 1:
+            return TransformOrientation::Local;
+        case 2:
+            return TransformOrientation::View;
         default:
             return std::nullopt;
     }
@@ -130,6 +145,17 @@ Java_com_vortex3d_app_MainActivity_nativeSetTransformTool(
     auto* host = hostFromHandle(handle);
     const auto resolvedMode = transformToolMode(mode);
     return host != nullptr && resolvedMode && host->setTransformTool(*resolvedMode)
+        ? JNI_TRUE
+        : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_vortex3d_app_MainActivity_nativeSetTransformOrientation(
+    JNIEnv*, jclass, const jlong handle, const jint orientation) {
+    auto* host = hostFromHandle(handle);
+    const auto resolvedOrientation = transformOrientation(orientation);
+    return host != nullptr && resolvedOrientation &&
+                   host->setTransformOrientation(*resolvedOrientation)
         ? JNI_TRUE
         : JNI_FALSE;
 }

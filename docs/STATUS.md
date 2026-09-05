@@ -4,6 +4,8 @@ Last updated: 2026-09-05
 
 ## Current engineering focus
 
+> **Experimental branch:** `work/gizmo-visual-polish` is currently carrying Gizmo System v2. It migrates authored object rotation to quaternions/project schema v3 and moves manipulation math into portable geometric constraints. It is intentionally ahead of the merged/device-verified Phase-6 baseline described below and still requires Android ABI CI plus a new ARMv7 device pass before merge. See `docs/GIZMO_SYSTEM_V2.md`.
+
 The portable C++ engine foundation and editor-aware Android Vulkan viewport are in place. Phase 6 is complete, merged, CI-green, and verified on the 32-bit Samsung target: persistent object translation/rotation/scale is authored in `Document`, persisted by project schema v2, replayed through `EditorHistory`, consumed as engine-derived world matrices by rendering/picking/selection, and manipulated through touch Move / Rotate / Scale gizmo tools.
 
 The Phase 6 device pass confirmed Move / Rotate / Scale, Undo / Redo, existing camera gestures, selection, and transform synchronization are working on the target phone. Phase 6 is therefore both implementation-complete and device-verified.

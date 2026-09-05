@@ -23,7 +23,15 @@ constexpr float kArrowRadius = 0.13F;
 constexpr float kAxisShaftRadius = 0.034F;
 constexpr float kScaleHandleCenter = 0.98F;
 constexpr float kScaleHandleHalfExtent = 0.10F;
+constexpr float kPlaneHandleOffset = 0.43F;
+constexpr float kMovePlaneHalfExtent = 0.15F;
+constexpr float kScalePlaneHalfExtent = 0.13F;
+constexpr float kCenterHandleHalfExtent = 0.085F;
+constexpr float kUniformScaleRingRadius = 0.30F;
+constexpr float kUniformScaleRingTubeRadius = 0.045F;
 constexpr float kRotateRingRadius = 1.45F;
+constexpr float kViewRingRadius = 1.68F;
+constexpr float kViewRingTubeRadius = 0.038F;
 constexpr float kRotateTubeRadius = 0.045F;
 constexpr float kRotateActiveTubeRadius = 0.060F;
 constexpr float kRotateFeedbackRadius = 1.16F;
@@ -49,6 +57,9 @@ constexpr float kScaleTouchRadiusMaxPixels = 54.0F;
 constexpr float kRotateTouchRadiusMaxPixels = 50.0F;
 constexpr float kMoveCenterDeadZoneDp = 16.0F;
 constexpr float kMoveCenterDeadZoneMaxPixels = 38.0F;
+constexpr float kPlaneTouchRadiusDp = 22.0F;
+constexpr float kCenterTouchRadiusDp = 24.0F;
+constexpr float kViewRingTouchRadiusDp = 20.0F;
 constexpr float kTargetPixelsPerLocalUnit = 92.0F;
 constexpr float kProjectionProbeWorldUnits = 0.10F;
 constexpr float kMinGizmoWorldScale = 0.025F;
@@ -57,6 +68,8 @@ constexpr float kMaxGizmoWorldScale = 12.0F;
 constexpr std::array<float, 3> kXColor{0.98F, 0.16F, 0.14F};
 constexpr std::array<float, 3> kYColor{0.18F, 0.94F, 0.30F};
 constexpr std::array<float, 3> kZColor{0.18F, 0.44F, 1.0F};
+constexpr std::array<float, 3> kNeutralColor{0.88F, 0.88F, 0.88F};
+constexpr std::array<float, 3> kCenterColor{0.96F, 0.80F, 0.24F};
 
 [[nodiscard]] vortex::Vec3 axisVector(const GizmoAxis axis) noexcept {
     switch (axis) {
@@ -104,6 +117,23 @@ constexpr std::array<float, 3> kZColor{0.18F, 0.44F, 1.0F};
             return kZColor;
     }
     return kXColor;
+}
+
+
+[[nodiscard]] std::optional<vortex::Quaternion> resolvedGizmoRotation(
+    const TransformOrientation orientation,
+    const vortex::Quaternion& objectWorldRotation,
+    const std::optional<GizmoCameraFrame>& camera) noexcept {
+    switch (orientation) {
+        case TransformOrientation::Local:
+            return vortex::normalizedQuaternion(objectWorldRotation);
+        case TransformOrientation::Global:
+            return vortex::Quaternion{};
+        case TransformOrientation::View:
+            if (!camera) return std::nullopt;
+            return vortex::quaternionFromBasis(camera->right, camera->up, camera->forward);
+    }
+    return std::nullopt;
 }
 
 [[nodiscard]] std::array<float, 3> highlightedColor(
@@ -237,6 +267,151 @@ void addCube(
             corners[triangle[1]],
             corners[triangle[2]],
             color);
+    }
+}
+
+
+[[nodiscard]] std::array<float, 3> mixedAxisColor(
+    const GizmoAxis a,
+    const GizmoAxis b) noexcept {
+    const auto& ca = axisColor(a);
+    const auto& cb = axisColor(b);
+    return {
+        (ca[0] + cb[0]) * 0.5F,
+        (ca[1] + cb[1]) * 0.5F,
+        (ca[2] + cb[2]) * 0.5F,
+    };
+}
+
+[[nodiscard]] std::pair<GizmoAxis, GizmoAxis> planeAxesLocal(const GizmoPlane plane) noexcept {
+    switch (plane) {
+        case GizmoPlane::XY: return {GizmoAxis::X, GizmoAxis::Y};
+        case GizmoPlane::XZ: return {GizmoAxis::X, GizmoAxis::Z};
+        case GizmoPlane::YZ: return {GizmoAxis::Y, GizmoAxis::Z};
+        case GizmoPlane::View: return {GizmoAxis::X, GizmoAxis::Y};
+    }
+    return {GizmoAxis::X, GizmoAxis::Y};
+}
+
+[[nodiscard]] vortex::Vec3 planePointLocal(
+    const GizmoPlane plane,
+    const float u,
+    const float v) noexcept {
+    const auto axes = planeAxesLocal(plane);
+    return add(scale(axisVector(axes.first), u), scale(axisVector(axes.second), v));
+}
+
+void addPlaneHandle(
+    std::vector<ViewportVertex>& output,
+    const GizmoPlane plane,
+    const float halfExtent,
+    const std::array<float, 3>& color) {
+    const float lo = kPlaneHandleOffset - halfExtent;
+    const float hi = kPlaneHandleOffset + halfExtent;
+    const vortex::Vec3 p00 = planePointLocal(plane, lo, lo);
+    const vortex::Vec3 p10 = planePointLocal(plane, hi, lo);
+    const vortex::Vec3 p11 = planePointLocal(plane, hi, hi);
+    const vortex::Vec3 p01 = planePointLocal(plane, lo, hi);
+    addTriangle(output, p00, p10, p11, color);
+    addTriangle(output, p00, p11, p01, color);
+}
+
+[[nodiscard]] vortex::Vec3 basisRingPoint(
+    const vortex::Vec3 basisA,
+    const vortex::Vec3 basisB,
+    const float radians,
+    const float radius) noexcept {
+    return add(
+        scale(basisA, std::cos(radians) * radius),
+        scale(basisB, std::sin(radians) * radius));
+}
+
+void addBasisTorus(
+    std::vector<ViewportVertex>& output,
+    const vortex::Vec3 basisA,
+    const vortex::Vec3 basisB,
+    const vortex::Vec3 normal,
+    const float ringRadius,
+    const float tubeRadius,
+    const std::array<float, 3>& color) {
+    for (std::size_t ringSegment = 0U; ringSegment < kRotateRingSegments; ++ringSegment) {
+        const float ring0 = (2.0F * kPi * static_cast<float>(ringSegment)) /
+                            static_cast<float>(kRotateRingSegments);
+        const float ring1 = (2.0F * kPi * static_cast<float>(ringSegment + 1U)) /
+                            static_cast<float>(kRotateRingSegments);
+        const vortex::Vec3 radial0 = basisRingPoint(basisA, basisB, ring0, 1.0F);
+        const vortex::Vec3 radial1 = basisRingPoint(basisA, basisB, ring1, 1.0F);
+        const vortex::Vec3 center0 = scale(radial0, ringRadius);
+        const vortex::Vec3 center1 = scale(radial1, ringRadius);
+        for (std::size_t tubeSegment = 0U; tubeSegment < kRotateTubeSegments; ++tubeSegment) {
+            const float tube0 = (2.0F * kPi * static_cast<float>(tubeSegment)) /
+                                static_cast<float>(kRotateTubeSegments);
+            const float tube1 = (2.0F * kPi * static_cast<float>(tubeSegment + 1U)) /
+                                static_cast<float>(kRotateTubeSegments);
+            const vortex::Vec3 p00 = add(center0, add(
+                scale(radial0, std::cos(tube0) * tubeRadius),
+                scale(normal, std::sin(tube0) * tubeRadius)));
+            const vortex::Vec3 p01 = add(center0, add(
+                scale(radial0, std::cos(tube1) * tubeRadius),
+                scale(normal, std::sin(tube1) * tubeRadius)));
+            const vortex::Vec3 p10 = add(center1, add(
+                scale(radial1, std::cos(tube0) * tubeRadius),
+                scale(normal, std::sin(tube0) * tubeRadius)));
+            const vortex::Vec3 p11 = add(center1, add(
+                scale(radial1, std::cos(tube1) * tubeRadius),
+                scale(normal, std::sin(tube1) * tubeRadius)));
+            addTriangle(output, p00, p10, p11, color);
+            addTriangle(output, p00, p11, p01, color);
+        }
+    }
+}
+
+void addBasisRotationFeedback(
+    std::vector<ViewportVertex>& output,
+    const vortex::Vec3 basisA,
+    const vortex::Vec3 basisB,
+    const GizmoInteractionFeedback& feedback,
+    const std::array<float, 3>& color) {
+    if (!feedback.hasRotationReference) return;
+    const float start = feedback.rotationStartRingRadians;
+    const float current = feedback.rotationCurrentRingRadians;
+    const auto addSpoke = [&](const float angle, const float width) {
+        const vortex::Vec3 radial = basisRingPoint(basisA, basisB, angle, 1.0F);
+        const vortex::Vec3 tangent = add(
+            scale(basisA, -std::sin(angle)),
+            scale(basisB, std::cos(angle)));
+        const vortex::Vec3 inner = scale(radial, kRotateFeedbackSpokeInnerRadius);
+        const vortex::Vec3 outer = scale(radial, kRotateFeedbackSpokeOuterRadius);
+        const vortex::Vec3 w = scale(tangent, width);
+        addTriangle(output, add(inner, w), add(outer, w), add(outer, scale(w, -1.0F)), color);
+        addTriangle(output, add(inner, w), add(outer, scale(w, -1.0F)), add(inner, scale(w, -1.0F)), color);
+    };
+    addSpoke(start, kRotateFeedbackHalfWidth);
+    addSpoke(current, kRotateFeedbackHalfWidth * 1.35F);
+
+    const float sweep = std::remainder(feedback.rotationRadians, 2.0F * kPi);
+    const float magnitude = std::abs(sweep);
+    if (magnitude <= 1.0e-4F) return;
+    const std::size_t segments = std::clamp<std::size_t>(
+        static_cast<std::size_t>(std::ceil(
+            magnitude / (2.0F * kPi) * static_cast<float>(kRotateFeedbackMaxSegments))),
+        2U,
+        kRotateFeedbackMaxSegments);
+    for (std::size_t segment = 0U; segment < segments; ++segment) {
+        const float t0 = static_cast<float>(segment) / static_cast<float>(segments);
+        const float t1 = static_cast<float>(segment + 1U) / static_cast<float>(segments);
+        const float a0 = start + sweep * t0;
+        const float a1 = start + sweep * t1;
+        const vortex::Vec3 inner0 = basisRingPoint(
+            basisA, basisB, a0, kRotateFeedbackRadius - kRotateFeedbackHalfWidth);
+        const vortex::Vec3 outer0 = basisRingPoint(
+            basisA, basisB, a0, kRotateFeedbackRadius + kRotateFeedbackHalfWidth);
+        const vortex::Vec3 inner1 = basisRingPoint(
+            basisA, basisB, a1, kRotateFeedbackRadius - kRotateFeedbackHalfWidth);
+        const vortex::Vec3 outer1 = basisRingPoint(
+            basisA, basisB, a1, kRotateFeedbackRadius + kRotateFeedbackHalfWidth);
+        addTriangle(output, inner0, outer0, outer1, color);
+        addTriangle(output, inner0, outer1, inner1, color);
     }
 }
 
@@ -394,20 +569,6 @@ void addRotationFeedback(
     }
 }
 
-[[nodiscard]] float length3(const vortex::Vec3 value) noexcept {
-    return std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
-}
-
-[[nodiscard]] vortex::Vec3 normalizedOr(
-    const vortex::Vec3 value,
-    const vortex::Vec3 fallback) noexcept {
-    const float length = length3(value);
-    if (!std::isfinite(length) || length <= kProjectionEpsilon) {
-        return fallback;
-    }
-    return {value.x / length, value.y / length, value.z / length};
-}
-
 [[nodiscard]] bool projectWorldPoint(
     const CameraPushConstants& camera,
     const VkExtent2D extent,
@@ -486,6 +647,18 @@ bool VulkanViewport::setGizmoMode(const GizmoMode mode) noexcept {
     return true;
 }
 
+bool VulkanViewport::setGizmoOrientation(const TransformOrientation orientation) noexcept {
+    if (gizmoOrientation_ == orientation) {
+        return true;
+    }
+    gizmoOrientation_ = orientation;
+    if (selectedObject_) {
+        selectionOverlayDirty_ = true;
+    }
+    commandBuffersDirty_ = true;
+    return true;
+}
+
 bool VulkanViewport::setGizmoInteractionFeedback(
     const GizmoInteractionFeedback& feedback) noexcept {
     if (feedback.active && feedback.mode != gizmoMode_) {
@@ -509,27 +682,47 @@ std::vector<ViewportVertex> VulkanViewport::buildGizmoVertices() const {
     std::vector<ViewportVertex> vertices;
     vertices.reserve(kGizmoVertexCapacity);
 
-    const auto isActiveAxis = [this](const GizmoAxis axis) noexcept {
+    const auto isActiveHandle = [this](const GizmoHandle handle) noexcept {
         return gizmoInteractionFeedback_.active &&
                gizmoInteractionFeedback_.mode == gizmoMode_ &&
-               gizmoInteractionFeedback_.handle == axisGizmoHandle(axis);
+               gizmoInteractionFeedback_.handle == handle;
+    };
+    const auto handleColor = [&](const GizmoHandle handle,
+                                 const std::array<float, 3>& base) noexcept {
+        return isActiveHandle(handle) ? highlightedColor(base) : base;
     };
 
     constexpr std::array<GizmoAxis, 3> axes{GizmoAxis::X, GizmoAxis::Y, GizmoAxis::Z};
+    constexpr std::array<GizmoPlane, 3> planes{GizmoPlane::XY, GizmoPlane::XZ, GizmoPlane::YZ};
+
     switch (gizmoMode_) {
         case GizmoMode::Move:
             for (const GizmoAxis axis : axes) {
-                const std::array<float, 3> color =
-                    isActiveAxis(axis) ? highlightedColor(axisColor(axis)) : axisColor(axis);
+                const auto color = handleColor(axisGizmoHandle(axis), axisColor(axis));
                 addCylinder(vertices, axis, kAxisShaftStart, kArrowBase, kAxisShaftRadius, color);
                 addCone(vertices, axis, kArrowBase, kMoveTip, kArrowRadius, color);
             }
+            for (const GizmoPlane plane : planes) {
+                const auto [a, b] = planeAxesLocal(plane);
+                const GizmoHandle handle = plane == GizmoPlane::XY ? GizmoHandle::PlaneXY :
+                                           plane == GizmoPlane::XZ ? GizmoHandle::PlaneXZ :
+                                                                   GizmoHandle::PlaneYZ;
+                addPlaneHandle(
+                    vertices,
+                    plane,
+                    kMovePlaneHalfExtent,
+                    handleColor(handle, mixedAxisColor(a, b)));
+            }
+            addCube(
+                vertices,
+                {},
+                kCenterHandleHalfExtent,
+                handleColor(GizmoHandle::Center, kCenterColor));
             break;
 
         case GizmoMode::Scale:
             for (const GizmoAxis axis : axes) {
-                const std::array<float, 3> color =
-                    isActiveAxis(axis) ? highlightedColor(axisColor(axis)) : axisColor(axis);
+                const auto color = handleColor(axisGizmoHandle(axis), axisColor(axis));
                 addCylinder(
                     vertices,
                     axis,
@@ -543,13 +736,45 @@ std::vector<ViewportVertex> VulkanViewport::buildGizmoVertices() const {
                     kScaleHandleHalfExtent,
                     color);
             }
+            for (const GizmoPlane plane : planes) {
+                const auto [a, b] = planeAxesLocal(plane);
+                const GizmoHandle handle = plane == GizmoPlane::XY ? GizmoHandle::PlaneXY :
+                                           plane == GizmoPlane::XZ ? GizmoHandle::PlaneXZ :
+                                                                   GizmoHandle::PlaneYZ;
+                addPlaneHandle(
+                    vertices,
+                    plane,
+                    kScalePlaneHalfExtent,
+                    handleColor(handle, mixedAxisColor(a, b)));
+            }
+            if (const auto camera = gizmoCameraFrame()) {
+                const auto frameRotation = resolvedGizmoRotation(
+                    gizmoOrientation_, selectionWorldRotation_, camera);
+                const auto inverseFrame = frameRotation
+                    ? vortex::conjugateQuaternion(*frameRotation)
+                    : std::nullopt;
+                if (inverseFrame) {
+                    const auto localRight = vortex::rotateVectorByQuaternion(*inverseFrame, camera->right);
+                    const auto localUp = vortex::rotateVectorByQuaternion(*inverseFrame, camera->up);
+                    const auto localForward = vortex::rotateVectorByQuaternion(*inverseFrame, camera->forward);
+                    if (localRight && localUp && localForward) {
+                        addBasisTorus(
+                            vertices,
+                            *localRight,
+                            *localUp,
+                            *localForward,
+                            kUniformScaleRingRadius,
+                            kUniformScaleRingTubeRadius,
+                            handleColor(GizmoHandle::UniformScale, kNeutralColor));
+                    }
+                }
+            }
             break;
 
         case GizmoMode::Rotate:
             for (const GizmoAxis axis : axes) {
-                const bool active = isActiveAxis(axis);
-                const std::array<float, 3> color =
-                    active ? highlightedColor(axisColor(axis)) : axisColor(axis);
+                const bool active = isActiveHandle(axisGizmoHandle(axis));
+                const auto color = handleColor(axisGizmoHandle(axis), axisColor(axis));
                 addTorus(
                     vertices,
                     axis,
@@ -563,6 +788,42 @@ std::vector<ViewportVertex> VulkanViewport::buildGizmoVertices() const {
                         highlightedColor(color));
                 }
             }
+
+            // The view ring is generated in local gizmo coordinates from the live camera frame,
+            // so after the gizmo world transform it remains camera-facing while XYZ stay in the
+            // selected transform orientation.
+            if (const auto camera = gizmoCameraFrame()) {
+                const auto frameRotation = resolvedGizmoRotation(
+                    gizmoOrientation_, selectionWorldRotation_, camera);
+                const auto inverseWorld = frameRotation
+                    ? vortex::conjugateQuaternion(*frameRotation)
+                    : std::nullopt;
+                if (inverseWorld) {
+                    const auto localRight = vortex::rotateVectorByQuaternion(*inverseWorld, camera->right);
+                    const auto localUp = vortex::rotateVectorByQuaternion(*inverseWorld, camera->up);
+                    const auto localForward = vortex::rotateVectorByQuaternion(*inverseWorld, camera->forward);
+                    if (localRight && localUp && localForward) {
+                        const bool active = isActiveHandle(GizmoHandle::ViewRing);
+                        const auto color = handleColor(GizmoHandle::ViewRing, kNeutralColor);
+                        addBasisTorus(
+                            vertices,
+                            *localRight,
+                            *localUp,
+                            *localForward,
+                            kViewRingRadius,
+                            active ? kRotateActiveTubeRadius : kViewRingTubeRadius,
+                            color);
+                        if (active) {
+                            addBasisRotationFeedback(
+                                vertices,
+                                *localRight,
+                                *localUp,
+                                gizmoInteractionFeedback_,
+                                highlightedColor(color));
+                        }
+                    }
+                }
+            }
             break;
     }
 
@@ -570,11 +831,16 @@ std::vector<ViewportVertex> VulkanViewport::buildGizmoVertices() const {
 }
 
 vortex::TransformMatrix VulkanViewport::gizmoWorldMatrix(
-    const vortex::TransformMatrix& objectWorldMatrix) const noexcept {
+    const vortex::TransformMatrix& objectWorldMatrix,
+    const vortex::Quaternion& worldRotation) const noexcept {
     const auto& source = objectWorldMatrix.values;
-    const vortex::Vec3 xAxis = normalizedOr({source[0], source[1], source[2]}, {1.0F, 0.0F, 0.0F});
-    const vortex::Vec3 yAxis = normalizedOr({source[4], source[5], source[6]}, {0.0F, 1.0F, 0.0F});
-    const vortex::Vec3 zAxis = normalizedOr({source[8], source[9], source[10]}, {0.0F, 0.0F, 1.0F});
+    const auto frameRotation = resolvedGizmoRotation(
+        gizmoOrientation_, worldRotation, gizmoCameraFrame());
+    const vortex::TransformMatrix rotationOnly = vortex::rotationTransformMatrix(
+        frameRotation.value_or(worldRotation));
+    const vortex::Vec3 xAxis{rotationOnly.values[0], rotationOnly.values[1], rotationOnly.values[2]};
+    const vortex::Vec3 yAxis{rotationOnly.values[4], rotationOnly.values[5], rotationOnly.values[6]};
+    const vortex::Vec3 zAxis{rotationOnly.values[8], rotationOnly.values[9], rotationOnly.values[10]};
     const vortex::Vec3 origin{source[12], source[13], source[14]};
 
     auto matrixForScale = [&](const float scaleValue) noexcept {
@@ -760,20 +1026,31 @@ std::optional<GizmoHit> VulkanViewport::hitTestGizmo(
         return std::nullopt;
     }
 
-    const CameraPushConstants camera = cameraPushConstants(width / height);
-    const vortex::TransformMatrix visualMatrix = gizmoWorldMatrix(draw->worldMatrix);
-    const vortex::Vec3 visualOriginWorld = vortex::transformPoint(
-        visualMatrix,
-        {0.0F, 0.0F, 0.0F});
-
-    ScreenPoint visualOriginScreen{};
-    if (!projectWorldPoint(camera, swapchainExtent_, visualOriginWorld, visualOriginScreen)) {
+    const CameraPushConstants cameraPush = cameraPushConstants(width / height);
+    const auto pointer = gizmoPointerRay(xPixels, yPixels);
+    const auto camera = gizmoCameraFrame();
+    if (!pointer || !camera) {
         return std::nullopt;
     }
 
+    const vortex::TransformMatrix visualMatrix = gizmoWorldMatrix(draw->worldMatrix, draw->worldRotation);
+    const vortex::Vec3 visualOriginWorld = vortex::transformPoint(visualMatrix, {});
+    ScreenPoint visualOriginScreen{};
+    if (!projectWorldPoint(cameraPush, swapchainExtent_, visualOriginWorld, visualOriginScreen)) {
+        return std::nullopt;
+    }
+
+    const auto frameRotation = resolvedGizmoRotation(
+        gizmoOrientation_, draw->worldRotation, camera);
+    if (!frameRotation) {
+        return std::nullopt;
+    }
+    const GizmoFrame frame{visualOriginWorld, *frameRotation};
     const ScreenPoint touch{xPixels, yPixels};
-    float bestDistance = std::numeric_limits<float>::max();
-    std::optional<GizmoHit> best;
+    const TransformToolMode toolMode = mode == GizmoMode::Move ? TransformToolMode::Move :
+                                       mode == GizmoMode::Rotate ? TransformToolMode::Rotate :
+                                                                   TransformToolMode::Scale;
+
     const float moveTouchRadiusPixels = std::clamp(
         kMoveTouchRadiusDp * displayDensity_,
         kMoveTouchRadiusMinPixels,
@@ -786,99 +1063,214 @@ std::optional<GizmoHit> VulkanViewport::hitTestGizmo(
         kRotateTouchRadiusDp * displayDensity_,
         kRotateTouchRadiusMinPixels,
         kRotateTouchRadiusMaxPixels);
+    const float planeTouchRadiusPixels = std::clamp(
+        kPlaneTouchRadiusDp * displayDensity_, 30.0F, 52.0F);
+    const float centerTouchRadiusPixels = std::clamp(
+        kCenterTouchRadiusDp * displayDensity_, 34.0F, 56.0F);
+    const float viewRingTouchRadiusPixels = std::clamp(
+        kViewRingTouchRadiusDp * displayDensity_, 30.0F, 46.0F);
     const float moveCenterDeadZonePixels = std::clamp(
         kMoveCenterDeadZoneDp * displayDensity_,
         kAxisShaftStart * kTargetPixelsPerLocalUnit,
         kMoveCenterDeadZoneMaxPixels);
-    constexpr std::array<GizmoAxis, 3> axes{GizmoAxis::X, GizmoAxis::Y, GizmoAxis::Z};
 
-    for (const GizmoAxis axis : axes) {
-        const vortex::Vec3 localAxis = axisVector(axis);
+    float bestScore = std::numeric_limits<float>::max();
+    std::optional<GizmoHit> best;
+    const auto descriptorPriority = [&](const GizmoHandle handle) noexcept {
+        for (const GizmoHandleDescriptor& descriptor : gizmoHandleDescriptors(toolMode)) {
+            if (descriptor.handle == handle) return descriptor.pickPriority;
+        }
+        return 1.0F;
+    };
+    const auto consider = [&](const GizmoHandle handle,
+                              const float distance,
+                              const float radius,
+                              const float conditioning) {
+        if (!std::isfinite(distance) || !std::isfinite(conditioning) || radius <= 0.0F ||
+            distance > radius) {
+            return;
+        }
+        // Distance still dominates. Conditioning and descriptor priority only resolve dense
+        // overlaps, so an edge-on/ambiguous handle does not steal a touch from a clear one.
+        const float quality = std::max(0.12F, conditioning) * descriptorPriority(handle);
+        const float score = (distance / radius) / quality;
+        if (score < bestScore) {
+            bestScore = score;
+            best = GizmoHit{handle, score};
+        }
+    };
+
+    constexpr std::array<GizmoAxis, 3> axes{GizmoAxis::X, GizmoAxis::Y, GizmoAxis::Z};
+    if (mode == GizmoMode::Move || mode == GizmoMode::Scale) {
+        for (const GizmoAxis axis : axes) {
+            const vortex::Vec3 localAxis = axisVector(axis);
+            const float conditioning = axisConstraintConditioning(frame, axis, *pointer);
+            if (mode == GizmoMode::Move) {
+                ScreenPoint endpoint{};
+                ScreenPoint hitStart{};
+                const auto endpointWorld = vortex::transformPoint(visualMatrix, scale(localAxis, kMoveTip));
+                const auto startWorld = vortex::transformPoint(visualMatrix, scale(localAxis, kAxisShaftStart));
+                if (!projectWorldPoint(cameraPush, swapchainExtent_, endpointWorld, endpoint) ||
+                    !projectWorldPoint(cameraPush, swapchainExtent_, startWorld, hitStart)) {
+                    continue;
+                }
+                if (pointDistance(touch, visualOriginScreen) >= moveCenterDeadZonePixels) {
+                    consider(
+                        axisGizmoHandle(axis),
+                        pointSegmentDistance(touch, hitStart, endpoint),
+                        moveTouchRadiusPixels,
+                        conditioning);
+                }
+            } else {
+                ScreenPoint handle{};
+                const auto handleWorld = vortex::transformPoint(
+                    visualMatrix, scale(localAxis, kScaleHandleCenter));
+                if (!projectWorldPoint(cameraPush, swapchainExtent_, handleWorld, handle)) {
+                    continue;
+                }
+                consider(
+                    axisGizmoHandle(axis),
+                    pointDistance(touch, handle),
+                    scaleTouchRadiusPixels,
+                    conditioning);
+            }
+        }
+
+        constexpr std::array<GizmoPlane, 3> planes{GizmoPlane::XY, GizmoPlane::XZ, GizmoPlane::YZ};
+        for (const GizmoPlane plane : planes) {
+            const GizmoHandle handle = plane == GizmoPlane::XY ? GizmoHandle::PlaneXY :
+                                       plane == GizmoPlane::XZ ? GizmoHandle::PlaneXZ :
+                                                               GizmoHandle::PlaneYZ;
+            const vortex::Vec3 centerLocal = planePointLocal(plane, kPlaneHandleOffset, kPlaneHandleOffset);
+            ScreenPoint center{};
+            if (!projectWorldPoint(
+                    cameraPush,
+                    swapchainExtent_,
+                    vortex::transformPoint(visualMatrix, centerLocal),
+                    center)) {
+                continue;
+            }
+            const float conditioning = planeConstraintConditioning(frame, plane, *pointer, *camera);
+            consider(handle, pointDistance(touch, center), planeTouchRadiusPixels, conditioning);
+        }
 
         if (mode == GizmoMode::Move) {
-            ScreenPoint endpoint{};
-            const vortex::Vec3 endpointWorld = vortex::transformPoint(
-                visualMatrix,
-                scale(localAxis, kMoveTip));
-            if (!projectWorldPoint(camera, swapchainExtent_, endpointWorld, endpoint)) {
-                continue;
+            consider(
+                GizmoHandle::Center,
+                pointDistance(touch, visualOriginScreen),
+                centerTouchRadiusPixels,
+                1.0F);
+        } else {
+            const auto inverseFrame = vortex::conjugateQuaternion(*frameRotation);
+            if (inverseFrame) {
+                const auto localRight = vortex::rotateVectorByQuaternion(*inverseFrame, camera->right);
+                const auto localUp = vortex::rotateVectorByQuaternion(*inverseFrame, camera->up);
+                if (localRight && localUp) {
+                    float distance = std::numeric_limits<float>::max();
+                    for (std::size_t segment = 0U; segment < kRotateRingSegments; ++segment) {
+                        const float angleA = (2.0F * kPi * static_cast<float>(segment)) /
+                                             static_cast<float>(kRotateRingSegments);
+                        const float angleB = (2.0F * kPi * static_cast<float>(segment + 1U)) /
+                                             static_cast<float>(kRotateRingSegments);
+                        ScreenPoint a{};
+                        ScreenPoint b{};
+                        if (!projectWorldPoint(
+                                cameraPush,
+                                swapchainExtent_,
+                                vortex::transformPoint(
+                                    visualMatrix,
+                                    basisRingPoint(*localRight, *localUp, angleA, kUniformScaleRingRadius)),
+                                a) ||
+                            !projectWorldPoint(
+                                cameraPush,
+                                swapchainExtent_,
+                                vortex::transformPoint(
+                                    visualMatrix,
+                                    basisRingPoint(*localRight, *localUp, angleB, kUniformScaleRingRadius)),
+                                b)) {
+                            continue;
+                        }
+                        distance = std::min(distance, pointSegmentDistance(touch, a, b));
+                    }
+                    consider(
+                        GizmoHandle::UniformScale,
+                        distance,
+                        scaleTouchRadiusPixels,
+                        1.0F);
+                }
             }
-            const float directionX = endpoint.x - visualOriginScreen.x;
-            const float directionY = endpoint.y - visualOriginScreen.y;
-            const float directionLength = std::sqrt(directionX * directionX + directionY * directionY);
-            if (directionLength < 10.0F) {
-                continue;
-            }
-            ScreenPoint hitStart{};
-            const vortex::Vec3 hitStartWorld = vortex::transformPoint(
-                visualMatrix,
-                scale(localAxis, kAxisShaftStart));
-            if (!projectWorldPoint(camera, swapchainExtent_, hitStartWorld, hitStart)) {
-                continue;
-            }
-            if (pointDistance(touch, visualOriginScreen) < moveCenterDeadZonePixels) {
-                continue;
-            }
-            const float distance = pointSegmentDistance(touch, hitStart, endpoint);
-            if (distance <= moveTouchRadiusPixels && distance < bestDistance) {
-                bestDistance = distance;
-                best = GizmoHit{axis};
-            }
-            continue;
         }
+        return best;
+    }
 
-        if (mode == GizmoMode::Scale) {
-            ScreenPoint handle{};
-            const vortex::Vec3 handleWorld = vortex::transformPoint(
-                visualMatrix,
-                scale(localAxis, kScaleHandleCenter));
-            if (!projectWorldPoint(camera, swapchainExtent_, handleWorld, handle)) {
-                continue;
-            }
-            const float directionX = handle.x - visualOriginScreen.x;
-            const float directionY = handle.y - visualOriginScreen.y;
-            const float directionLength = std::sqrt(directionX * directionX + directionY * directionY);
-            if (directionLength < 8.0F) {
-                continue;
-            }
-            const float distance = pointDistance(touch, handle);
-            if (distance <= scaleTouchRadiusPixels && distance < bestDistance) {
-                bestDistance = distance;
-                best = GizmoHit{axis};
-            }
-            continue;
-        }
-
-        // Rotate hit testing follows the visible torus centerline. Gesture motion itself is
-        // solved later against the selected ring's 3D plane.
+    // Axis rotation rings.
+    for (const GizmoAxis axis : axes) {
+        const auto worldAxis = gizmoAxisDirection(frame, axis);
+        if (!worldAxis) continue;
+        const float ringConditioning = std::clamp(
+            std::abs(worldAxis->x * pointer->direction.x +
+                     worldAxis->y * pointer->direction.y +
+                     worldAxis->z * pointer->direction.z),
+            0.0F,
+            1.0F);
+        float distance = std::numeric_limits<float>::max();
         for (std::size_t segment = 0U; segment < kRotateRingSegments; ++segment) {
             const float angleA = (2.0F * kPi * static_cast<float>(segment)) /
                                  static_cast<float>(kRotateRingSegments);
             const float angleB = (2.0F * kPi * static_cast<float>(segment + 1U)) /
                                  static_cast<float>(kRotateRingSegments);
-            const vortex::Vec3 aWorld = vortex::transformPoint(
-                visualMatrix,
-                ringPoint(axis, angleA, kRotateRingRadius));
-            const vortex::Vec3 bWorld = vortex::transformPoint(
-                visualMatrix,
-                ringPoint(axis, angleB, kRotateRingRadius));
             ScreenPoint a{};
             ScreenPoint b{};
-            if (!projectWorldPoint(camera, swapchainExtent_, aWorld, a) ||
-                !projectWorldPoint(camera, swapchainExtent_, bWorld, b)) {
+            if (!projectWorldPoint(
+                    cameraPush,
+                    swapchainExtent_,
+                    vortex::transformPoint(visualMatrix, ringPoint(axis, angleA, kRotateRingRadius)),
+                    a) ||
+                !projectWorldPoint(
+                    cameraPush,
+                    swapchainExtent_,
+                    vortex::transformPoint(visualMatrix, ringPoint(axis, angleB, kRotateRingRadius)),
+                    b)) {
                 continue;
             }
-            const float directionX = b.x - a.x;
-            const float directionY = b.y - a.y;
-            const float directionLength = std::sqrt(directionX * directionX + directionY * directionY);
-            if (directionLength <= 1.0F) {
-                continue;
+            distance = std::min(distance, pointSegmentDistance(touch, a, b));
+        }
+        consider(axisGizmoHandle(axis), distance, rotateTouchRadiusPixels, ringConditioning);
+    }
+
+    // Camera-facing outer view ring.
+    const auto inverseWorld = vortex::conjugateQuaternion(*frameRotation);
+    if (inverseWorld) {
+        const auto localRight = vortex::rotateVectorByQuaternion(*inverseWorld, camera->right);
+        const auto localUp = vortex::rotateVectorByQuaternion(*inverseWorld, camera->up);
+        if (localRight && localUp) {
+            float distance = std::numeric_limits<float>::max();
+            for (std::size_t segment = 0U; segment < kRotateRingSegments; ++segment) {
+                const float angleA = (2.0F * kPi * static_cast<float>(segment)) /
+                                     static_cast<float>(kRotateRingSegments);
+                const float angleB = (2.0F * kPi * static_cast<float>(segment + 1U)) /
+                                     static_cast<float>(kRotateRingSegments);
+                ScreenPoint a{};
+                ScreenPoint b{};
+                if (!projectWorldPoint(
+                        cameraPush,
+                        swapchainExtent_,
+                        vortex::transformPoint(
+                            visualMatrix,
+                            basisRingPoint(*localRight, *localUp, angleA, kViewRingRadius)),
+                        a) ||
+                    !projectWorldPoint(
+                        cameraPush,
+                        swapchainExtent_,
+                        vortex::transformPoint(
+                            visualMatrix,
+                            basisRingPoint(*localRight, *localUp, angleB, kViewRingRadius)),
+                        b)) {
+                    continue;
+                }
+                distance = std::min(distance, pointSegmentDistance(touch, a, b));
             }
-            const float distance = pointSegmentDistance(touch, a, b);
-            if (distance <= rotateTouchRadiusPixels && distance < bestDistance) {
-                bestDistance = distance;
-                best = GizmoHit{axis};
-            }
+            consider(GizmoHandle::ViewRing, distance, viewRingTouchRadiusPixels, 1.0F);
         }
     }
 

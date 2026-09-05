@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gizmo_contract.hpp"
+#include "vortex/editor/gizmo.hpp"
 #include "vulkan_viewport.hpp"
 
 #include "vortex/engine.hpp"
@@ -37,6 +37,13 @@ public:
         return renderer_.setGizmoInteractionFeedback({}) &&
                renderer_.setGizmoMode(gizmoMode(mode));
     }
+    [[nodiscard]] bool setTransformOrientation(const TransformOrientation orientation) noexcept {
+        if (transformDrag_.active || !renderer_.setGizmoOrientation(orientation)) {
+            return false;
+        }
+        transformOrientation_ = orientation;
+        return true;
+    }
     [[nodiscard]] bool setDisplayDensity(const float density) noexcept {
         return renderer_.setDisplayDensity(density);
     }
@@ -56,26 +63,31 @@ private:
     struct TransformDragState final {
         bool active = false;
         GizmoConstraint constraint{};
-        GizmoAxis axis = GizmoAxis::X;
         ObjectId objectId;
         ObjectTransform before{};
         ObjectTransform preview{};
-        Vec3 translationAxisParent{};
-        TransformMatrix interactionWorldMatrix{};
-        float worldUnitsPerTranslationUnit = 1.0F;
+        GizmoFrame frame{};
+        GizmoCameraFrame camera{};
+        TransformMatrix parentWorldMatrix{};
+        Quaternion parentWorldRotation{};
         float startAxisParameter = 0.0F;
-        float previousX = 0.0F;
-        float previousY = 0.0F;
+        PlaneConstraintSample startPlaneSample{};
+        float startUniformProjection = 1.0F;
+        float rotationStartPhase = 0.0F;
+        float rotationPreviousPhase = 0.0F;
         float accumulatedRotationRadians = 0.0F;
-        float rotationStartRingRadians = 0.0F;
-        float rotationCurrentRingRadians = 0.0F;
-        bool hasRotationReference = false;
+        bool hasAxisSample = false;
+        bool hasPlaneSample = false;
+        bool hasRotationSample = false;
     };
 
     [[nodiscard]] bool initializeScene();
     [[nodiscard]] bool appendObjectSnapshot(ObjectId objectId, MeshId meshId);
     [[nodiscard]] bool syncRendererObjectTransforms();
     [[nodiscard]] std::optional<TransformMatrix> previewWorldMatrix(
+        ObjectId objectId,
+        const ObjectTransform& transform) const;
+    [[nodiscard]] std::optional<Quaternion> previewWorldRotation(
         ObjectId objectId,
         const ObjectTransform& transform) const;
 
@@ -88,6 +100,7 @@ private:
     std::vector<ViewportObjectSnapshot> viewportObjects_;
     VulkanViewport renderer_;
     TransformDragState transformDrag_{};
+    TransformOrientation transformOrientation_ = TransformOrientation::Local;
     bool initialized_ = false;
 };
 

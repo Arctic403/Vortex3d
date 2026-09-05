@@ -18,7 +18,8 @@ struct Quaternion final {
 
 struct ObjectTransform final {
     Vec3 translation{};
-    Vec3 rotationRadians{};
+    // Authoritative orientation. Euler angles are conversion/UI/project-migration data only.
+    Quaternion rotation{};
     Vec3 scale{1.0F, 1.0F, 1.0F};
 
     [[nodiscard]] bool operator==(const ObjectTransform&) const noexcept = default;
@@ -32,20 +33,28 @@ struct TransformMatrix final {
 };
 
 [[nodiscard]] bool isFiniteQuaternion(const Quaternion& quaternion) noexcept;
+[[nodiscard]] std::optional<Quaternion> normalizedQuaternion(const Quaternion& quaternion) noexcept;
 [[nodiscard]] std::optional<Quaternion> quaternionFromEulerRadians(Vec3 eulerRadians) noexcept;
-[[nodiscard]] std::optional<Quaternion> quaternionFromAxisAngle(
-    Vec3 axis,
-    float radians) noexcept;
+[[nodiscard]] std::optional<Quaternion> quaternionFromAxisAngle(Vec3 axis, float radians) noexcept;
+[[nodiscard]] std::optional<Quaternion> quaternionFromBasis(
+    Vec3 xAxis,
+    Vec3 yAxis,
+    Vec3 zAxis) noexcept;
 [[nodiscard]] std::optional<Quaternion> multiplyQuaternions(
     const Quaternion& a,
     const Quaternion& b) noexcept;
+[[nodiscard]] std::optional<Quaternion> conjugateQuaternion(const Quaternion& quaternion) noexcept;
+[[nodiscard]] std::optional<Vec3> rotateVectorByQuaternion(
+    const Quaternion& quaternion,
+    Vec3 vector) noexcept;
 [[nodiscard]] std::optional<Vec3> eulerRadiansFromQuaternionNearest(
     const Quaternion& quaternion,
     Vec3 referenceEulerRadians) noexcept;
 [[nodiscard]] bool isFiniteObjectTransform(const ObjectTransform& transform) noexcept;
 [[nodiscard]] TransformMatrix identityTransformMatrix() noexcept;
-// Local transform order is T * Rz * Ry * Rx * S. Parent composition is parentWorld * local.
+// Local transform order is T * R(quaternion) * S. Parent composition is parentWorld * local.
 [[nodiscard]] TransformMatrix objectTransformMatrix(const ObjectTransform& transform) noexcept;
+[[nodiscard]] TransformMatrix rotationTransformMatrix(const Quaternion& rotation) noexcept;
 [[nodiscard]] TransformMatrix multiplyTransformMatrices(
     const TransformMatrix& a,
     const TransformMatrix& b) noexcept;
