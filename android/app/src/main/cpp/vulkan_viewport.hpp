@@ -95,6 +95,13 @@ public:
         GizmoMode mode,
         float xPixels,
         float yPixels) const noexcept;
+    [[nodiscard]] std::optional<float> rotationDragRadians(
+        const vortex::TransformMatrix& interactionWorldMatrix,
+        GizmoAxis axis,
+        float previousXPixels,
+        float previousYPixels,
+        float currentXPixels,
+        float currentYPixels) const noexcept;
 
     // Takes ownership of the ANativeWindow reference returned by ANativeWindow_fromSurface().
     [[nodiscard]] bool attach(ANativeWindow* window);
