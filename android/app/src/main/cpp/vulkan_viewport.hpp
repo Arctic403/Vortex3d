@@ -6,6 +6,7 @@
 #include <vulkan/vulkan.h>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -57,6 +58,8 @@ public:
     VulkanViewport(const VulkanViewport&) = delete;
     VulkanViewport& operator=(const VulkanViewport&) = delete;
 
+    // Scene-ready Stage 5B boundary. The renderer receives one extracted snapshot for each
+    // visible object and returns both stable object and source-face identity from picking.
     [[nodiscard]] bool setViewportObjects(const std::vector<ViewportObjectSnapshot>& objects);
     [[nodiscard]] std::optional<ViewportPick> pickObject(float xPixels, float yPixels) const noexcept;
     [[nodiscard]] bool setSelectedObject(vortex::ObjectId objectId) noexcept;
@@ -75,12 +78,22 @@ public:
     [[nodiscard]] std::string info() const;
 
 private:
+    // Stage 5A single-snapshot helpers remain implementation details. Stage 5B composes a
+    // render batch with synthetic renderer-local IDs, then maps picks back to stable IDs.
+    [[nodiscard]] bool setViewportMesh(const vortex::ViewportMesh& mesh);
+    [[nodiscard]] std::optional<vortex::FaceId> pickFace(float xPixels, float yPixels) const noexcept;
+    [[nodiscard]] bool setSelectionVisible(bool visible) noexcept;
+
     struct PickTriangle final {
         std::array<float, 3> a{};
         std::array<float, 3> b{};
         std::array<float, 3> c{};
-        vortex::ObjectId objectId;
         vortex::FaceId sourceFace;
+    };
+
+    struct PickMapEntry final {
+        vortex::FaceId syntheticFace;
+        ViewportPick stablePick;
     };
 
     struct SelectionOverlay final {
@@ -147,12 +160,18 @@ private:
     VkImageView depthView_ = VK_NULL_HANDLE;
     VkFormat depthFormat_ = VK_FORMAT_UNDEFINED;
 
-    // CPU-side state is fully rebuildable from RenderExtractor snapshots.
+    // CPU-side data is fully rebuildable from RenderExtractor snapshots.
     std::vector<ViewportVertex> sceneVertices_;
     std::vector<std::uint32_t> sceneIndices_;
+    std::vector<ViewportVertex> selectionOverlayVertices_;
     std::vector<PickTriangle> pickTriangles_;
+
+    // Stage 5B metadata never replaces stable engine identity with renderer ownership.
+    std::vector<PickMapEntry> pickMap_;
     std::vector<SelectionOverlay> selectionOverlays_;
     std::size_t selectionOverlayCapacity_ = 0U;
+    vortex::ObjectId selectedObject_;
+    bool selectionOverlayDirty_ = false;
 
     VkBuffer vertexBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory vertexMemory_ = VK_NULL_HANDLE;
@@ -167,7 +186,6 @@ private:
     VkBuffer selectionVertexBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory selectionVertexMemory_ = VK_NULL_HANDLE;
     std::uint32_t selectionVertexCount_ = 0U;
-    vortex::ObjectId selectedObject_;
     bool selectionVisible_ = false;
 
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
@@ -176,7 +194,6 @@ private:
 
     ViewportCamera camera_{};
     bool commandBuffersDirty_ = false;
-    bool selectionOverlayDirty_ = false;
 
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> commandBuffers_;
