@@ -4,9 +4,9 @@ Last updated: 2026-09-05
 
 ## Current engineering focus
 
-The portable C++ engine foundation and editor-aware Android Vulkan viewport are in place. Phase 6 is implementation-complete on the active branch: persistent object translation/rotation/scale is authored in `Document`, persisted by project schema v2, replayed through `EditorHistory`, consumed as engine-derived world matrices by rendering/picking/selection, and manipulated through touch Move / Rotate / Scale gizmo tools.
+The portable C++ engine foundation and editor-aware Android Vulkan viewport are in place. Phase 6 is complete, merged, CI-green, and verified on the 32-bit Samsung target: persistent object translation/rotation/scale is authored in `Document`, persisted by project schema v2, replayed through `EditorHistory`, consumed as engine-derived world matrices by rendering/picking/selection, and manipulated through touch Move / Rotate / Scale gizmo tools.
 
-The remaining Phase 6 gate is exact-head CI plus the normal 32-bit Samsung on-device behavior pass. Device verification is recorded separately from implementation completion.
+The Phase 6 device pass confirmed Move / Rotate / Scale, Undo / Redo, existing camera gestures, selection, and transform synchronization are working on the target phone. Phase 6 is therefore both implementation-complete and device-verified.
 
 ## Foundation state
 
@@ -117,7 +117,7 @@ Complete and merged.
 
 ### Phase 6C — interactive transform gizmos
 
-Implementation complete on the Phase 6 completion PR.
+Complete, merged, CI-green, and verified on the 32-bit Android target.
 
 - projected X/Y/Z touch hit-testing,
 - Move, Rotate, and Scale modes,
@@ -148,7 +148,7 @@ Core CI covers:
 - split/universal debug APK build and ABI packaging verification,
 - Release benchmark smoke.
 
-Both Android ABIs remain first-class build targets. Phase 6 is merged only after its exact-head CI run is fully green.
+Both Android ABIs remain first-class build targets. Phase 6 was merged only after its exact-head CI run was fully green.
 
 ## Known non-blocking renderer debt
 
