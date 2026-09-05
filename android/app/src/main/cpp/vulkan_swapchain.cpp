@@ -307,6 +307,13 @@ bool VulkanViewport::recordCommandBuffers() {
         vkCmdBindVertexBuffers(commandBuffers_[index], 0U, 1U, &vertexBuffer_, &vertexOffset);
         vkCmdBindIndexBuffer(commandBuffers_[index], indexBuffer_, 0U, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(commandBuffers_[index], indexCount_, 1U, 0U, 0, 0U);
+
+        if (selectionVisible_ && selectionVertexBuffer_ != VK_NULL_HANDLE && selectionVertexCount_ != 0U) {
+            vkCmdBindPipeline(commandBuffers_[index], VK_PIPELINE_BIND_POINT_GRAPHICS, gridPipeline_);
+            vkCmdBindVertexBuffers(commandBuffers_[index], 0U, 1U, &selectionVertexBuffer_, &vertexOffset);
+            vkCmdDraw(commandBuffers_[index], selectionVertexCount_, 1U, 0U, 0U);
+        }
+
         vkCmdEndRenderPass(commandBuffers_[index]);
 
         result = vkEndCommandBuffer(commandBuffers_[index]);
