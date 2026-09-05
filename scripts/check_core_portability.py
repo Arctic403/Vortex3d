@@ -3,7 +3,9 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-SCAN_ROOTS = [ROOT / "include" / "vortex", ROOT / "src" / "core", ROOT / "src" / "mesh"]
+# All public portable headers and every portable engine implementation source are scanned.
+# Android/JNI/Vulkan code lives outside these roots under android/.
+SCAN_ROOTS = [ROOT / "include" / "vortex", ROOT / "src"]
 FORBIDDEN = {
     "jni.h": "JNI belongs in the Android host layer",
     "android/": "Android headers belong in the Android host layer",
