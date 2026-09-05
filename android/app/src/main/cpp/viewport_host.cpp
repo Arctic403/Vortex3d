@@ -165,7 +165,8 @@ bool ViewportHost::tap(const float xPixels, const float yPixels) noexcept {
         if (renderer_.setSelectedObject(picked->objectId)) {
             return true;
         }
-        return restoreEditorSelection() && false;
+        (void)restoreEditorSelection();
+        return false;
     }
 
     if (!editor_.setActiveObject({})) {
@@ -175,7 +176,8 @@ bool ViewportHost::tap(const float xPixels, const float yPixels) noexcept {
     if (renderer_.setSelectedObject({})) {
         return true;
     }
-    return restoreEditorSelection() && false;
+    (void)restoreEditorSelection();
+    return false;
 }
 
 std::string ViewportHost::info() const {
