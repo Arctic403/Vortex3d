@@ -1,10 +1,13 @@
 #pragma once
 
+#include "vortex/viewport/render_extract.hpp"
+
 #include <android/native_window.h>
 #include <vulkan/vulkan.h>
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -41,6 +44,12 @@ public:
     VulkanViewport(const VulkanViewport&) = delete;
     VulkanViewport& operator=(const VulkanViewport&) = delete;
 
+    // The renderer consumes a derived evaluated snapshot. It never owns authored topology.
+    // Stage 5A supplies the snapshot before the Vulkan device/surface is attached.
+    [[nodiscard]] bool setViewportMesh(const vortex::ViewportMesh& mesh);
+    [[nodiscard]] std::optional<vortex::FaceId> pickFace(float xPixels, float yPixels) const noexcept;
+    [[nodiscard]] bool setSelectionVisible(bool visible) noexcept;
+
     // Takes ownership of the ANativeWindow reference returned by ANativeWindow_fromSurface().
     [[nodiscard]] bool attach(ANativeWindow* window);
     [[nodiscard]] bool resize();
@@ -55,6 +64,13 @@ public:
     [[nodiscard]] std::string info() const;
 
 private:
+    struct PickTriangle final {
+        std::array<float, 3> a{};
+        std::array<float, 3> b{};
+        std::array<float, 3> c{};
+        vortex::FaceId sourceFace;
+    };
+
     [[nodiscard]] bool createInstance();
     [[nodiscard]] bool createSurface();
     [[nodiscard]] bool createDeviceForSurface();
@@ -68,7 +84,7 @@ private:
     [[nodiscard]] bool createGridResources();
     [[nodiscard]] bool createGraphicsPipeline();
     [[nodiscard]] bool recordCommandBuffers();
-    [[nodiscard]] bool rebuildCameraCommandBuffers();
+    [[nodiscard]] bool rebuildCommandBuffers();
     [[nodiscard]] CameraPushConstants cameraPushConstants(float aspect) const noexcept;
 
     [[nodiscard]] bool createBuffer(
@@ -113,6 +129,12 @@ private:
     VkImageView depthView_ = VK_NULL_HANDLE;
     VkFormat depthFormat_ = VK_FORMAT_UNDEFINED;
 
+    // CPU-side data below is rebuildable render/pick state derived from RenderExtractor.
+    std::vector<ViewportVertex> sceneVertices_;
+    std::vector<std::uint32_t> sceneIndices_;
+    std::vector<ViewportVertex> selectionOverlayVertices_;
+    std::vector<PickTriangle> pickTriangles_;
+
     VkBuffer vertexBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory vertexMemory_ = VK_NULL_HANDLE;
     VkBuffer indexBuffer_ = VK_NULL_HANDLE;
@@ -123,12 +145,17 @@ private:
     VkDeviceMemory gridVertexMemory_ = VK_NULL_HANDLE;
     std::uint32_t gridVertexCount_ = 0U;
 
+    VkBuffer selectionVertexBuffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory selectionVertexMemory_ = VK_NULL_HANDLE;
+    std::uint32_t selectionVertexCount_ = 0U;
+    bool selectionVisible_ = false;
+
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
     VkPipeline gridPipeline_ = VK_NULL_HANDLE;
 
     ViewportCamera camera_{};
-    bool cameraDirty_ = false;
+    bool commandBuffersDirty_ = false;
 
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> commandBuffers_;
