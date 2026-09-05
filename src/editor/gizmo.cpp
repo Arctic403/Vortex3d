@@ -79,12 +79,9 @@ constexpr std::array<GizmoHandleDescriptor, 7> kScaleHandles{{
 }
 
 [[nodiscard]] constexpr Vec3 localBasisA(const GizmoAxis axis) noexcept {
-    switch (axis) {
-        case GizmoAxis::X: return {0.0F, 1.0F, 0.0F};
-        case GizmoAxis::Y: return {1.0F, 0.0F, 0.0F};
-        case GizmoAxis::Z: return {1.0F, 0.0F, 0.0F};
-    }
-    return {0.0F, 1.0F, 0.0F};
+    // X rotates in the YZ plane, while Y and Z can share +X as a stable in-plane
+    // phase reference. Expressing the shared case directly avoids duplicated switch branches.
+    return axis == GizmoAxis::X ? Vec3{0.0F, 1.0F, 0.0F} : Vec3{1.0F, 0.0F, 0.0F};
 }
 
 struct PlaneBasis final {
@@ -264,8 +261,6 @@ std::optional<RotationConstraintSample> sampleRotationConstraint(
     if (!std::isfinite(phase)) return std::nullopt;
     return RotationConstraintSample{phase};
 }
-
-
 
 float snapConstraintValue(const float value, const float step) noexcept {
     if (!std::isfinite(value)) {
