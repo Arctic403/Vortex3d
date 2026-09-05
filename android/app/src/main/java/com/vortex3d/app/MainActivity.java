@@ -66,7 +66,7 @@ public final class MainActivity extends Activity {
     private Button viewOrientationButton;
 
     private int transformTool = TOOL_MOVE;
-    private int transformOrientation = ORIENTATION_LOCAL;
+    private int transformOrientation = ORIENTATION_GLOBAL;
     private boolean gizmoDragging;
 
     private int gesturePointerCount;
@@ -291,7 +291,13 @@ public final class MainActivity extends Activity {
             return;
         }
         transformTool = tool;
+        if (tool == TOOL_SCALE) {
+            // The project stores strict TRS, so non-uniform Scale is object-local;
+            // World/View scale would imply shear that the document cannot preserve.
+            transformOrientation = ORIENTATION_LOCAL;
+        }
         refreshToolButtons();
+        refreshOrientationButtons();
         updateStatus();
     }
 
@@ -313,6 +319,9 @@ public final class MainActivity extends Activity {
             orientation != ORIENTATION_VIEW) {
             return;
         }
+        if (transformTool == TOOL_SCALE && orientation != ORIENTATION_LOCAL) {
+            return;
+        }
         cancelActiveTransformGesture();
         resetGestureState();
         if (rendererHandle != 0L &&
@@ -326,15 +335,19 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshOrientationButtons() {
+        boolean scaleIsLocalOnly = transformTool == TOOL_SCALE;
         if (globalOrientationButton != null) {
+            globalOrientationButton.setEnabled(!scaleIsLocalOnly);
             globalOrientationButton.setAlpha(
                 transformOrientation == ORIENTATION_GLOBAL ? 1.0f : 0.58f);
         }
         if (localOrientationButton != null) {
+            localOrientationButton.setEnabled(true);
             localOrientationButton.setAlpha(
                 transformOrientation == ORIENTATION_LOCAL ? 1.0f : 0.58f);
         }
         if (viewOrientationButton != null) {
+            viewOrientationButton.setEnabled(!scaleIsLocalOnly);
             viewOrientationButton.setAlpha(
                 transformOrientation == ORIENTATION_VIEW ? 1.0f : 0.58f);
         }
@@ -611,13 +624,13 @@ public final class MainActivity extends Activity {
 
     private String transformOrientationName() {
         switch (transformOrientation) {
-            case ORIENTATION_GLOBAL:
-                return "Global";
             case ORIENTATION_VIEW:
                 return "View";
             case ORIENTATION_LOCAL:
-            default:
                 return "Local";
+            case ORIENTATION_GLOBAL:
+            default:
+                return "Global";
         }
     }
 
@@ -641,7 +654,7 @@ public final class MainActivity extends Activity {
             ? "Renderer allocation failed"
             : nativeRendererInfo(rendererHandle);
         statusView.setText(
-            "Vortex3D DEV viewport v0.6\nEngine " + engineVersion() +
+            "Vortex3D DEV viewport v0.3.0\nEngine " + engineVersion() +
             "\nTool " + transformToolName() + " | " + transformOrientationName() +
             " | " + rendererInfo);
     }

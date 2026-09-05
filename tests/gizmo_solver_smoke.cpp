@@ -20,6 +20,11 @@ namespace {
 } // namespace
 
 int main() {
+    // Conventional object manipulation starts in world/global orientation. Hosts may switch
+    // to Local or View explicitly, but a default-constructed constraint must agree with UI and
+    // renderer defaults.
+    assert(vortex::GizmoConstraint{}.orientation == vortex::TransformOrientation::Global);
+
     const vortex::GizmoFrame identityFrame{};
     const vortex::GizmoCameraFrame camera{
         {0.0F, 0.0F, -1.0F},

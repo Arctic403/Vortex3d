@@ -74,7 +74,7 @@ enum class GizmoConstraintKind : std::uint8_t {
 struct GizmoConstraint final {
     TransformToolMode mode = TransformToolMode::Move;
     GizmoHandle handle = GizmoHandle::AxisX;
-    TransformOrientation orientation = TransformOrientation::Local;
+    TransformOrientation orientation = TransformOrientation::Global;
 };
 
 struct GizmoHandleDescriptor final {

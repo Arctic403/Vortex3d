@@ -57,7 +57,7 @@ Current handles are:
 
 Axis Move uses a true 3D ray/axis closest-point solve. Plane/center Move uses ray/plane intersection. Rotate uses signed ring-plane phase with full-turn continuity and quaternion composition. Axis/plane/uniform Scale uses signed geometric ratios. Invalid edge-on/parallel samples hold the previous valid preview; the system does not switch to a different hidden pixel/tangent solver.
 
-Local, Global and View orientation are represented in the host/renderer/solver contract and exposed by a dedicated Android orientation row. Local remains the default.
+Global, Local and View orientation are represented in the host/renderer/solver contract and exposed by a dedicated Android orientation row for Move and Rotate. Global is the default. Scale selects the object-local frame because the document stores strict TRS and cannot faithfully represent the shear implied by non-uniform World/View scaling of a rotated object. The active visual orientation is frozen at touch-down with the solver frame and released on commit or cancellation.
 
 ## Touch and lifecycle contract
 

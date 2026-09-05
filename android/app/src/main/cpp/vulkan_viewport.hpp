@@ -70,6 +70,8 @@ struct GizmoInteractionFeedback final {
     float rotationStartRingRadians = 0.0F;
     float rotationCurrentRingRadians = 0.0F;
     bool hasRotationReference = false;
+    bool hasFrozenOrientation = false;
+    vortex::Quaternion frozenOrientationWorld{};
 };
 
 class VulkanViewport final {
@@ -122,6 +124,8 @@ private:
 
     [[nodiscard]] std::optional<vortex::FaceId> pickFace(float xPixels, float yPixels) const noexcept;
     [[nodiscard]] std::vector<ViewportVertex> buildGizmoVertices() const;
+    [[nodiscard]] std::optional<vortex::Quaternion> visualGizmoRotation(
+        const vortex::Quaternion& worldRotation) const noexcept;
     [[nodiscard]] vortex::TransformMatrix gizmoWorldMatrix(
         const vortex::TransformMatrix& objectWorldMatrix,
         const vortex::Quaternion& worldRotation) const noexcept;
@@ -260,7 +264,7 @@ private:
     vortex::TransformMatrix selectionWorldMatrix_{};
     vortex::Quaternion selectionWorldRotation_{};
     GizmoMode gizmoMode_ = GizmoMode::Move;
-    TransformOrientation gizmoOrientation_ = TransformOrientation::Local;
+    TransformOrientation gizmoOrientation_ = TransformOrientation::Global;
     float displayDensity_ = 1.0F;
     GizmoInteractionFeedback gizmoInteractionFeedback_{};
     bool selectionOverlayDirty_ = false;

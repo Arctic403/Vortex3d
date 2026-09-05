@@ -61,3 +61,15 @@ This environment does not contain an Android SDK/NDK, so the modified Vulkan ada
 ## Scope freeze after this patch
 
 Do not expand dependency-graph/procedural/extension infrastructure for the next product slice unless a bug requires it. The next major milestone should be the usable modeling loop: Edit Mode -> topology selection -> Extrude/Inset -> transform selection -> Undo/Redo -> save/reopen.
+
+## Final audit corrections
+
+- Standardized the portable, Android host, renderer, and Java UI defaults on Global transform orientation.
+- Latched the renderer's visible gizmo orientation to the exact frozen constraint frame for each gesture; Local Rotate/Scale no longer reorient the manipulator from the changing preview transform.
+- Made transform-gesture startup transactional so a rejected renderer feedback state cannot leave the native host stuck in an active drag.
+- Prevented native tool changes during an active drag.
+- Added project-truth checks for the cross-layer Global default and a native default-contract regression assertion.
+- Removed the obsolete pre-v2 Android gizmo contract header and corrected the Android status label to the app's `0.3.0` version.
+- Made Scale explicitly object-local across the Android UI/native contract, avoiding misleading World/View handles for shear that the strict TRS document model cannot store.
+- Removed the unbuilt legacy `vulkan_rotation.cpp` drag solver; Gizmo System v2 uses the portable frozen-frame solver in `gizmo_tool.cpp`.
+- Extended the project-truth gate to catch source/test files that drift out of the portable or Android CMake build graphs.

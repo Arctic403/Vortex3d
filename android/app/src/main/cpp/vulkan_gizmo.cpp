@@ -661,7 +661,9 @@ bool VulkanViewport::setGizmoOrientation(const TransformOrientation orientation)
 
 bool VulkanViewport::setGizmoInteractionFeedback(
     const GizmoInteractionFeedback& feedback) noexcept {
-    if (feedback.active && feedback.mode != gizmoMode_) {
+    if (feedback.active &&
+        (feedback.mode != gizmoMode_ || !feedback.hasFrozenOrientation ||
+         !vortex::normalizedQuaternion(feedback.frozenOrientationWorld))) {
         return false;
     }
     if (!std::isfinite(feedback.rotationRadians) ||
@@ -676,6 +678,14 @@ bool VulkanViewport::setGizmoInteractionFeedback(
     }
     commandBuffersDirty_ = true;
     return true;
+}
+
+std::optional<vortex::Quaternion> VulkanViewport::visualGizmoRotation(
+    const vortex::Quaternion& worldRotation) const noexcept {
+    if (gizmoInteractionFeedback_.active && gizmoInteractionFeedback_.hasFrozenOrientation) {
+        return vortex::normalizedQuaternion(gizmoInteractionFeedback_.frozenOrientationWorld);
+    }
+    return resolvedGizmoRotation(gizmoOrientation_, worldRotation, gizmoCameraFrame());
 }
 
 std::vector<ViewportVertex> VulkanViewport::buildGizmoVertices() const {
@@ -748,8 +758,7 @@ std::vector<ViewportVertex> VulkanViewport::buildGizmoVertices() const {
                     handleColor(handle, mixedAxisColor(a, b)));
             }
             if (const auto camera = gizmoCameraFrame()) {
-                const auto frameRotation = resolvedGizmoRotation(
-                    gizmoOrientation_, selectionWorldRotation_, camera);
+                const auto frameRotation = visualGizmoRotation(selectionWorldRotation_);
                 const auto inverseFrame = frameRotation
                     ? vortex::conjugateQuaternion(*frameRotation)
                     : std::nullopt;
@@ -789,12 +798,12 @@ std::vector<ViewportVertex> VulkanViewport::buildGizmoVertices() const {
                 }
             }
 
-            // The view ring is generated in local gizmo coordinates from the live camera frame,
-            // so after the gizmo world transform it remains camera-facing while XYZ stay in the
-            // selected transform orientation.
+            // The view ring is generated in local gizmo coordinates from the live camera frame.
+            // During a drag, the gizmo's orientation comes from the same frozen frame used by
+            // the constraint solver, so Local rotation cannot make the visible rings chase the
+            // changing object preview.
             if (const auto camera = gizmoCameraFrame()) {
-                const auto frameRotation = resolvedGizmoRotation(
-                    gizmoOrientation_, selectionWorldRotation_, camera);
+                const auto frameRotation = visualGizmoRotation(selectionWorldRotation_);
                 const auto inverseWorld = frameRotation
                     ? vortex::conjugateQuaternion(*frameRotation)
                     : std::nullopt;
@@ -834,8 +843,7 @@ vortex::TransformMatrix VulkanViewport::gizmoWorldMatrix(
     const vortex::TransformMatrix& objectWorldMatrix,
     const vortex::Quaternion& worldRotation) const noexcept {
     const auto& source = objectWorldMatrix.values;
-    const auto frameRotation = resolvedGizmoRotation(
-        gizmoOrientation_, worldRotation, gizmoCameraFrame());
+    const auto frameRotation = visualGizmoRotation(worldRotation);
     const vortex::TransformMatrix rotationOnly = vortex::rotationTransformMatrix(
         frameRotation.value_or(worldRotation));
     const vortex::Vec3 xAxis{rotationOnly.values[0], rotationOnly.values[1], rotationOnly.values[2]};

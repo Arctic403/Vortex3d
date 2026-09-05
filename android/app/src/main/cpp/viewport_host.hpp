@@ -34,11 +34,29 @@ public:
     [[nodiscard]] bool tap(float xPixels, float yPixels) noexcept;
 
     [[nodiscard]] bool setTransformTool(const TransformToolMode mode) noexcept {
-        return renderer_.setGizmoInteractionFeedback({}) &&
-               renderer_.setGizmoMode(gizmoMode(mode));
+        if (transformDrag_.active || !renderer_.setGizmoInteractionFeedback({})) {
+            return false;
+        }
+        // Authored transforms are strict TRS. Non-uniform World/View scaling of a
+        // rotated object requires shear, so Scale uses the conventional object-local
+        // frame instead of displaying axes the document cannot faithfully store.
+        if (mode == TransformToolMode::Scale) {
+            if (!renderer_.setGizmoOrientation(TransformOrientation::Local)) {
+                return false;
+            }
+            transformOrientation_ = TransformOrientation::Local;
+        }
+        if (!renderer_.setGizmoMode(gizmoMode(mode))) {
+            return false;
+        }
+        transformToolMode_ = mode;
+        return true;
     }
     [[nodiscard]] bool setTransformOrientation(const TransformOrientation orientation) noexcept {
-        if (transformDrag_.active || !renderer_.setGizmoOrientation(orientation)) {
+        if (transformDrag_.active ||
+            (transformToolMode_ == TransformToolMode::Scale &&
+             orientation != TransformOrientation::Local) ||
+            !renderer_.setGizmoOrientation(orientation)) {
             return false;
         }
         transformOrientation_ = orientation;
@@ -100,7 +118,8 @@ private:
     std::vector<ViewportObjectSnapshot> viewportObjects_;
     VulkanViewport renderer_;
     TransformDragState transformDrag_{};
-    TransformOrientation transformOrientation_ = TransformOrientation::Local;
+    TransformToolMode transformToolMode_ = TransformToolMode::Move;
+    TransformOrientation transformOrientation_ = TransformOrientation::Global;
     bool initialized_ = false;
 };
 

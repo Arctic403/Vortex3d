@@ -129,6 +129,8 @@ World/View rotation composes in world space and is mapped back through the paren
 
 Signed ratios permit intentional reflection. A small host-side zero hysteresis filters finger noise around the singular zero point, while the mathematical representation itself supports negative scale.
 
+Axis and plane Scale use the object-local frame. The document stores strict translation/rotation/scale, so showing World/View non-uniform scale handles on a rotated object would promise shear that cannot be represented faithfully. The Android host selects Local when Scale is activated and disables the incompatible orientation buttons; uniform scale remains orientation-independent.
+
 ## Gizmo frame and orientation
 
 The local gizmo frame is derived from quaternion world orientation, not by independently normalizing affine matrix columns.
@@ -137,7 +139,9 @@ The local gizmo frame is derived from quaternion world orientation, not by indep
 - **Global:** identity/world basis.
 - **View:** camera basis converted to a quaternion.
 
-The Android test host exposes **Global / Local / View** as a dedicated orientation row, so all three frame modes can be exercised on-device.
+The Android test host exposes **Global / Local / View** as a dedicated orientation row for Move and Rotate. Scale uses Local for the representable object-space behavior described above.
+
+Global is the default orientation. Touch-down latches the visible orientation together with the mathematical frame. Move keeps the gizmo origin attached to the moving object while its axes stay fixed; Rotate and Scale keep both their pivot and axes stable for the gesture. The frame is released on commit or cancellation. This matches conventional modeling-tool behavior and prevents a Local rotation gizmo from chasing its own preview.
 
 ## Rendering and mobile picking
 

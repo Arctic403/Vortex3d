@@ -109,7 +109,9 @@ bool ViewportHost::beginTransformGesture(
     const TransformToolMode mode,
     const float xPixels,
     const float yPixels) {
-    if (!initialized_ || transformDrag_.active ||
+    if (!initialized_ || transformDrag_.active || mode != transformToolMode_ ||
+        (mode == TransformToolMode::Scale &&
+         transformOrientation_ != TransformOrientation::Local) ||
         !std::isfinite(xPixels) || !std::isfinite(yPixels)) {
         return false;
     }
@@ -225,8 +227,7 @@ bool ViewportHost::beginTransformGesture(
         }
     }
 
-    transformDrag_ = next;
-    return renderer_.setGizmoInteractionFeedback(GizmoInteractionFeedback{
+    const GizmoInteractionFeedback feedback{
         true,
         gizmoMode(mode),
         hit->handle,
@@ -234,7 +235,14 @@ bool ViewportHost::beginTransformGesture(
         next.rotationStartPhase,
         next.rotationStartPhase,
         next.hasRotationSample,
-    });
+        true,
+        next.frame.orientationWorld,
+    };
+    if (!renderer_.setGizmoInteractionFeedback(feedback)) {
+        return false;
+    }
+    transformDrag_ = next;
+    return true;
 }
 
 bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixels) {
@@ -409,6 +417,8 @@ bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixe
                 transformDrag_.rotationStartPhase,
                 nextRotationPhase,
                 true,
+                true,
+                transformDrag_.frame.orientationWorld,
             })) {
             return false;
         }
