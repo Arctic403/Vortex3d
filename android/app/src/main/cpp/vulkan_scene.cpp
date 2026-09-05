@@ -63,6 +63,10 @@ void addLine(
     return {value.x, value.y, value.z};
 }
 
+[[nodiscard]] vortex::Vec3 toVec3(const std::array<float, 3>& value) noexcept {
+    return {value[0], value[1], value[2]};
+}
+
 [[nodiscard]] bool transformedPoint(
     const vortex::TransformMatrix& matrix,
     const vortex::Vec3 local,
@@ -137,9 +141,8 @@ void addLine(
         }
     }
 
-    // The overlay stays in object-local space and is transformed by the same world matrix as
-    // the mesh. Later gizmo interaction can choose global/local orientation without changing
-    // authored ownership or the render-item contract.
+    // The transform gizmo remains object-local for Phase 6. All Move/Rotate/Scale previews
+    // update only this derived world matrix; authored state stays untouched until commit.
     constexpr std::array<float, 3> origin{0.0F, 0.0F, 0.0F};
     constexpr float marker = 0.10F;
     constexpr float axisLength = 1.35F;
@@ -156,15 +159,15 @@ void addLine(
 
 bool VulkanViewport::setViewportObjects(const std::vector<ViewportObjectSnapshot>& objects) {
     if (device_ != VK_NULL_HANDLE) {
-        return fail("Phase 6B render list must be supplied before Vulkan device creation");
+        return fail("Phase 6 render list must be supplied before Vulkan device creation");
     }
     if (objects.empty()) {
-        return fail("Phase 6B render list contains no visible objects");
+        return fail("Phase 6 render list contains no visible objects");
     }
 
     const vortex::RuntimeDocumentId sourceDocument = objects.front().mesh.sourceDocumentRuntimeId;
     if (!sourceDocument) {
-        return fail("Phase 6B render list is missing source document identity");
+        return fail("Phase 6 render list is missing source document identity");
     }
 
     constexpr std::size_t maxVertexCount =
@@ -176,11 +179,11 @@ bool VulkanViewport::setViewportObjects(const std::vector<ViewportObjectSnapshot
         if (!object.mesh.sourceMeshId ||
             object.mesh.sourceDocumentRuntimeId != sourceDocument ||
             !finiteMatrix(object.worldMatrix)) {
-            return fail("Phase 6B render list contains inconsistent source identity or world transform");
+            return fail("Phase 6 render list contains inconsistent source identity or world transform");
         }
         if (object.mesh.vertices.size() > maxVertexCount - totalVertices ||
             object.mesh.triangles.size() > (maxIndexCount - totalIndices) / 3U) {
-            return fail("Phase 6B render list exceeds 32-bit Vulkan index capacity");
+            return fail("Phase 6 render list exceeds 32-bit Vulkan index capacity");
         }
         totalVertices += object.mesh.vertices.size();
         totalIndices += object.mesh.triangles.size() * 3U;
@@ -207,14 +210,15 @@ bool VulkanViewport::setViewportObjects(const std::vector<ViewportObjectSnapshot
     for (const ViewportObjectSnapshot& object : objects) {
         if (!object.objectId || object.mesh.vertices.empty() || object.mesh.triangles.empty() ||
             !objectIds.insert(object.objectId.value()).second) {
-            return fail("Phase 6B render list contains an invalid or duplicate object");
+            return fail("Phase 6 render list contains an invalid or duplicate object");
         }
 
         const std::uint32_t baseVertex = static_cast<std::uint32_t>(sceneVertices_.size());
         const std::uint32_t firstIndex = static_cast<std::uint32_t>(sceneIndices_.size());
+        const std::uint32_t firstPickTriangle = static_cast<std::uint32_t>(pickTriangles_.size());
         for (const vortex::ViewportVertex& source : object.mesh.vertices) {
             if (!source.sourceVertex) {
-                return fail("Phase 6B snapshot contains a vertex without stable source identity");
+                return fail("Phase 6 snapshot contains a vertex without stable source identity");
             }
             sceneVertices_.push_back(viewportVertex(source));
         }
@@ -226,7 +230,7 @@ bool VulkanViewport::setViewportObjects(const std::vector<ViewportObjectSnapshot
                 triangle.b >= object.mesh.vertices.size() ||
                 triangle.c >= object.mesh.vertices.size() ||
                 !triangle.sourceFace) {
-                return fail("Phase 6B snapshot contains invalid triangle identity or indices");
+                return fail("Phase 6 snapshot contains invalid triangle identity or indices");
             }
 
             auto [iterator, inserted] = faceIds.try_emplace(triangle.sourceFace.value(), 0U);
@@ -243,23 +247,30 @@ bool VulkanViewport::setViewportObjects(const std::vector<ViewportObjectSnapshot
             sceneIndices_.push_back(baseVertex + triangle.b);
             sceneIndices_.push_back(baseVertex + triangle.c);
 
+            const std::array<float, 3> localA = toArray(object.mesh.vertices[triangle.a].position);
+            const std::array<float, 3> localB = toArray(object.mesh.vertices[triangle.b].position);
+            const std::array<float, 3> localC = toArray(object.mesh.vertices[triangle.c].position);
             std::array<float, 3> a{};
             std::array<float, 3> b{};
             std::array<float, 3> c{};
-            if (!transformedPoint(object.worldMatrix, object.mesh.vertices[triangle.a].position, a) ||
-                !transformedPoint(object.worldMatrix, object.mesh.vertices[triangle.b].position, b) ||
-                !transformedPoint(object.worldMatrix, object.mesh.vertices[triangle.c].position, c)) {
-                return fail("Phase 6B world transform produced non-finite picking geometry");
+            if (!transformedPoint(object.worldMatrix, toVec3(localA), a) ||
+                !transformedPoint(object.worldMatrix, toVec3(localB), b) ||
+                !transformedPoint(object.worldMatrix, toVec3(localC), c)) {
+                return fail("Phase 6 world transform produced non-finite picking geometry");
             }
-            pickTriangles_.push_back(PickTriangle{a, b, c, syntheticFace});
+            pickTriangles_.push_back(PickTriangle{localA, localB, localC, a, b, c, syntheticFace});
         }
 
         const std::uint32_t indexCount =
             static_cast<std::uint32_t>(sceneIndices_.size()) - firstIndex;
+        const std::uint32_t pickTriangleCount =
+            static_cast<std::uint32_t>(pickTriangles_.size()) - firstPickTriangle;
         sceneDrawRanges_.push_back(SceneDrawRange{
             object.objectId,
             firstIndex,
             indexCount,
+            firstPickTriangle,
+            pickTriangleCount,
             object.worldMatrix,
         });
 
@@ -267,7 +278,7 @@ bool VulkanViewport::setViewportObjects(const std::vector<ViewportObjectSnapshot
         overlay.objectId = object.objectId;
         overlay.worldMatrix = object.worldMatrix;
         if (!buildSelectionOverlay(object, overlay.vertices)) {
-            return fail("Phase 6B failed to build an object selection overlay");
+            return fail("Phase 6 failed to build an object selection overlay");
         }
         selectionOverlayCapacity_ = std::max(selectionOverlayCapacity_, overlay.vertices.size());
         selectionOverlays_.push_back(std::move(overlay));
@@ -275,7 +286,7 @@ bool VulkanViewport::setViewportObjects(const std::vector<ViewportObjectSnapshot
 
     if (sceneVertices_.empty() || sceneIndices_.empty() || sceneDrawRanges_.empty() ||
         pickTriangles_.empty() || pickMap_.empty() || selectionOverlays_.empty()) {
-        return fail("Phase 6B render list did not produce complete derived scene state");
+        return fail("Phase 6 render list did not produce complete derived scene state");
     }
 
     // Allocate enough host-visible overlay storage for whichever object becomes active.
@@ -319,6 +330,60 @@ bool VulkanViewport::setSelectedObject(const vortex::ObjectId objectId) noexcept
     }
     selectedObject_ = objectId;
     selectionOverlayDirty_ = true;
+    commandBuffersDirty_ = true;
+    return true;
+}
+
+bool VulkanViewport::updateObjectWorldMatrix(
+    const vortex::ObjectId objectId,
+    const vortex::TransformMatrix& worldMatrix) noexcept {
+    if (!objectId || !finiteMatrix(worldMatrix)) {
+        return false;
+    }
+
+    auto draw = std::find_if(
+        sceneDrawRanges_.begin(),
+        sceneDrawRanges_.end(),
+        [objectId](const SceneDrawRange& value) { return value.objectId == objectId; });
+    auto overlay = std::find_if(
+        selectionOverlays_.begin(),
+        selectionOverlays_.end(),
+        [objectId](const SelectionOverlay& value) { return value.objectId == objectId; });
+    if (draw == sceneDrawRanges_.end() || overlay == selectionOverlays_.end() ||
+        static_cast<std::size_t>(draw->firstPickTriangle) + draw->pickTriangleCount > pickTriangles_.size()) {
+        return false;
+    }
+
+    std::vector<std::array<float, 3>> transformed;
+    transformed.reserve(static_cast<std::size_t>(draw->pickTriangleCount) * 3U);
+    for (std::uint32_t offset = 0U; offset < draw->pickTriangleCount; ++offset) {
+        const PickTriangle& triangle = pickTriangles_[draw->firstPickTriangle + offset];
+        std::array<float, 3> a{};
+        std::array<float, 3> b{};
+        std::array<float, 3> c{};
+        if (!transformedPoint(worldMatrix, toVec3(triangle.localA), a) ||
+            !transformedPoint(worldMatrix, toVec3(triangle.localB), b) ||
+            !transformedPoint(worldMatrix, toVec3(triangle.localC), c)) {
+            return false;
+        }
+        transformed.push_back(a);
+        transformed.push_back(b);
+        transformed.push_back(c);
+    }
+
+    std::size_t transformedIndex = 0U;
+    for (std::uint32_t offset = 0U; offset < draw->pickTriangleCount; ++offset) {
+        PickTriangle& triangle = pickTriangles_[draw->firstPickTriangle + offset];
+        triangle.a = transformed[transformedIndex++];
+        triangle.b = transformed[transformedIndex++];
+        triangle.c = transformed[transformedIndex++];
+    }
+
+    draw->worldMatrix = worldMatrix;
+    overlay->worldMatrix = worldMatrix;
+    if (selectedObject_ == objectId) {
+        selectionWorldMatrix_ = worldMatrix;
+    }
     commandBuffersDirty_ = true;
     return true;
 }
