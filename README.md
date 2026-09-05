@@ -98,7 +98,7 @@ Current engine capabilities include:
 - split ARMv7/ARM64 debug APKs plus a universal APK,
 - ABI packaging verification in CI.
 
-Phase 6 is implemented. Phase 6A established authored transform state and persistence, Phase 6B connected engine-derived world matrices to the renderer, and Phase 6C adds interactive Move / Rotate / Scale with command-based commit and undo/redo. Final Android behavior remains subject to the normal on-device verification gate before the next feature phase is treated as device-verified.
+Phase 6 is complete, merged, CI-green, and verified on the 32-bit Android target. Phase 6A established authored transform state and persistence, Phase 6B connected engine-derived world matrices to the renderer, and Phase 6C delivered working Move / Rotate / Scale manipulation with command-based commit and undo/redo while preserving the established camera and selection behavior.
 
 ## Repository layout
 
