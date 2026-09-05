@@ -60,6 +60,9 @@ private:
         float worldUnitsPerTranslationUnit = 1.0F;
         float startX = 0.0F;
         float startY = 0.0F;
+        float previousX = 0.0F;
+        float previousY = 0.0F;
+        float accumulatedRotationRadians = 0.0F;
         float screenDirectionX = 0.0F;
         float screenDirectionY = 0.0F;
         float pixelsPerWorldUnit = 1.0F;
