@@ -17,10 +17,11 @@ The Android host runs the Vortex-owned Vulkan viewport inside a `SurfaceView`. T
 - coherent two-finger pan,
 - symmetric filtered pinch zoom,
 - nearest-hit CPU object picking with stable `ObjectId + FaceId` resolution,
-- active-object outline and XYZ transform gizmo,
+- active-object outline and Gizmo System v2 transform controls,
 - engine-owned object translation/rotation/scale,
 - engine-derived world transforms shared by rendering, picking, outline and gizmo placement,
-- touch-interactive Move / Rotate / Scale axis tools,
+- touch-interactive Move axes/planes/center, Rotate XYZ/view rings, and Scale axes/planes/uniform controls,
+- Global / Local / View transform-orientation controls in the Android test toolbar,
 - transient transform previews with one `SetObjectTransformCommand` committed per completed drag,
 - native Undo / Redo controls for committed transform edits,
 - safe cancellation when multitouch, lifecycle, tool changes, or `ACTION_CANCEL` interrupts a drag,
@@ -28,6 +29,8 @@ The Android host runs the Vortex-owned Vulkan viewport inside a `SurfaceView`. T
 - GPU/API/ABI diagnostics in the Android overlay.
 
 Authored object transforms stay in the portable engine. Vulkan receives only derived world matrices and local-space render geometry; it never becomes the source of truth for object placement. During a gizmo drag the preview remains transient host/renderer state. `ACTION_UP` commits exactly one command into `EditorHistory`, while cancellation restores the authored transform with no history entry.
+
+On the experimental `work/gizmo-visual-polish` branch, object rotation is quaternion-authoritative and gizmo constraints live in portable `include/vortex/editor/gizmo.hpp` / `src/editor/gizmo.cpp`. Vulkan is responsible for camera rays, picking and drawing only. See `docs/GIZMO_SYSTEM_V2.md`.
 
 All viewport JNI, touch routing, lifecycle callbacks, transform-tool calls and frame-loop callbacks currently execute on the Activity/UI-thread path. Do not move `SurfaceView` or Vulkan JNI work to background threads without first introducing an explicit synchronization/ownership design.
 
@@ -42,9 +45,11 @@ Gradle produces three debug APK variants: an ARMv7-only APK, an ARM64-only APK, 
 
 Use the `armeabi-v7a` APK for 32-bit Android targets. Use the `arm64-v8a` APK on 64-bit Android devices. The universal APK is useful for convenience/testing but is larger because it carries both native builds.
 
-## Phase 6 device gate
+## Gizmo System v2 ARMv7 device gate
 
-Before Phase 6 is called device-verified on the 32-bit target, test selection plus X/Y/Z Move, Rotate and Scale, then confirm Undo/Redo, drag cancellation via a second finger, normal orbit/pan/pinch, background/resume and surface recreation. Rendering, picking, outline and gizmo feedback should stay aligned throughout a preview and no Vulkan errors should appear.
+The historical Phase-6 axis gizmo baseline was device-verified. The current Gizmo System v2 branch must receive a fresh 32-bit device pass before its expanded interaction set is called verified. Exercise Move / Rotate / Scale in **Global, Local and View** orientation on: an unrotated object, a rotated object, a rotated child, a child under non-uniform parent scale, a negative-scale object, and a child under a negative-scale parent.
+
+For each applicable mode, test axis, plane, center/view-ring/uniform handles. Also hit camera-nearly-aligned constraints, rotations across the +/-pi phase seam and through multiple turns, scale crossing through zero into reflection, fast repeated drags, second-finger cancellation, orbit immediately after gizmo use, Undo/Redo, background/resume and surface recreation. Rendering, picking, outline and gizmo feedback must stay aligned throughout preview/commit and no Vulkan validation/runtime errors should appear.
 
 ## Host rules
 

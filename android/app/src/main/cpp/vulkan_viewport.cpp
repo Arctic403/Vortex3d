@@ -101,12 +101,8 @@ bool VulkanViewport::rebuildCommandBuffers() {
         return false;
     }
 
-    if (!commandBuffers_.empty()) {
-        vkFreeCommandBuffers(
-            device_, commandPool_, static_cast<std::uint32_t>(commandBuffers_.size()), commandBuffers_.data());
-        commandBuffers_.clear();
-    }
-
+    // Command buffers are allocated with the swapchain and reset/re-recorded in place.
+    // Avoid allocator churn during camera, selection and transform-preview input.
     if (!recordCommandBuffers()) {
         return false;
     }

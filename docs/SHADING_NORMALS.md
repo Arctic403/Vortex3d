@@ -159,7 +159,7 @@ No custom allocator or PMR conversion is introduced by this feature. Future allo
 
 `vortex_eval_bench` measures the derived normal stage independently from the existing core mesh benchmark. It builds a smooth manifold quad strip, creates an evaluated snapshot, and times `DerivedNormalsGenerator::generate()` directly.
 
-Normal CI runs a 1,000-corner smoke profile and archives JSON output beside the existing mesh benchmark artifact. Manual 10k / 100k / 1M requested profiles are available through the benchmark workflow, but the fixture face count is currently capped because authored `addFace()` still relies on linear edge lookup during setup. The output records `capped=true` when the requested scale cannot be represented economically by that correctness-first authoring path.
+Normal CI runs a 1,000-corner smoke profile and archives JSON output beside the existing mesh benchmark artifact. Manual 10k / 100k / 1M requested profiles now build the requested smooth-strip scale directly; authored shared-edge creation uses the maintained undirected-edge acceleration index rather than the former linear lookup setup path.
 
 The initial 64-bit CI Release smoke on 2026-09-04 measured 250 smooth quads / 1,000 corners at approximately 0.062 ms for the derived-normal stage and about 85.8 KB estimated retained evaluated bytes. Treat this as a regression baseline for that runner, not a cross-device performance guarantee.
 

@@ -59,6 +59,8 @@ add_library(vortex_android SHARED
     vulkan_device.cpp
     vulkan_geometry.cpp
     vulkan_gizmo.cpp
+    vulkan_gizmo_pipeline.cpp
+    vulkan_transform_interaction.cpp
     vulkan_scene.cpp
     vulkan_swapchain.cpp
     vulkan_viewport.cpp

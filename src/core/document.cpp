@@ -323,6 +323,41 @@ std::optional<TransformMatrix> Document::objectWorldMatrix(const ObjectId object
     return world;
 }
 
+std::optional<Quaternion> Document::objectWorldRotation(const ObjectId objectId) const {
+    const auto objectIt = objects_.find(objectId);
+    if (objectIt == objects_.end()) {
+        return std::nullopt;
+    }
+
+    std::vector<const ObjectBlock*> chain;
+    chain.reserve(8U);
+    const ObjectBlock* cursor = &objectIt->second;
+    while (cursor != nullptr) {
+        chain.push_back(cursor);
+        if (chain.size() > objects_.size()) {
+            return std::nullopt;
+        }
+        if (!cursor->parentId) {
+            break;
+        }
+        const auto parentIt = objects_.find(cursor->parentId);
+        if (parentIt == objects_.end()) {
+            return std::nullopt;
+        }
+        cursor = &parentIt->second;
+    }
+
+    Quaternion world{};
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        const auto composed = multiplyQuaternions(world, (*it)->transform.rotation);
+        if (!composed) {
+            return std::nullopt;
+        }
+        world = *composed;
+    }
+    return world;
+}
+
 MeshId Document::makeObjectMeshUnique(const ObjectId objectId) {
     const auto objectIt = objects_.find(objectId);
     if (objectIt == objects_.end() || !objectIt->second.meshId) {

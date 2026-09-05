@@ -1,131 +1,84 @@
 # Phase 6 — Object Transforms and Gizmo Interaction
 
-Phase 6 turns the Phase 5 selection/gizmo foundation into real object manipulation while keeping authored truth in the portable engine.
+Phase 6 established authored object transforms, renderer previews, command-based commit, undo/redo, and working axis Move/Rotate/Scale interaction. The merged baseline was device-verified on ARMv7.
 
-## Phase 6A — authored transform contract
+> **Experimental branch note (2026-09-05):** `work/gizmo-visual-polish` now contains Gizmo System v2, a post-Phase-6 architectural refactor. The current branch uses quaternion-authoritative `ObjectTransform`, project schema v3, portable geometric constraints, plane/center/view/uniform handles, and frozen drag sessions. See `docs/GIZMO_SYSTEM_V2.md`. The historical Phase-6 implementation description below is superseded on this branch.
 
-`ObjectBlock` owns a local-to-parent `ObjectTransform`:
+## Authored transform contract on this branch
+
+`ObjectBlock` owns a finite local-to-parent transform:
 
 ```text
-translation      = (0, 0, 0)
-rotationRadians  = (0, 0, 0)
-scale            = (1, 1, 1)
+translation = (0, 0, 0)
+rotation    = Quaternion::identity
+scale       = (1, 1, 1)
 ```
 
-Transforms are finite-only authored state. `Document::setObjectTransform()` is the mutation boundary: it rejects missing objects and non-finite values, treats an identical transform as a no-op, advances the object/document revision only for a real change, and emits the normal Object/Updated change event.
-
-The portable transform matrix convention is column-major with column vectors. Local matrices use:
+Local matrices are column-major with column vectors:
 
 ```text
-T * Rz * Ry * Rx * S
-```
-
-Parenting composes as:
-
-```text
+local = T * R(quaternion) * S
 world = parentWorld * local
 ```
 
-`Document::objectWorldMatrix()` resolves the complete parent chain and refuses malformed/missing ancestry rather than inventing a world transform.
+`Document::objectWorldRotation()` separately composes the quaternion hierarchy so gizmo orientation is not polluted by non-uniform parent scale.
 
-## Undo/redo and project persistence
+`Document::setObjectTransform()` remains the authored mutation boundary. Preview movement is host/renderer state only; a successful drag commits exactly one `SetObjectTransformCommand` through `EditorHistory`.
 
-`SetObjectTransformCommand` records a compact `SetObjectTransformDelta { before, after }`. It uses the existing `EditorHistory` chronological timeline, so object transforms interleave correctly with mesh edits and other document commands. There is no viewport-owned authored transform history.
+## Project persistence
 
-A no-op transform command produces no history record. Undo/redo re-enters the normal `Document::setObjectTransform()` mutation path, preserving revision/change-journal behavior.
+Project schema v3 stores translation, quaternion rotation and scale. The reader supports:
 
-Project schema v2 stores translation, rotation and scale on every serialized object. The reader explicitly supports schema v1 and v2. A schema-v1 object receives the identity transform; non-finite schema-v2 transform data is rejected even with a valid checksum.
+- v1 -> identity object transform;
+- v2 -> legacy XYZ Euler radians converted once to quaternion;
+- v3 -> native quaternion transform.
 
-Portable validation covers identity defaults, no-op revisions, non-finite rejection, parent/child world composition, command apply/undo/redo, chronological mixed-history ordering, v2 round trips, hostile transform data and v1 migration.
+Invalid/non-finite transforms are rejected.
 
-## Phase 6B — transform-aware renderer boundary
+## Renderer boundary
 
-The Android bootstrap scene no longer bakes object placement into authored mesh vertices. Meshes remain centered in object-local space. `ViewportHost` resolves persistent object placement through `Document::objectWorldMatrix()` and sends the renderer:
+Meshes remain object-local. The renderer receives stable object identity, extracted local geometry, an engine-derived world matrix and a rotation-only world quaternion. Rendering, picking, selection outline and gizmo placement therefore share the same preview transform without making Vulkan the authored source of truth.
 
-```text
-ObjectId
-ViewportMesh in object-local space
-engine-derived world TransformMatrix
-```
+## Gizmo System v2 interaction
 
-The Vulkan backend keeps per-object draw ranges over shared local vertex/index storage. Command recording pushes `cameraViewProjection * objectWorld` for every object draw.
-
-CPU picking, the active-object outline and the XYZ gizmo use the same derived world transform. Renderer-local synthetic face IDs exist only to disambiguate batched picking and are mapped back to stable engine `ObjectId + FaceId` before editor state changes.
-
-This means authored topology never needs to be rewritten merely because an object moves, rotates or scales.
-
-## Phase 6C — interactive Move / Rotate / Scale
-
-The XYZ gizmo is now touch-interactive. A touch beginning close to one of the selected object's projected axes locks that axis before the normal one-finger orbit recognizer starts.
-
-The interaction flow is:
+The Android host converts touches to world rays. A data-driven handle selects a portable constraint:
 
 ```text
-ACTION_DOWN on gizmo axis
-        |
-        v
-screen-space axis hit + drag scale
-        |
-        v
-transient ObjectTransform preview
-        |
-        v
-engine-derived preview world matrix
-        |
-        v
-render + CPU picking + outline + gizmo update
-        |
-ACTION_UP
-        |
-        v
-one SetObjectTransformCommand
-        |
-        v
-EditorHistory
+touch -> handle -> frozen DragSession -> portable constraint sample
+      -> typed TransformDelta -> transform composer -> renderer preview
+      -> ACTION_UP -> one SetObjectTransformCommand
 ```
 
-Move is constrained to the chosen object's local X/Y/Z axis. Rotate changes the corresponding local Euler component. Scale changes the corresponding local scale component and clamps the magnitude away from a singular zero scale.
+Current handles are:
 
-Critically, `ACTION_MOVE` does **not** write the preview into `Document`. The drag owns transient tool state only. A successful `ACTION_UP` commits exactly one `SetObjectTransformCommand`; cancellation restores the original renderer-derived world transform and adds no history record.
+- Move: X/Y/Z axes, XY/XZ/YZ planes, center/view-plane move;
+- Rotate: X/Y/Z rings plus an outer camera-facing view ring;
+- Scale: X/Y/Z axes, XY/XZ/YZ planes, camera-facing uniform scale.
 
-Cancellation occurs on:
+Axis Move uses a true 3D ray/axis closest-point solve. Plane/center Move uses ray/plane intersection. Rotate uses signed ring-plane phase with full-turn continuity and quaternion composition. Axis/plane/uniform Scale uses signed geometric ratios. Invalid edge-on/parallel samples hold the previous valid preview; the system does not switch to a different hidden pixel/tangent solver.
 
-- `ACTION_CANCEL`;
-- a second finger entering the gesture;
-- tool changes;
-- Activity pause/destroy;
-- surface destruction;
-- Undo/Redo while a preview is active.
+Global, Local and View orientation are represented in the host/renderer/solver contract and exposed by a dedicated Android orientation row for Move and Rotate. Global is the default. Scale selects the object-local frame because the document stores strict TRS and cannot faithfully represent the shear implied by non-uniform World/View scaling of a rotated object. The active visual orientation is frozen at touch-down with the solver frame and released on commit or cancellation.
 
-The existing camera contract remains intact when the gesture does not start on a gizmo axis:
+## Touch and lifecycle contract
 
-- one finger: orbit after touch slop;
-- two coherent fingers: pan;
-- symmetric pinch: zoom;
-- short one-finger tap: object selection.
+A successful gizmo hit takes precedence over one-finger orbit. A second finger cancels the active transform before entering camera multitouch. `ACTION_CANCEL`, tool changes, Activity pause/destroy, surface destruction, Undo and Redo also cancel transient preview state safely.
 
-The Android toolbar exposes Move, Rotate, Scale, Undo and Redo. JNI calls remain on the Android UI thread.
+Density-aware invisible pick regions are larger than visible geometry. Dense overlaps are scored by screen distance, descriptor priority and geometric conditioning.
 
-## Phase 6 exit gate
+## Validation / device gate
 
-Automated acceptance requires:
+Before merging Gizmo System v2 back to `main`, validate on the 32-bit target:
 
-- portable transform/history/project tests green;
-- warnings-as-errors GCC and Clang builds green;
-- sanitizer and clang-tidy jobs green;
-- ARMv7 and ARM64 NDK builds green;
-- split and universal APK packaging green.
+- all Move axes, planes and center handle;
+- all Rotate axis rings and the outer view ring at straight-on and edge-on camera angles;
+- all Scale axes, planes and uniform ring, including deliberate negative scale crossing;
+- mixed-axis repeated quaternion rotation without Euler trapping;
+- parent rotation + non-uniform scale;
+- selection/picking/outline staying aligned during previews;
+- one undo step per completed drag;
+- cancellation by second finger/lifecycle/tool change;
+- orbit/pan/pinch/tap behavior outside gizmos;
+- background/resume and surface recreation;
+- no Vulkan validation/runtime errors.
 
-On-device acceptance for the 32-bit target is:
-
-- select either cube and drag X, Y and Z in Move mode;
-- switch to Rotate and rotate on each usable projected axis;
-- switch to Scale and scale on each usable projected axis;
-- the mesh, pick target, outline and gizmo remain aligned during previews;
-- completed drags create one Undo step each;
-- Undo and Redo restore the complete transform accurately;
-- adding a second finger during a gizmo drag cancels the preview and enters camera multitouch cleanly;
-- background/surface recreation leaves authored state and selection behavior stable;
-- no Vulkan errors occur.
-
-Phase 6 is considered implementation-complete when this code and CI gate are merged. It is marked device-verified only after the Android acceptance pass is performed on the target phone.
+Host tests, portable policy checks and both Android ABI CI builds remain required. Local environments without the Android NDK can validate portable code and syntax only; device/NDK CI is authoritative for the Android binary.

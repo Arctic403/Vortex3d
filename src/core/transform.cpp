@@ -1,10 +1,13 @@
 #include "vortex/core/transform.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 
 namespace vortex {
 namespace {
+
+constexpr float kQuaternionEpsilon = 1.0e-12F;
 
 [[nodiscard]] bool finiteVec3(const Vec3 value) noexcept {
     return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
@@ -27,44 +30,252 @@ namespace {
     return result;
 }
 
-[[nodiscard]] TransformMatrix rotationX(const float radians) noexcept {
-    TransformMatrix result = identityTransformMatrix();
-    const float c = std::cos(radians);
-    const float s = std::sin(radians);
-    result.values[5] = c;
-    result.values[6] = s;
-    result.values[9] = -s;
-    result.values[10] = c;
-    return result;
+[[nodiscard]] bool finiteQuaternion(const Quaternion value) noexcept {
+    return std::isfinite(value.x) && std::isfinite(value.y) &&
+           std::isfinite(value.z) && std::isfinite(value.w);
 }
 
-[[nodiscard]] TransformMatrix rotationY(const float radians) noexcept {
-    TransformMatrix result = identityTransformMatrix();
-    const float c = std::cos(radians);
-    const float s = std::sin(radians);
-    result.values[0] = c;
-    result.values[2] = -s;
-    result.values[8] = s;
-    result.values[10] = c;
-    return result;
+[[nodiscard]] Quaternion multiplyQuaternionRaw(
+    const Quaternion a,
+    const Quaternion b) noexcept {
+    return {
+        a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+        a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+        a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+        a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+    };
 }
 
-[[nodiscard]] TransformMatrix rotationZ(const float radians) noexcept {
-    TransformMatrix result = identityTransformMatrix();
-    const float c = std::cos(radians);
-    const float s = std::sin(radians);
-    result.values[0] = c;
-    result.values[1] = s;
-    result.values[4] = -s;
-    result.values[5] = c;
-    return result;
+[[nodiscard]] float nearestEquivalentAngle(
+    const float angle,
+    const float reference) noexcept {
+    constexpr float kTwoPi = 6.2831853071795864769F;
+    return reference + std::remainder(angle - reference, kTwoPi);
+}
+
+[[nodiscard]] float eulerDistanceSquared(const Vec3 a, const Vec3 b) noexcept {
+    const float dx = a.x - b.x;
+    const float dy = a.y - b.y;
+    const float dz = a.z - b.z;
+    return dx * dx + dy * dy + dz * dz;
 }
 
 } // namespace
 
+bool isFiniteQuaternion(const Quaternion& quaternion) noexcept {
+    return finiteQuaternion(quaternion);
+}
+
+std::optional<Quaternion> normalizedQuaternion(const Quaternion& value) noexcept {
+    if (!finiteQuaternion(value)) {
+        return std::nullopt;
+    }
+    const float lengthSquared =
+        value.x * value.x + value.y * value.y + value.z * value.z + value.w * value.w;
+    if (!std::isfinite(lengthSquared) || lengthSquared <= kQuaternionEpsilon) {
+        return std::nullopt;
+    }
+    const float inverseLength = 1.0F / std::sqrt(lengthSquared);
+    return Quaternion{
+        value.x * inverseLength,
+        value.y * inverseLength,
+        value.z * inverseLength,
+        value.w * inverseLength,
+    };
+}
+
+std::optional<Quaternion> quaternionFromEulerRadians(const Vec3 eulerRadians) noexcept {
+    if (!finiteVec3(eulerRadians)) {
+        return std::nullopt;
+    }
+
+    const float halfX = eulerRadians.x * 0.5F;
+    const float halfY = eulerRadians.y * 0.5F;
+    const float halfZ = eulerRadians.z * 0.5F;
+    const Quaternion qx{std::sin(halfX), 0.0F, 0.0F, std::cos(halfX)};
+    const Quaternion qy{0.0F, std::sin(halfY), 0.0F, std::cos(halfY)};
+    const Quaternion qz{0.0F, 0.0F, std::sin(halfZ), std::cos(halfZ)};
+
+    return normalizedQuaternion(multiplyQuaternionRaw(qz, multiplyQuaternionRaw(qy, qx)));
+}
+
+std::optional<Quaternion> quaternionFromAxisAngle(
+    const Vec3 axis,
+    const float radians) noexcept {
+    if (!finiteVec3(axis) || !std::isfinite(radians)) {
+        return std::nullopt;
+    }
+
+    const float axisLengthSquared = axis.x * axis.x + axis.y * axis.y + axis.z * axis.z;
+    if (!std::isfinite(axisLengthSquared) || axisLengthSquared <= kQuaternionEpsilon) {
+        return std::nullopt;
+    }
+
+    const float inverseAxisLength = 1.0F / std::sqrt(axisLengthSquared);
+    const float halfAngle = radians * 0.5F;
+    const float sine = std::sin(halfAngle);
+    return normalizedQuaternion({
+        axis.x * inverseAxisLength * sine,
+        axis.y * inverseAxisLength * sine,
+        axis.z * inverseAxisLength * sine,
+        std::cos(halfAngle),
+    });
+}
+
+std::optional<Quaternion> quaternionFromBasis(
+    const Vec3 xAxis,
+    const Vec3 yAxis,
+    const Vec3 zAxis) noexcept {
+    if (!finiteVec3(xAxis) || !finiteVec3(yAxis) || !finiteVec3(zAxis)) {
+        return std::nullopt;
+    }
+    const auto nx = [&]() -> std::optional<Vec3> {
+        const float l2 = xAxis.x*xAxis.x + xAxis.y*xAxis.y + xAxis.z*xAxis.z;
+        if (!std::isfinite(l2) || l2 <= kQuaternionEpsilon) return std::nullopt;
+        const float inv = 1.0F / std::sqrt(l2);
+        return Vec3{xAxis.x*inv, xAxis.y*inv, xAxis.z*inv};
+    }();
+    if (!nx) return std::nullopt;
+    const float yDotX = yAxis.x*nx->x + yAxis.y*nx->y + yAxis.z*nx->z;
+    Vec3 yOrtho{yAxis.x-yDotX*nx->x, yAxis.y-yDotX*nx->y, yAxis.z-yDotX*nx->z};
+    const float yl2 = yOrtho.x*yOrtho.x + yOrtho.y*yOrtho.y + yOrtho.z*yOrtho.z;
+    if (!std::isfinite(yl2) || yl2 <= kQuaternionEpsilon) return std::nullopt;
+    const float yInv = 1.0F / std::sqrt(yl2);
+    yOrtho = {yOrtho.x*yInv, yOrtho.y*yInv, yOrtho.z*yInv};
+    Vec3 zOrtho{
+        nx->y*yOrtho.z - nx->z*yOrtho.y,
+        nx->z*yOrtho.x - nx->x*yOrtho.z,
+        nx->x*yOrtho.y - nx->y*yOrtho.x,
+    };
+    const float handed = zOrtho.x*zAxis.x + zOrtho.y*zAxis.y + zOrtho.z*zAxis.z;
+    if (!std::isfinite(handed) || handed < 0.0F) {
+        zOrtho = {-zOrtho.x, -zOrtho.y, -zOrtho.z};
+        yOrtho = {-yOrtho.x, -yOrtho.y, -yOrtho.z};
+    }
+
+    // Column-major rotation matrix with the supplied world-space basis columns.
+    const float m00 = nx->x,      m01 = yOrtho.x, m02 = zOrtho.x;
+    const float m10 = nx->y,      m11 = yOrtho.y, m12 = zOrtho.y;
+    const float m20 = nx->z,      m21 = yOrtho.z, m22 = zOrtho.z;
+    const float trace = m00 + m11 + m22;
+    Quaternion q{};
+    if (trace > 0.0F) {
+        const float s4 = std::sqrt(trace + 1.0F) * 2.0F;
+        q.w = 0.25F * s4;
+        q.x = (m21 - m12) / s4;
+        q.y = (m02 - m20) / s4;
+        q.z = (m10 - m01) / s4;
+    } else if (m00 > m11 && m00 > m22) {
+        const float s4 = std::sqrt(1.0F + m00 - m11 - m22) * 2.0F;
+        q.w = (m21 - m12) / s4;
+        q.x = 0.25F * s4;
+        q.y = (m01 + m10) / s4;
+        q.z = (m02 + m20) / s4;
+    } else if (m11 > m22) {
+        const float s4 = std::sqrt(1.0F + m11 - m00 - m22) * 2.0F;
+        q.w = (m02 - m20) / s4;
+        q.x = (m01 + m10) / s4;
+        q.y = 0.25F * s4;
+        q.z = (m12 + m21) / s4;
+    } else {
+        const float s4 = std::sqrt(1.0F + m22 - m00 - m11) * 2.0F;
+        q.w = (m10 - m01) / s4;
+        q.x = (m02 + m20) / s4;
+        q.y = (m12 + m21) / s4;
+        q.z = 0.25F * s4;
+    }
+    return normalizedQuaternion(q);
+}
+
+std::optional<Quaternion> multiplyQuaternions(
+    const Quaternion& a,
+    const Quaternion& b) noexcept {
+    const auto normalizedA = normalizedQuaternion(a);
+    const auto normalizedB = normalizedQuaternion(b);
+    if (!normalizedA || !normalizedB) {
+        return std::nullopt;
+    }
+    return normalizedQuaternion(multiplyQuaternionRaw(*normalizedA, *normalizedB));
+}
+
+std::optional<Quaternion> conjugateQuaternion(const Quaternion& quaternion) noexcept {
+    const auto normalized = normalizedQuaternion(quaternion);
+    if (!normalized) {
+        return std::nullopt;
+    }
+    return Quaternion{-normalized->x, -normalized->y, -normalized->z, normalized->w};
+}
+
+std::optional<Vec3> rotateVectorByQuaternion(
+    const Quaternion& quaternion,
+    const Vec3 vector) noexcept {
+    const auto q = normalizedQuaternion(quaternion);
+    if (!q || !finiteVec3(vector)) {
+        return std::nullopt;
+    }
+
+    // Optimized q * [v,0] * conjugate(q).
+    const Vec3 u{q->x, q->y, q->z};
+    const float dotUV = u.x * vector.x + u.y * vector.y + u.z * vector.z;
+    const float dotUU = u.x * u.x + u.y * u.y + u.z * u.z;
+    const Vec3 crossUV{
+        u.y * vector.z - u.z * vector.y,
+        u.z * vector.x - u.x * vector.z,
+        u.x * vector.y - u.y * vector.x,
+    };
+    return Vec3{
+        2.0F * dotUV * u.x + (q->w * q->w - dotUU) * vector.x + 2.0F * q->w * crossUV.x,
+        2.0F * dotUV * u.y + (q->w * q->w - dotUU) * vector.y + 2.0F * q->w * crossUV.y,
+        2.0F * dotUV * u.z + (q->w * q->w - dotUU) * vector.z + 2.0F * q->w * crossUV.z,
+    };
+}
+
+std::optional<Vec3> eulerRadiansFromQuaternionNearest(
+    const Quaternion& quaternion,
+    const Vec3 referenceEulerRadians) noexcept {
+    const auto normalized = normalizedQuaternion(quaternion);
+    if (!normalized || !finiteVec3(referenceEulerRadians)) {
+        return std::nullopt;
+    }
+
+    const Quaternion q = *normalized;
+    const float sinRollCosPitch = 2.0F * (q.w * q.x + q.y * q.z);
+    const float cosRollCosPitch = 1.0F - 2.0F * (q.x * q.x + q.y * q.y);
+    const float sinPitch = std::clamp(2.0F * (q.w * q.y - q.z * q.x), -1.0F, 1.0F);
+    const float sinYawCosPitch = 2.0F * (q.w * q.z + q.x * q.y);
+    const float cosYawCosPitch = 1.0F - 2.0F * (q.y * q.y + q.z * q.z);
+
+    const Vec3 principal{
+        std::atan2(sinRollCosPitch, cosRollCosPitch),
+        std::asin(sinPitch),
+        std::atan2(sinYawCosPitch, cosYawCosPitch),
+    };
+
+    Vec3 primary{
+        nearestEquivalentAngle(principal.x, referenceEulerRadians.x),
+        nearestEquivalentAngle(principal.y, referenceEulerRadians.y),
+        nearestEquivalentAngle(principal.z, referenceEulerRadians.z),
+    };
+
+    constexpr float kPi = 3.14159265358979323846F;
+    const float alternatePitch = principal.y >= 0.0F ? kPi - principal.y : -kPi - principal.y;
+    Vec3 alternate{
+        nearestEquivalentAngle(principal.x + kPi, referenceEulerRadians.x),
+        nearestEquivalentAngle(alternatePitch, referenceEulerRadians.y),
+        nearestEquivalentAngle(principal.z + kPi, referenceEulerRadians.z),
+    };
+
+    const Vec3 result =
+        eulerDistanceSquared(primary, referenceEulerRadians) <=
+                eulerDistanceSquared(alternate, referenceEulerRadians)
+            ? primary
+            : alternate;
+    return finiteVec3(result) ? std::optional<Vec3>{result} : std::nullopt;
+}
+
 bool isFiniteObjectTransform(const ObjectTransform& transform) noexcept {
     return finiteVec3(transform.translation) &&
-           finiteVec3(transform.rotationRadians) &&
+           normalizedQuaternion(transform.rotation).has_value() &&
            finiteVec3(transform.scale);
 }
 
@@ -74,6 +285,39 @@ TransformMatrix identityTransformMatrix() noexcept {
     result.values[5] = 1.0F;
     result.values[10] = 1.0F;
     result.values[15] = 1.0F;
+    return result;
+}
+
+TransformMatrix rotationTransformMatrix(const Quaternion& rotation) noexcept {
+    const auto normalized = normalizedQuaternion(rotation);
+    if (!normalized) {
+        return identityTransformMatrix();
+    }
+
+    const float x = normalized->x;
+    const float y = normalized->y;
+    const float z = normalized->z;
+    const float w = normalized->w;
+    const float xx = x * x;
+    const float yy = y * y;
+    const float zz = z * z;
+    const float xy = x * y;
+    const float xz = x * z;
+    const float yz = y * z;
+    const float wx = w * x;
+    const float wy = w * y;
+    const float wz = w * z;
+
+    TransformMatrix result = identityTransformMatrix();
+    result.values[0] = 1.0F - 2.0F * (yy + zz);
+    result.values[1] = 2.0F * (xy + wz);
+    result.values[2] = 2.0F * (xz - wy);
+    result.values[4] = 2.0F * (xy - wz);
+    result.values[5] = 1.0F - 2.0F * (xx + zz);
+    result.values[6] = 2.0F * (yz + wx);
+    result.values[8] = 2.0F * (xz + wy);
+    result.values[9] = 2.0F * (yz - wx);
+    result.values[10] = 1.0F - 2.0F * (xx + yy);
     return result;
 }
 
@@ -94,14 +338,9 @@ TransformMatrix multiplyTransformMatrices(
 }
 
 TransformMatrix objectTransformMatrix(const ObjectTransform& transform) noexcept {
-    const TransformMatrix rotation = multiplyTransformMatrices(
-        rotationZ(transform.rotationRadians.z),
-        multiplyTransformMatrices(
-            rotationY(transform.rotationRadians.y),
-            rotationX(transform.rotationRadians.x)));
     return multiplyTransformMatrices(
         translationMatrix(transform.translation),
-        multiplyTransformMatrices(rotation, scaleMatrix(transform.scale)));
+        multiplyTransformMatrices(rotationTransformMatrix(transform.rotation), scaleMatrix(transform.scale)));
 }
 
 Vec3 transformPoint(const TransformMatrix& matrix, const Vec3 point) noexcept {

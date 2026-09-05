@@ -43,7 +43,8 @@ bool ViewportHost::appendObjectSnapshot(const ObjectId objectId, const MeshId me
     }
 
     const auto worldMatrix = document_.objectWorldMatrix(objectId);
-    if (!worldMatrix) {
+    const auto worldRotation = document_.objectWorldRotation(objectId);
+    if (!worldMatrix || !worldRotation) {
         return false;
     }
 
@@ -62,6 +63,7 @@ bool ViewportHost::appendObjectSnapshot(const ObjectId objectId, const MeshId me
         objectId,
         std::move(*extracted.mesh),
         *worldMatrix,
+        *worldRotation,
     });
     return true;
 }

@@ -82,6 +82,7 @@ enum class MeshValidationCode : std::uint8_t {
     ElementIdentityMismatch,
     InvalidAllocatorState,
     DuplicateEdge,
+    EdgeLookupMismatch,
 };
 
 struct MeshValidationIssue final {
@@ -153,6 +154,21 @@ public:
 
 
 private:
+    struct EdgeLookupKey final {
+        VertexId low;
+        VertexId high;
+
+        [[nodiscard]] bool operator==(const EdgeLookupKey&) const noexcept = default;
+    };
+
+    struct EdgeLookupKeyHash final {
+        [[nodiscard]] std::size_t operator()(const EdgeLookupKey& key) const noexcept {
+            const std::size_t first = IdHash<VertexId>{}(key.low);
+            const std::size_t second = IdHash<VertexId>{}(key.high);
+            return first ^ (second + std::size_t{0x9e3779b9U} + (first << 6U) + (first >> 2U));
+        }
+    };
+
     friend class ExtrudeFaceCommand;
     friend class MeshHistory;
     #ifdef VORTEX_ENABLE_TEST_HOOKS
@@ -162,12 +178,14 @@ private:
     template <typename IdType>
     [[nodiscard]] IdType allocateId() noexcept { return IdType{nextElementId_++}; }
 
+    [[nodiscard]] static EdgeLookupKey edgeLookupKey(VertexId vertexA, VertexId vertexB) noexcept;
     [[nodiscard]] EdgeId findEdge(VertexId vertexA, VertexId vertexB) const noexcept;
     [[nodiscard]] std::vector<CornerId> faceCorners(FaceId faceId) const;
     void attachCornerToRadialCycle(EdgeId edgeId, CornerId cornerId);
     void rebuildRadialCycle(EdgeId edgeId);
     void rebuildVertexIndex();
     void rebuildEdgeIndex();
+    void rebuildEdgeLookup();
     void rebuildFaceIndex();
     void rebuildCornerIndex();
 
@@ -183,6 +201,7 @@ private:
     std::unordered_map<EdgeId, std::size_t, IdHash<EdgeId>> edgeIndex_;
     std::unordered_map<FaceId, std::size_t, IdHash<FaceId>> faceIndex_;
     std::unordered_map<CornerId, std::size_t, IdHash<CornerId>> cornerIndex_;
+    std::unordered_map<EdgeLookupKey, EdgeId, EdgeLookupKeyHash> edgeLookup_;
 
     std::unordered_map<VertexId, MeshVertex, IdHash<VertexId>> vertices_;
     std::unordered_map<EdgeId, MeshEdge, IdHash<EdgeId>> edges_;

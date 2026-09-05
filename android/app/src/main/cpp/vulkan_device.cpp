@@ -177,6 +177,7 @@ bool VulkanViewport::verifyPresentSupport() {
 bool VulkanViewport::createCommandPool() {
     VkCommandPoolCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    createInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     createInfo.queueFamilyIndex = graphicsQueueFamily_;
     const VkResult result = vkCreateCommandPool(device_, &createInfo, nullptr, &commandPool_);
     return result == VK_SUCCESS || failVk("vkCreateCommandPool", result);

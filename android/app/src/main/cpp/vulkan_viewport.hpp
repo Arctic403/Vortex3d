@@ -1,5 +1,7 @@
 #pragma once
 
+#include "vortex/editor/gizmo.hpp"
+
 #include "vortex/core/transform.hpp"
 #include "vortex/viewport/render_extract.hpp"
 
@@ -44,6 +46,7 @@ struct ViewportObjectSnapshot final {
     vortex::ObjectId objectId;
     vortex::ViewportMesh mesh;
     vortex::TransformMatrix worldMatrix;
+    vortex::Quaternion worldRotation{};
 };
 
 struct ViewportPick final {
@@ -51,20 +54,24 @@ struct ViewportPick final {
     vortex::FaceId sourceFace;
 };
 
-enum class GizmoAxis : std::uint8_t {
-    X = 0U,
-    Y = 1U,
-    Z = 2U,
+// Hit testing identifies the interaction surface only. Transform distance/angle/ratio is
+// solved geometrically from pointer rays after the gesture begins, so hit metadata cannot
+// silently become a second transform-input model.
+struct GizmoHit final {
+    GizmoHandle handle = GizmoHandle::AxisX;
+    float score = 0.0F;
 };
 
-// Screen-space metadata captured when a touch hits one of the visible XYZ gizmo axes.
-// pixelsPerWorldUnit is measured at the selected object's depth and gives the editor host
-// a stable drag scale without giving Vulkan ownership of authored transforms.
-struct GizmoHit final {
-    GizmoAxis axis = GizmoAxis::X;
-    float screenDirectionX = 0.0F;
-    float screenDirectionY = 0.0F;
-    float pixelsPerWorldUnit = 0.0F;
+struct GizmoInteractionFeedback final {
+    bool active = false;
+    GizmoMode mode = GizmoMode::Move;
+    GizmoHandle handle = GizmoHandle::AxisX;
+    float rotationRadians = 0.0F;
+    float rotationStartRingRadians = 0.0F;
+    float rotationCurrentRingRadians = 0.0F;
+    bool hasRotationReference = false;
+    bool hasFrozenOrientation = false;
+    vortex::Quaternion frozenOrientationWorld{};
 };
 
 class VulkanViewport final {
@@ -78,13 +85,24 @@ public:
     [[nodiscard]] bool setViewportObjects(const std::vector<ViewportObjectSnapshot>& objects);
     [[nodiscard]] std::optional<ViewportPick> pickObject(float xPixels, float yPixels) const noexcept;
     [[nodiscard]] bool setSelectedObject(vortex::ObjectId objectId) noexcept;
-    [[nodiscard]] bool updateObjectWorldMatrix(
+    [[nodiscard]] bool setGizmoMode(GizmoMode mode) noexcept;
+    [[nodiscard]] bool setGizmoOrientation(TransformOrientation orientation) noexcept;
+    [[nodiscard]] bool setDisplayDensity(float density) noexcept;
+    [[nodiscard]] bool updateObjectTransform(
         vortex::ObjectId objectId,
-        const vortex::TransformMatrix& worldMatrix) noexcept;
+        const vortex::TransformMatrix& worldMatrix,
+        const vortex::Quaternion& worldRotation) noexcept;
     [[nodiscard]] std::optional<GizmoHit> hitTestGizmo(
         vortex::ObjectId objectId,
+        GizmoMode mode,
         float xPixels,
         float yPixels) const noexcept;
+    [[nodiscard]] std::optional<PointerRay> gizmoPointerRay(
+        float xPixels,
+        float yPixels) const noexcept;
+    [[nodiscard]] std::optional<GizmoCameraFrame> gizmoCameraFrame() const noexcept;
+    [[nodiscard]] bool setGizmoInteractionFeedback(
+        const GizmoInteractionFeedback& feedback) noexcept;
 
     // Takes ownership of the ANativeWindow reference returned by ANativeWindow_fromSurface().
     [[nodiscard]] bool attach(ANativeWindow* window);
@@ -100,20 +118,20 @@ public:
     [[nodiscard]] std::string info() const;
 
 private:
-    // Legacy single-snapshot helper remains private while Phase 6 uses per-object draw items.
-    [[nodiscard]] bool setViewportMesh(const vortex::ViewportMesh& mesh);
+    // Fixed host-visible capacity keeps selection/gizmo refreshes allocation-free while a
+    // selected object is active. The largest single solid gizmo mode fits comfortably below it.
+    static constexpr std::size_t kGizmoVertexCapacity = 16384U;
+
     [[nodiscard]] std::optional<vortex::FaceId> pickFace(float xPixels, float yPixels) const noexcept;
-    [[nodiscard]] bool setSelectionVisible(bool visible) noexcept;
+    [[nodiscard]] std::vector<ViewportVertex> buildGizmoVertices() const;
+    [[nodiscard]] std::optional<vortex::Quaternion> visualGizmoRotation(
+        const vortex::Quaternion& worldRotation) const noexcept;
+    [[nodiscard]] vortex::TransformMatrix gizmoWorldMatrix(
+        const vortex::TransformMatrix& objectWorldMatrix,
+        const vortex::Quaternion& worldRotation) const noexcept;
 
     struct PickTriangle final {
         PickTriangle() = default;
-        PickTriangle(
-            const std::array<float, 3>& worldA,
-            const std::array<float, 3>& worldB,
-            const std::array<float, 3>& worldC,
-            const vortex::FaceId face) noexcept
-            : localA(worldA), localB(worldB), localC(worldC),
-              a(worldA), b(worldB), c(worldC), sourceFace(face) {}
         PickTriangle(
             const std::array<float, 3>& sourceA,
             const std::array<float, 3>& sourceB,
@@ -146,11 +164,13 @@ private:
         std::uint32_t firstPickTriangle = 0U;
         std::uint32_t pickTriangleCount = 0U;
         vortex::TransformMatrix worldMatrix;
+        vortex::Quaternion worldRotation{};
     };
 
     struct SelectionOverlay final {
         vortex::ObjectId objectId;
         vortex::TransformMatrix worldMatrix;
+        vortex::Quaternion worldRotation{};
         std::vector<ViewportVertex> vertices;
     };
 
@@ -166,6 +186,7 @@ private:
     [[nodiscard]] bool createGeometryResources();
     [[nodiscard]] bool createGridResources();
     [[nodiscard]] bool createGraphicsPipeline();
+    [[nodiscard]] bool createGizmoPipeline();
     [[nodiscard]] bool recordCommandBuffers();
     [[nodiscard]] bool rebuildCommandBuffers();
     [[nodiscard]] bool refreshSelectionOverlay();
@@ -180,6 +201,18 @@ private:
         VkMemoryPropertyFlags properties,
         VkBuffer& buffer,
         VkDeviceMemory& memory);
+    [[nodiscard]] bool createDynamicHostBuffer(
+        VkDeviceSize size,
+        VkBufferUsageFlags usage,
+        VkBuffer& buffer,
+        VkDeviceMemory& memory);
+    [[nodiscard]] bool createStaticDeviceBuffer(
+        const void* sourceData,
+        VkDeviceSize size,
+        VkBufferUsageFlags usage,
+        VkBuffer& buffer,
+        VkDeviceMemory& memory);
+    [[nodiscard]] bool copyBuffer(VkBuffer source, VkBuffer destination, VkDeviceSize size);
     [[nodiscard]] std::uint32_t findMemoryType(
         std::uint32_t typeBits,
         VkMemoryPropertyFlags properties) const;
@@ -229,6 +262,11 @@ private:
     std::size_t selectionOverlayCapacity_ = 0U;
     vortex::ObjectId selectedObject_;
     vortex::TransformMatrix selectionWorldMatrix_{};
+    vortex::Quaternion selectionWorldRotation_{};
+    GizmoMode gizmoMode_ = GizmoMode::Move;
+    TransformOrientation gizmoOrientation_ = TransformOrientation::Global;
+    float displayDensity_ = 1.0F;
+    GizmoInteractionFeedback gizmoInteractionFeedback_{};
     bool selectionOverlayDirty_ = false;
 
     VkBuffer vertexBuffer_ = VK_NULL_HANDLE;
@@ -244,11 +282,15 @@ private:
     VkBuffer selectionVertexBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory selectionVertexMemory_ = VK_NULL_HANDLE;
     std::uint32_t selectionVertexCount_ = 0U;
+    std::uint32_t selectionOutlineVertexCount_ = 0U;
+    std::uint32_t gizmoFirstVertex_ = 0U;
+    std::uint32_t gizmoVertexCount_ = 0U;
     bool selectionVisible_ = false;
 
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
     VkPipeline gridPipeline_ = VK_NULL_HANDLE;
+    VkPipeline gizmoPipeline_ = VK_NULL_HANDLE;
 
     ViewportCamera camera_{};
     bool commandBuffersDirty_ = false;

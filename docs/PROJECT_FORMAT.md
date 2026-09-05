@@ -1,8 +1,8 @@
 # Native Project Format Contract
 
-> **Implemented preview:** schema v1 is now live through `ProjectCodec`. It is a deterministic binary authored-state container with exact stable IDs, generic attributes, hierarchy/shared-mesh references, bounded decoding, payload length, and integrity checksum. Runtime identity, undo history, evaluated data, and caches remain non-persistent. The schema is still pre-1.0 and may migrate.
+> **Current implemented schema: v3.** `ProjectCodec::schemaVersion` is the source of truth. The format is a deterministic binary authored-state container with exact stable IDs, generic attributes, hierarchy/shared-mesh references, bounded decoding, payload length, and integrity checksum. Runtime identity, undo history, evaluated data, and caches remain non-persistent. The schema is still pre-1.0 and may migrate.
 
-Schema v1 now writes the standard FNV-1a 64-bit checksum while accepting the earlier v0.2 preview checksum variant for backward compatibility. Encoding uses a single output buffer and const topology/attribute views to avoid avoidable whole-project temporary copies on memory-constrained 32-bit hosts.
+Migration support is explicit: schema v1 has no authored object transform and loads identity transforms; schema v2 stores translation + XYZ Euler radians + scale and migrates rotation once to a quaternion; schema v3 stores translation + quaternion + scale directly. The container writes the standard FNV-1a 64-bit checksum while accepting the earlier v0.2 preview checksum variant for backward compatibility. Encoding uses a single output buffer and const topology/attribute views to avoid avoidable whole-project temporary copies on memory-constrained 32-bit hosts.
 
 ## Purpose
 
@@ -50,7 +50,7 @@ References must be validated on load. Invalid or cyclic references should produc
 
 ## Container strategy
 
-Schema v1 currently uses a compact custom binary container. Future container changes remain possible through schema migration and must continue to be evaluated against:
+Schema v3 currently uses the compact custom binary container introduced by schema v1. Future container changes remain possible through schema migration and must continue to be evaluated against:
 
 - fast incremental/atomic save behavior,
 - schema migration,

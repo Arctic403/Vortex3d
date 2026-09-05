@@ -1,46 +1,13 @@
 #include "vulkan_viewport.hpp"
 #include "ViewportStage1ShadersGenerated.hpp"
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstring>
-#include <unordered_map>
 #include <vector>
 
 namespace vortex::android {
 namespace {
-
-struct EdgeKey final {
-    std::uint64_t a = 0U;
-    std::uint64_t b = 0U;
-
-    [[nodiscard]] bool operator==(const EdgeKey&) const noexcept = default;
-};
-
-struct EdgeKeyHash final {
-    [[nodiscard]] std::size_t operator()(const EdgeKey& key) const noexcept {
-        std::size_t value = std::hash<std::uint64_t>{}(key.a);
-        value ^= std::hash<std::uint64_t>{}(key.b) + std::size_t{0x9e3779b9U} +
-                 (value << 6U) + (value >> 2U);
-        return value;
-    }
-};
-
-struct EdgeInfo final {
-    std::array<float, 3> a{};
-    std::array<float, 3> b{};
-    vortex::FaceId firstFace;
-    std::uint32_t occurrences = 0U;
-    bool crossesFaces = false;
-};
-
-[[nodiscard]] EdgeKey edgeKey(const vortex::VertexId a, const vortex::VertexId b) noexcept {
-    if (a.value() <= b.value()) {
-        return {a.value(), b.value()};
-    }
-    return {b.value(), a.value()};
-}
 
 void addLine(
     std::vector<ViewportVertex>& output,
@@ -97,120 +64,6 @@ void addLine(
 
 } // namespace
 
-bool VulkanViewport::setViewportMesh(const vortex::ViewportMesh& mesh) {
-    if (device_ != VK_NULL_HANDLE) {
-        return fail("Stage 5A viewport snapshots must be supplied before Vulkan device creation");
-    }
-    if (mesh.vertices.empty() || mesh.triangles.empty()) {
-        return fail("Viewport snapshot contains no renderable geometry");
-    }
-
-    sceneVertices_.clear();
-    sceneIndices_.clear();
-    selectionOverlayVertices_.clear();
-    pickTriangles_.clear();
-
-    sceneVertices_.reserve(mesh.vertices.size());
-    for (const vortex::ViewportVertex& source : mesh.vertices) {
-        const Vec3& n = source.normal;
-        sceneVertices_.push_back(ViewportVertex{
-            {source.position.x, source.position.y, source.position.z},
-            {
-                0.25F + 0.65F * (n.x * 0.5F + 0.5F),
-                0.25F + 0.65F * (n.y * 0.5F + 0.5F),
-                0.25F + 0.65F * (n.z * 0.5F + 0.5F),
-            },
-        });
-    }
-
-    sceneIndices_.reserve(mesh.triangles.size() * 3U);
-    pickTriangles_.reserve(mesh.triangles.size());
-    std::unordered_map<EdgeKey, EdgeInfo, EdgeKeyHash> edges;
-    edges.reserve(mesh.triangles.size() * 3U);
-
-    for (const vortex::ViewportTriangle& triangle : mesh.triangles) {
-        if (triangle.a >= mesh.vertices.size() ||
-            triangle.b >= mesh.vertices.size() ||
-            triangle.c >= mesh.vertices.size()) {
-            sceneVertices_.clear();
-            sceneIndices_.clear();
-            pickTriangles_.clear();
-            return fail("Viewport snapshot contains an out-of-range triangle index");
-        }
-
-        sceneIndices_.push_back(triangle.a);
-        sceneIndices_.push_back(triangle.b);
-        sceneIndices_.push_back(triangle.c);
-        pickTriangles_.push_back(PickTriangle{
-            sceneVertices_[triangle.a].position,
-            sceneVertices_[triangle.b].position,
-            sceneVertices_[triangle.c].position,
-            triangle.sourceFace,
-        });
-
-        const std::array<std::uint32_t, 3> indices{triangle.a, triangle.b, triangle.c};
-        for (std::size_t edge = 0; edge < 3U; ++edge) {
-            const std::uint32_t firstIndex = indices[edge];
-            const std::uint32_t secondIndex = indices[(edge + 1U) % 3U];
-            const vortex::VertexId firstSource = mesh.vertices[firstIndex].sourceVertex;
-            const vortex::VertexId secondSource = mesh.vertices[secondIndex].sourceVertex;
-            if (!firstSource || !secondSource || firstSource == secondSource) {
-                continue;
-            }
-
-            const EdgeKey key = edgeKey(firstSource, secondSource);
-            auto [iterator, inserted] = edges.try_emplace(key);
-            EdgeInfo& info = iterator->second;
-            if (inserted) {
-                info.a = sceneVertices_[firstIndex].position;
-                info.b = sceneVertices_[secondIndex].position;
-                info.firstFace = triangle.sourceFace;
-            } else if (triangle.sourceFace != info.firstFace) {
-                info.crossesFaces = true;
-            }
-            ++info.occurrences;
-        }
-    }
-
-    // Render only evaluated face boundaries. A triangulation diagonal appears twice with
-    // the same source FaceId and is omitted, while a real mesh edge either appears once
-    // or is shared by triangles carrying different source FaceIds.
-    constexpr std::array<float, 3> selectedColor{1.0F, 0.55F, 0.08F};
-    selectionOverlayVertices_.reserve(edges.size() * 2U + 18U);
-    for (const auto& [key, info] : edges) {
-        (void)key;
-        if (info.occurrences == 1U || info.crossesFaces) {
-            addLine(selectionOverlayVertices_, info.a, info.b, selectedColor);
-        }
-    }
-
-    // Stage 5A gizmo foundation. Object transforms are not authored yet, so the bootstrap
-    // cube's engine object origin is the world origin. These derived lines become a proper
-    // transform-gizmo draw item when object transforms land.
-    addLine(selectionOverlayVertices_, {-0.10F, 0.0F, 0.0F}, {0.10F, 0.0F, 0.0F}, {1.0F, 0.85F, 0.18F});
-    addLine(selectionOverlayVertices_, {0.0F, -0.10F, 0.0F}, {0.0F, 0.10F, 0.0F}, {1.0F, 0.85F, 0.18F});
-    addLine(selectionOverlayVertices_, {0.0F, 0.0F, -0.10F}, {0.0F, 0.0F, 0.10F}, {1.0F, 0.85F, 0.18F});
-    addLine(selectionOverlayVertices_, {0.0F, 0.0F, 0.0F}, {1.55F, 0.0F, 0.0F}, {0.95F, 0.16F, 0.14F});
-    addLine(selectionOverlayVertices_, {0.0F, 0.0F, 0.0F}, {0.0F, 1.55F, 0.0F}, {0.18F, 0.92F, 0.28F});
-    addLine(selectionOverlayVertices_, {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 1.55F}, {0.18F, 0.42F, 1.0F});
-
-    selectionVisible_ = false;
-    commandBuffersDirty_ = true;
-    return !sceneVertices_.empty() && !sceneIndices_.empty() && !pickTriangles_.empty();
-}
-
-bool VulkanViewport::setSelectionVisible(const bool visible) noexcept {
-    if (visible && selectionOverlayVertices_.empty()) {
-        return false;
-    }
-    if (selectionVisible_ == visible) {
-        return true;
-    }
-    selectionVisible_ = visible;
-    commandBuffersDirty_ = true;
-    return true;
-}
-
 std::uint32_t VulkanViewport::findMemoryType(
     const std::uint32_t typeBits,
     const VkMemoryPropertyFlags properties) const {
@@ -246,6 +99,8 @@ bool VulkanViewport::createBuffer(
     vkGetBufferMemoryRequirements(device_, buffer, &requirements);
     const std::uint32_t memoryType = findMemoryType(requirements.memoryTypeBits, properties);
     if (memoryType == UINT32_MAX) {
+        vkDestroyBuffer(device_, buffer, nullptr);
+        buffer = VK_NULL_HANDLE;
         return fail("No compatible Vulkan memory type for viewport buffer");
     }
 
@@ -256,10 +111,128 @@ bool VulkanViewport::createBuffer(
     result = vkAllocateMemory(device_, &allocationInfo, nullptr, &memory);
     if (result != VK_SUCCESS) {
         memory = VK_NULL_HANDLE;
+        vkDestroyBuffer(device_, buffer, nullptr);
+        buffer = VK_NULL_HANDLE;
         return failVk("vkAllocateMemory(buffer)", result);
     }
     result = vkBindBufferMemory(device_, buffer, memory, 0U);
-    return result == VK_SUCCESS || failVk("vkBindBufferMemory", result);
+    if (result != VK_SUCCESS) {
+        vkFreeMemory(device_, memory, nullptr);
+        vkDestroyBuffer(device_, buffer, nullptr);
+        memory = VK_NULL_HANDLE;
+        buffer = VK_NULL_HANDLE;
+        return failVk("vkBindBufferMemory", result);
+    }
+    return true;
+}
+
+bool VulkanViewport::createDynamicHostBuffer(
+    const VkDeviceSize size,
+    const VkBufferUsageFlags usage,
+    VkBuffer& buffer,
+    VkDeviceMemory& memory) {
+    return createBuffer(
+        size,
+        usage,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        buffer,
+        memory);
+}
+
+bool VulkanViewport::copyBuffer(
+    const VkBuffer source,
+    const VkBuffer destination,
+    const VkDeviceSize size) {
+    if (source == VK_NULL_HANDLE || destination == VK_NULL_HANDLE || size == 0U ||
+        commandPool_ == VK_NULL_HANDLE || graphicsQueue_ == VK_NULL_HANDLE) {
+        return fail("Invalid Vulkan staging-copy request");
+    }
+
+    VkCommandBufferAllocateInfo allocationInfo{};
+    allocationInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocationInfo.commandPool = commandPool_;
+    allocationInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocationInfo.commandBufferCount = 1U;
+    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+    VkResult result = vkAllocateCommandBuffers(device_, &allocationInfo, &commandBuffer);
+    if (result != VK_SUCCESS) {
+        return failVk("vkAllocateCommandBuffers(staging)", result);
+    }
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    result = vkBeginCommandBuffer(commandBuffer, &beginInfo);
+    if (result != VK_SUCCESS) {
+        vkFreeCommandBuffers(device_, commandPool_, 1U, &commandBuffer);
+        return failVk("vkBeginCommandBuffer(staging)", result);
+    }
+
+    const VkBufferCopy region{0U, 0U, size};
+    vkCmdCopyBuffer(commandBuffer, source, destination, 1U, &region);
+    result = vkEndCommandBuffer(commandBuffer);
+    if (result == VK_SUCCESS) {
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.commandBufferCount = 1U;
+        submitInfo.pCommandBuffers = &commandBuffer;
+        result = vkQueueSubmit(graphicsQueue_, 1U, &submitInfo, VK_NULL_HANDLE);
+    }
+    if (result == VK_SUCCESS) {
+        result = vkQueueWaitIdle(graphicsQueue_);
+    }
+    vkFreeCommandBuffers(device_, commandPool_, 1U, &commandBuffer);
+    return result == VK_SUCCESS || failVk("viewport staging copy", result);
+}
+
+bool VulkanViewport::createStaticDeviceBuffer(
+    const void* sourceData,
+    const VkDeviceSize size,
+    const VkBufferUsageFlags usage,
+    VkBuffer& buffer,
+    VkDeviceMemory& memory) {
+    if (sourceData == nullptr || size == 0U) {
+        return fail("Static viewport buffer upload received no data");
+    }
+
+    VkBuffer stagingBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+    if (!createDynamicHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, stagingBuffer, stagingMemory)) {
+        return false;
+    }
+
+    void* mapped = nullptr;
+    VkResult result = vkMapMemory(device_, stagingMemory, 0U, size, 0U, &mapped);
+    if (result != VK_SUCCESS) {
+        vkDestroyBuffer(device_, stagingBuffer, nullptr);
+        vkFreeMemory(device_, stagingMemory, nullptr);
+        return failVk("vkMapMemory(staging)", result);
+    }
+    std::memcpy(mapped, sourceData, static_cast<std::size_t>(size));
+    vkUnmapMemory(device_, stagingMemory);
+
+    const bool destinationCreated = createBuffer(
+        size,
+        usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        buffer,
+        memory);
+    const bool copied = destinationCreated && copyBuffer(stagingBuffer, buffer, size);
+
+    vkDestroyBuffer(device_, stagingBuffer, nullptr);
+    vkFreeMemory(device_, stagingMemory, nullptr);
+    if (!copied) {
+        if (buffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device_, buffer, nullptr);
+            buffer = VK_NULL_HANDLE;
+        }
+        if (memory != VK_NULL_HANDLE) {
+            vkFreeMemory(device_, memory, nullptr);
+            memory = VK_NULL_HANDLE;
+        }
+        return false;
+    }
+    return true;
 }
 
 bool VulkanViewport::createGeometryResources() {
@@ -272,40 +245,32 @@ bool VulkanViewport::createGeometryResources() {
 
     const VkDeviceSize vertexBytes = static_cast<VkDeviceSize>(sceneVertices_.size() * sizeof(ViewportVertex));
     const VkDeviceSize indexBytes = static_cast<VkDeviceSize>(sceneIndices_.size() * sizeof(std::uint32_t));
-    const VkMemoryPropertyFlags hostMemory =
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    if (!createBuffer(vertexBytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, hostMemory, vertexBuffer_, vertexMemory_) ||
-        !createBuffer(indexBytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, hostMemory, indexBuffer_, indexMemory_)) {
+    if (!createStaticDeviceBuffer(
+            sceneVertices_.data(),
+            vertexBytes,
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            vertexBuffer_,
+            vertexMemory_) ||
+        !createStaticDeviceBuffer(
+            sceneIndices_.data(),
+            indexBytes,
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+            indexBuffer_,
+            indexMemory_)) {
         destroyGeometry();
         return false;
     }
 
     void* mapped = nullptr;
-    VkResult result = vkMapMemory(device_, vertexMemory_, 0U, vertexBytes, 0U, &mapped);
-    if (result != VK_SUCCESS) {
-        destroyGeometry();
-        return failVk("vkMapMemory(vertex)", result);
-    }
-    std::memcpy(mapped, sceneVertices_.data(), static_cast<std::size_t>(vertexBytes));
-    vkUnmapMemory(device_, vertexMemory_);
-
-    mapped = nullptr;
-    result = vkMapMemory(device_, indexMemory_, 0U, indexBytes, 0U, &mapped);
-    if (result != VK_SUCCESS) {
-        destroyGeometry();
-        return failVk("vkMapMemory(index)", result);
-    }
-    std::memcpy(mapped, sceneIndices_.data(), static_cast<std::size_t>(indexBytes));
-    vkUnmapMemory(device_, indexMemory_);
+    VkResult result = VK_SUCCESS;
     indexCount_ = static_cast<std::uint32_t>(sceneIndices_.size());
 
     if (!selectionOverlayVertices_.empty()) {
         const VkDeviceSize overlayBytes =
             static_cast<VkDeviceSize>(selectionOverlayVertices_.size() * sizeof(ViewportVertex));
-        if (!createBuffer(
+        if (!createDynamicHostBuffer(
                 overlayBytes,
                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                hostMemory,
                 selectionVertexBuffer_,
                 selectionVertexMemory_)) {
             destroyGeometry();
@@ -334,19 +299,14 @@ bool VulkanViewport::createGridResources() {
     }
 
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(vertices.size() * sizeof(ViewportVertex));
-    const VkMemoryPropertyFlags hostMemory =
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    if (!createBuffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, hostMemory, gridVertexBuffer_, gridVertexMemory_)) {
+    if (!createStaticDeviceBuffer(
+            vertices.data(),
+            bytes,
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            gridVertexBuffer_,
+            gridVertexMemory_)) {
         return false;
     }
-
-    void* mapped = nullptr;
-    const VkResult result = vkMapMemory(device_, gridVertexMemory_, 0U, bytes, 0U, &mapped);
-    if (result != VK_SUCCESS) {
-        return failVk("vkMapMemory(grid)", result);
-    }
-    std::memcpy(mapped, vertices.data(), static_cast<std::size_t>(bytes));
-    vkUnmapMemory(device_, gridVertexMemory_);
     gridVertexCount_ = static_cast<std::uint32_t>(vertices.size());
     return true;
 }

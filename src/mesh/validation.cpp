@@ -13,30 +13,6 @@
 namespace vortex {
 namespace {
 
-struct UndirectedEdgeKey final {
-    std::uint64_t low = 0;
-    std::uint64_t high = 0;
-
-    [[nodiscard]] bool operator==(const UndirectedEdgeKey&) const noexcept = default;
-};
-
-struct UndirectedEdgeKeyHash final {
-    [[nodiscard]] std::size_t operator()(const UndirectedEdgeKey& key) const noexcept {
-        const auto fold = [](const std::uint64_t value) noexcept {
-            return static_cast<std::size_t>(value ^ (value >> 32U));
-        };
-        std::size_t hash = fold(key.low);
-        hash ^= fold(key.high) + std::size_t{0x9e3779b9U} + (hash << 6U) + (hash >> 2U);
-        return hash;
-    }
-};
-
-[[nodiscard]] UndirectedEdgeKey edgeKey(const VertexId a, const VertexId b) noexcept {
-    const std::uint64_t first = a.value();
-    const std::uint64_t second = b.value();
-    return first < second ? UndirectedEdgeKey{first, second} : UndirectedEdgeKey{second, first};
-}
-
 } // namespace
 
 MeshValidationResult EditableMesh::validateStrict() const {
@@ -158,18 +134,38 @@ MeshValidationResult EditableMesh::validateStrict() const {
             "Next element ID is not strictly above every live stable ID");
     }
 
-    std::unordered_map<UndirectedEdgeKey, EdgeId, UndirectedEdgeKeyHash> edgeLookup;
-    edgeLookup.reserve(edges_.size());
+    std::unordered_map<EdgeLookupKey, EdgeId, EdgeLookupKeyHash> expectedEdges;
+    expectedEdges.reserve(edges_.size());
     for (const auto& [edgeId, edgeData] : edges_) {
         if (!edgeData.vertexA || !edgeData.vertexB || edgeData.vertexA == edgeData.vertexB) {
             continue;
         }
-        const auto [existing, inserted] = edgeLookup.emplace(edgeKey(edgeData.vertexA, edgeData.vertexB), edgeId);
+        const EdgeLookupKey key = edgeLookupKey(edgeData.vertexA, edgeData.vertexB);
+        const auto [existing, inserted] = expectedEdges.emplace(key, edgeId);
         if (!inserted && existing->second != edgeId) {
             issue(
                 MeshValidationCode::DuplicateEdge,
                 edgeId.value(),
                 "Multiple authored edges connect the same unordered vertex pair");
+        }
+
+        const auto lookupIt = edgeLookup_.find(key);
+        if (lookupIt == edgeLookup_.end() || lookupIt->second != edgeId) {
+            issue(
+                MeshValidationCode::EdgeLookupMismatch,
+                edgeId.value(),
+                "Undirected edge acceleration index does not resolve this authored edge");
+        }
+    }
+
+    for (const auto& [key, edgeId] : edgeLookup_) {
+        const auto edgeIt = edges_.find(edgeId);
+        if (edgeIt == edges_.end() ||
+            edgeLookupKey(edgeIt->second.vertexA, edgeIt->second.vertexB) != key) {
+            issue(
+                MeshValidationCode::EdgeLookupMismatch,
+                edgeId.value(),
+                "Undirected edge acceleration index contains a stale or invalid entry");
         }
     }
 

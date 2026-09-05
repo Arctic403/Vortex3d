@@ -4,9 +4,9 @@ Last updated: 2026-09-05
 
 ## Current engineering focus
 
-The portable C++ engine foundation and editor-aware Android Vulkan viewport are in place. Phase 6 is complete, merged, CI-green, and verified on the 32-bit Samsung target: persistent object translation/rotation/scale is authored in `Document`, persisted by project schema v2, replayed through `EditorHistory`, consumed as engine-derived world matrices by rendering/picking/selection, and manipulated through touch Move / Rotate / Scale gizmo tools.
+> **Experimental branch:** `work/gizmo-visual-polish` is currently carrying Gizmo System v2. It migrates authored object rotation to quaternions/project schema v3 and moves manipulation math into portable geometric constraints. It is intentionally ahead of the merged/device-verified Phase-6 baseline described below and still requires Android ABI CI plus a new ARMv7 device pass before merge. See `docs/GIZMO_SYSTEM_V2.md`.
 
-The Phase 6 device pass confirmed Move / Rotate / Scale, Undo / Redo, existing camera gestures, selection, and transform synchronization are working on the target phone. Phase 6 is therefore both implementation-complete and device-verified.
+The portable C++ engine foundation and editor-aware Android Vulkan viewport are in place. The merged Phase-6 baseline was device-verified on the 32-bit Samsung target using project schema v2/Euler transforms. This branch advances that baseline to **project schema v3 with quaternion-authored rotation** and Gizmo System v2. Host tests cover the portable constraint/composition math, including randomized parent rotation, non-uniform/negative scale and reflection cases; the branch still requires its fresh Android ABI CI run and ARMv7 device torture pass before those interaction changes are called device-verified.
 
 ## Foundation state
 
@@ -22,7 +22,7 @@ The portable C++20 foundation remains the authored source of truth:
 - `MeshEvaluator` produces validated rebuildable evaluated geometry.
 - `RenderExtractor` converts evaluated geometry into renderer-facing local-space triangle snapshots while preserving source IDs.
 - `EditorContext` owns active object, mode, selection domain, and stable topology selection outside persistent Document state.
-- Project schema v2 stores object transforms and explicitly migrates schema-v1 objects to identity transforms.
+- Project schema v3 stores translation + quaternion rotation + scale, migrates schema-v2 Euler rotation once, and explicitly migrates schema-v1 objects to identity transforms.
 - Project serialization, validation, dependency/procedural graph infrastructure, registries, and benchmark coverage remain available above the hardened core.
 
 The renderer does not own editable topology or persistent object transforms, and Android framework types do not enter the portable engine.
@@ -152,10 +152,10 @@ Both Android ABIs remain first-class build targets. Phase 6 was merged only afte
 
 ## Known non-blocking renderer debt
 
-These remain tracked beyond Phase 6 and do not change authored ownership:
+These remain tracked beyond the current viewport hardening pass and do not change authored ownership:
 
-- camera/selection/object-preview changes currently rebuild recorded swapchain command buffers rather than using per-frame camera/object buffers,
-- static mesh/grid data currently uses host-visible coherent Vulkan memory rather than staging uploads into device-local memory,
+- camera/selection/object-preview changes still re-record swapchain command buffers rather than using per-frame camera/object buffers; buffers are now reset/re-recorded in place instead of freed/reallocated on every input change,
+- static scene and grid data now uploads through short-lived host-visible staging buffers into device-local Vulkan buffers; dynamic selection/gizmo overlay storage intentionally remains host-visible,
 - Android renderer source is warnings-as-errors compiled but is not yet included in the root host clang-tidy source list,
 - some shader/build helper names still carry early-stage naming even though the renderer has advanced well beyond Stage 1.
 

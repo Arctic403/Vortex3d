@@ -216,7 +216,7 @@ bool VulkanViewport::createSwapchain() {
         return failVk("vkCreateRenderPass", result);
     }
 
-    if (!createGraphicsPipeline()) {
+    if (!createGraphicsPipeline() || !createGizmoPipeline()) {
         return false;
     }
 
@@ -242,16 +242,35 @@ bool VulkanViewport::createSwapchain() {
 }
 
 bool VulkanViewport::recordCommandBuffers() {
-    commandBuffers_.resize(framebuffers_.size(), VK_NULL_HANDLE);
-    VkCommandBufferAllocateInfo allocationInfo{};
-    allocationInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocationInfo.commandPool = commandPool_;
-    allocationInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocationInfo.commandBufferCount = static_cast<std::uint32_t>(commandBuffers_.size());
-    VkResult result = vkAllocateCommandBuffers(device_, &allocationInfo, commandBuffers_.data());
-    if (result != VK_SUCCESS) {
-        commandBuffers_.clear();
-        return failVk("vkAllocateCommandBuffers", result);
+    if (framebuffers_.empty()) {
+        return fail("Cannot record viewport commands without swapchain framebuffers");
+    }
+
+    VkResult result = VK_SUCCESS;
+    if (commandBuffers_.size() != framebuffers_.size()) {
+        if (!commandBuffers_.empty()) {
+            vkFreeCommandBuffers(
+                device_, commandPool_, static_cast<std::uint32_t>(commandBuffers_.size()), commandBuffers_.data());
+            commandBuffers_.clear();
+        }
+        commandBuffers_.resize(framebuffers_.size(), VK_NULL_HANDLE);
+        VkCommandBufferAllocateInfo allocationInfo{};
+        allocationInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocationInfo.commandPool = commandPool_;
+        allocationInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocationInfo.commandBufferCount = static_cast<std::uint32_t>(commandBuffers_.size());
+        result = vkAllocateCommandBuffers(device_, &allocationInfo, commandBuffers_.data());
+        if (result != VK_SUCCESS) {
+            commandBuffers_.clear();
+            return failVk("vkAllocateCommandBuffers", result);
+        }
+    } else {
+        for (const VkCommandBuffer commandBuffer : commandBuffers_) {
+            result = vkResetCommandBuffer(commandBuffer, 0U);
+            if (result != VK_SUCCESS) {
+                return failVk("vkResetCommandBuffer", result);
+            }
+        }
     }
 
     const float aspect = static_cast<float>(swapchainExtent_.width) /
@@ -325,17 +344,34 @@ bool VulkanViewport::recordCommandBuffers() {
         }
 
         if (selectionVisible_ && selectionVertexBuffer_ != VK_NULL_HANDLE && selectionVertexCount_ != 0U) {
-            const CameraPushConstants selectionPush = objectPushConstants(aspect, selectionWorldMatrix_);
-            vkCmdPushConstants(
-                commandBuffers_[index],
-                pipelineLayout_,
-                VK_SHADER_STAGE_VERTEX_BIT,
-                0U,
-                sizeof(CameraPushConstants),
-                &selectionPush);
-            vkCmdBindPipeline(commandBuffers_[index], VK_PIPELINE_BIND_POINT_GRAPHICS, gridPipeline_);
             vkCmdBindVertexBuffers(commandBuffers_[index], 0U, 1U, &selectionVertexBuffer_, &vertexOffset);
-            vkCmdDraw(commandBuffers_[index], selectionVertexCount_, 1U, 0U, 0U);
+
+            if (selectionOutlineVertexCount_ != 0U) {
+                const CameraPushConstants selectionPush = objectPushConstants(aspect, selectionWorldMatrix_);
+                vkCmdPushConstants(
+                    commandBuffers_[index],
+                    pipelineLayout_,
+                    VK_SHADER_STAGE_VERTEX_BIT,
+                    0U,
+                    sizeof(CameraPushConstants),
+                    &selectionPush);
+                vkCmdBindPipeline(commandBuffers_[index], VK_PIPELINE_BIND_POINT_GRAPHICS, gridPipeline_);
+                vkCmdDraw(commandBuffers_[index], selectionOutlineVertexCount_, 1U, 0U, 0U);
+            }
+
+            if (gizmoVertexCount_ != 0U) {
+                const vortex::TransformMatrix gizmoWorld = gizmoWorldMatrix(selectionWorldMatrix_, selectionWorldRotation_);
+                const CameraPushConstants gizmoPush = objectPushConstants(aspect, gizmoWorld);
+                vkCmdPushConstants(
+                    commandBuffers_[index],
+                    pipelineLayout_,
+                    VK_SHADER_STAGE_VERTEX_BIT,
+                    0U,
+                    sizeof(CameraPushConstants),
+                    &gizmoPush);
+                vkCmdBindPipeline(commandBuffers_[index], VK_PIPELINE_BIND_POINT_GRAPHICS, gizmoPipeline_);
+                vkCmdDraw(commandBuffers_[index], gizmoVertexCount_, 1U, gizmoFirstVertex_, 0U);
+            }
         }
 
         vkCmdEndRenderPass(commandBuffers_[index]);
@@ -363,6 +399,10 @@ void VulkanViewport::destroySwapchain() noexcept {
     }
     framebuffers_.clear();
 
+    if (gizmoPipeline_ != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device_, gizmoPipeline_, nullptr);
+        gizmoPipeline_ = VK_NULL_HANDLE;
+    }
     if (gridPipeline_ != VK_NULL_HANDLE) {
         vkDestroyPipeline(device_, gridPipeline_, nullptr);
         gridPipeline_ = VK_NULL_HANDLE;

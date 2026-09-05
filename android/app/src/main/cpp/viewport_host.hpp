@@ -1,5 +1,6 @@
 #pragma once
 
+#include "vortex/editor/gizmo.hpp"
 #include "vulkan_viewport.hpp"
 
 #include "vortex/engine.hpp"
@@ -11,12 +12,6 @@
 #include <vector>
 
 namespace vortex::android {
-
-enum class TransformToolMode : std::uint8_t {
-    Move = 0U,
-    Rotate = 1U,
-    Scale = 2U,
-};
 
 class ViewportHost final {
 public:
@@ -38,6 +33,47 @@ public:
     [[nodiscard]] bool zoomCamera(float scaleFactor) noexcept;
     [[nodiscard]] bool tap(float xPixels, float yPixels) noexcept;
 
+    [[nodiscard]] bool setTransformTool(const TransformToolMode mode) noexcept {
+        if (transformDrag_.active || !renderer_.setGizmoInteractionFeedback({})) {
+            return false;
+        }
+
+        // Scale is evaluated in object-local space because the authored document stores strict
+        // TRS. Keep the user's Move/Rotate orientation preference separate so a temporary Scale
+        // operation does not silently overwrite Global/View/Local for the next tool.
+        const TransformOrientation previousOrientation = transformOrientation_;
+        TransformOrientation nextOrientation = preferredTransformOrientation_;
+        if (mode == TransformToolMode::Scale) {
+            nextOrientation = TransformOrientation::Local;
+            if (!renderer_.setGizmoOrientation(TransformOrientation::Local)) {
+                return false;
+            }
+        } else if (!renderer_.setGizmoOrientation(nextOrientation)) {
+            return false;
+        }
+
+        if (!renderer_.setGizmoMode(gizmoMode(mode))) {
+            (void)renderer_.setGizmoOrientation(previousOrientation);
+            return false;
+        }
+
+        transformToolMode_ = mode;
+        transformOrientation_ = nextOrientation;
+        return true;
+    }
+    [[nodiscard]] bool setTransformOrientation(const TransformOrientation orientation) noexcept {
+        if (transformDrag_.active || transformToolMode_ == TransformToolMode::Scale ||
+            !renderer_.setGizmoOrientation(orientation)) {
+            return false;
+        }
+        transformOrientation_ = orientation;
+        preferredTransformOrientation_ = orientation;
+        return true;
+    }
+    [[nodiscard]] bool setDisplayDensity(const float density) noexcept {
+        return renderer_.setDisplayDensity(density);
+    }
+
     [[nodiscard]] bool beginTransformGesture(
         TransformToolMode mode,
         float xPixels,
@@ -52,24 +88,32 @@ public:
 private:
     struct TransformDragState final {
         bool active = false;
-        TransformToolMode mode = TransformToolMode::Move;
-        GizmoAxis axis = GizmoAxis::X;
+        GizmoConstraint constraint{};
         ObjectId objectId;
         ObjectTransform before{};
         ObjectTransform preview{};
-        Vec3 translationAxisParent{};
-        float worldUnitsPerTranslationUnit = 1.0F;
-        float startX = 0.0F;
-        float startY = 0.0F;
-        float screenDirectionX = 0.0F;
-        float screenDirectionY = 0.0F;
-        float pixelsPerWorldUnit = 1.0F;
+        GizmoFrame frame{};
+        GizmoCameraFrame camera{};
+        TransformMatrix parentWorldMatrix{};
+        Quaternion parentWorldRotation{};
+        float startAxisParameter = 0.0F;
+        PlaneConstraintSample startPlaneSample{};
+        float startUniformProjection = 1.0F;
+        float rotationStartPhase = 0.0F;
+        float rotationPreviousPhase = 0.0F;
+        float accumulatedRotationRadians = 0.0F;
+        bool hasAxisSample = false;
+        bool hasPlaneSample = false;
+        bool hasRotationSample = false;
     };
 
     [[nodiscard]] bool initializeScene();
     [[nodiscard]] bool appendObjectSnapshot(ObjectId objectId, MeshId meshId);
     [[nodiscard]] bool syncRendererObjectTransforms();
     [[nodiscard]] std::optional<TransformMatrix> previewWorldMatrix(
+        ObjectId objectId,
+        const ObjectTransform& transform) const;
+    [[nodiscard]] std::optional<Quaternion> previewWorldRotation(
         ObjectId objectId,
         const ObjectTransform& transform) const;
 
@@ -82,6 +126,9 @@ private:
     std::vector<ViewportObjectSnapshot> viewportObjects_;
     VulkanViewport renderer_;
     TransformDragState transformDrag_{};
+    TransformToolMode transformToolMode_ = TransformToolMode::Move;
+    TransformOrientation transformOrientation_ = TransformOrientation::Global;
+    TransformOrientation preferredTransformOrientation_ = TransformOrientation::Global;
     bool initialized_ = false;
 };
 

@@ -30,20 +30,20 @@ VertexId EditableMesh::addVertex(const Vec3 positionValue) {
     return id;
 }
 
+EditableMesh::EdgeLookupKey EditableMesh::edgeLookupKey(
+    const VertexId vertexA,
+    const VertexId vertexB) noexcept {
+    return vertexA.value() < vertexB.value()
+        ? EdgeLookupKey{vertexA, vertexB}
+        : EdgeLookupKey{vertexB, vertexA};
+}
+
 EdgeId EditableMesh::findEdge(const VertexId vertexA, const VertexId vertexB) const noexcept {
-    for (const EdgeId edgeId : edgeOrder_) {
-        const auto it = edges_.find(edgeId);
-        if (it == edges_.end()) {
-            continue;
-        }
-        const MeshEdge& edgeData = it->second;
-        const bool same = edgeData.vertexA == vertexA && edgeData.vertexB == vertexB;
-        const bool reverse = edgeData.vertexA == vertexB && edgeData.vertexB == vertexA;
-        if (same || reverse) {
-            return edgeId;
-        }
+    if (!vertexA || !vertexB || vertexA == vertexB) {
+        return {};
     }
-    return {};
+    const auto it = edgeLookup_.find(edgeLookupKey(vertexA, vertexB));
+    return it == edgeLookup_.end() ? EdgeId{} : it->second;
 }
 
 EdgeId EditableMesh::edgeBetween(const VertexId vertexA, const VertexId vertexB) const noexcept {
@@ -64,6 +64,7 @@ EdgeId EditableMesh::addEdge(const VertexId vertexA, const VertexId vertexB) {
     edgeOrder_.push_back(id);
     edgeIndex_.emplace(id, index);
     edges_.emplace(id, MeshEdge{id, vertexA, vertexB, {}});
+    edgeLookup_.emplace(edgeLookupKey(vertexA, vertexB), id);
     attributes_.setDomainSize(AttributeDomain::Edge, edgeOrder_.size());
     return id;
 }
@@ -206,6 +207,22 @@ void EditableMesh::rebuildEdgeIndex() {
     }
 }
 
+void EditableMesh::rebuildEdgeLookup() {
+    edgeLookup_.clear();
+    edgeLookup_.reserve(edges_.size());
+    for (const EdgeId edgeId : edgeOrder_) {
+        const auto it = edges_.find(edgeId);
+        if (it == edges_.end()) {
+            continue;
+        }
+        const MeshEdge& edgeData = it->second;
+        if (!edgeData.vertexA || !edgeData.vertexB || edgeData.vertexA == edgeData.vertexB) {
+            continue;
+        }
+        edgeLookup_.emplace(edgeLookupKey(edgeData.vertexA, edgeData.vertexB), edgeId);
+    }
+}
+
 void EditableMesh::rebuildFaceIndex() {
     faceIndex_.clear();
     for (std::size_t index = 0; index < faceOrder_.size(); ++index) {
@@ -310,8 +327,10 @@ bool EditableMesh::removeEdge(const EdgeId id) {
     if (!attributes_.eraseDomainIndex(AttributeDomain::Edge, index)) {
         return false;
     }
+    const MeshEdge removedEdge = edges_.at(id);
     edgeOrder_.erase(edgeOrder_.begin() + static_cast<std::ptrdiff_t>(index));
     edgeIndex_.erase(id);
+    edgeLookup_.erase(edgeLookupKey(removedEdge.vertexA, removedEdge.vertexB));
     edges_.erase(id);
     rebuildEdgeIndex();
     return static_cast<bool>(validate());
@@ -403,7 +422,9 @@ std::optional<EdgeSplitResult> EditableMesh::splitEdge(const EdgeId id, const fl
     (void)attributes_.copyDomainIndex(AttributeDomain::Edge, originalEdgeIndex, newEdgeIndex);
 
     MeshEdge& retainedEdge = edges_.at(id);
+    edgeLookup_.erase(edgeLookupKey(originalEdge.vertexA, originalEdge.vertexB));
     retainedEdge.vertexB = newVertex;
+    edgeLookup_.emplace(edgeLookupKey(retainedEdge.vertexA, retainedEdge.vertexB), id);
 
     struct CornerInterpolation final {
         CornerId source;
@@ -694,6 +715,7 @@ std::optional<EditableMesh> EditableMesh::fromSerializedState(EditableMeshSerial
     mesh.edges_.clear();
     mesh.faces_.clear();
     mesh.corners_.clear();
+    mesh.edgeLookup_.clear();
 
     for (const MeshVertex& value : state.vertices) {
         if (!value.id || mesh.vertices_.contains(value.id)) return std::nullopt;
@@ -717,6 +739,7 @@ std::optional<EditableMesh> EditableMesh::fromSerializedState(EditableMeshSerial
     }
     mesh.rebuildVertexIndex();
     mesh.rebuildEdgeIndex();
+    mesh.rebuildEdgeLookup();
     mesh.rebuildFaceIndex();
     mesh.rebuildCornerIndex();
     if (!mesh.validateStrict()) return std::nullopt;
