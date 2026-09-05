@@ -216,7 +216,7 @@ bool VulkanViewport::createSwapchain() {
         return failVk("vkCreateRenderPass", result);
     }
 
-    if (!createGraphicsPipeline()) {
+    if (!createGraphicsPipeline() || !createGizmoPipeline()) {
         return false;
     }
 
@@ -350,9 +350,7 @@ bool VulkanViewport::recordCommandBuffers() {
                     0U,
                     sizeof(CameraPushConstants),
                     &gizmoPush);
-                // The gizmo is authored as actual triangle geometry (solid shafts, cones,
-                // cubes and torus rings), avoiding optional Vulkan wide-line support.
-                vkCmdBindPipeline(commandBuffers_[index], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline_);
+                vkCmdBindPipeline(commandBuffers_[index], VK_PIPELINE_BIND_POINT_GRAPHICS, gizmoPipeline_);
                 vkCmdDraw(commandBuffers_[index], gizmoVertexCount_, 1U, gizmoFirstVertex_, 0U);
             }
         }
@@ -382,6 +380,10 @@ void VulkanViewport::destroySwapchain() noexcept {
     }
     framebuffers_.clear();
 
+    if (gizmoPipeline_ != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device_, gizmoPipeline_, nullptr);
+        gizmoPipeline_ = VK_NULL_HANDLE;
+    }
     if (gridPipeline_ != VK_NULL_HANDLE) {
         vkDestroyPipeline(device_, gridPipeline_, nullptr);
         gridPipeline_ = VK_NULL_HANDLE;
