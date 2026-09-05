@@ -16,16 +16,22 @@ struct ScreenPoint final {
 
 constexpr float kProjectionEpsilon = 1.0e-5F;
 constexpr float kPi = 3.14159265358979323846F;
-constexpr float kMoveTip = 1.72F;
-constexpr float kArrowBase = 1.43F;
-constexpr float kArrowRadius = 0.16F;
-constexpr float kScaleHandleCenter = 1.02F;
-constexpr float kScaleHandleHalfExtent = 0.105F;
-constexpr float kRotateRingRadius = 0.76F;
-constexpr std::size_t kRotateRingSegments = 48U;
+constexpr float kAxisShaftStart = 0.14F;
+constexpr float kArrowBase = 1.26F;
+constexpr float kMoveTip = 1.55F;
+constexpr float kArrowRadius = 0.13F;
+constexpr float kAxisShaftRadius = 0.034F;
+constexpr float kScaleHandleCenter = 0.98F;
+constexpr float kScaleHandleHalfExtent = 0.10F;
+constexpr float kRotateRingRadius = 0.74F;
+constexpr float kRotateTubeRadius = 0.035F;
+constexpr std::size_t kShaftSegments = 10U;
+constexpr std::size_t kArrowSegments = 12U;
+constexpr std::size_t kRotateRingSegments = 40U;
+constexpr std::size_t kRotateTubeSegments = 8U;
 constexpr float kMoveTouchRadiusPixels = 30.0F;
 constexpr float kScaleTouchRadiusPixels = 34.0F;
-constexpr float kRotateTouchRadiusPixels = 27.0F;
+constexpr float kRotateTouchRadiusPixels = 28.0F;
 constexpr float kTargetPixelsPerLocalUnit = 92.0F;
 constexpr float kMinGizmoWorldScale = 0.025F;
 constexpr float kMaxGizmoWorldScale = 12.0F;
@@ -33,7 +39,6 @@ constexpr float kMaxGizmoWorldScale = 12.0F;
 constexpr std::array<float, 3> kXColor{0.98F, 0.16F, 0.14F};
 constexpr std::array<float, 3> kYColor{0.18F, 0.94F, 0.30F};
 constexpr std::array<float, 3> kZColor{0.18F, 0.44F, 1.0F};
-constexpr std::array<float, 3> kCenterColor{1.0F, 0.82F, 0.20F};
 
 [[nodiscard]] vortex::Vec3 axisVector(const GizmoAxis axis) noexcept {
     switch (axis) {
@@ -95,41 +100,109 @@ constexpr std::array<float, 3> kCenterColor{1.0F, 0.82F, 0.20F};
     return {value.x, value.y, value.z};
 }
 
-void addLine(
+void addTriangle(
     std::vector<ViewportVertex>& output,
     const vortex::Vec3 a,
     const vortex::Vec3 b,
+    const vortex::Vec3 c,
     const std::array<float, 3>& color) {
     output.push_back(ViewportVertex{toArray(a), color});
     output.push_back(ViewportVertex{toArray(b), color});
+    output.push_back(ViewportVertex{toArray(c), color});
 }
 
-void addWireCube(
+[[nodiscard]] vortex::Vec3 axisCirclePoint(
+    const GizmoAxis axis,
+    const float distance,
+    const float radians,
+    const float radius) noexcept {
+    const vortex::Vec3 center = scale(axisVector(axis), distance);
+    const vortex::Vec3 a = perpendicularA(axis);
+    const vortex::Vec3 b = perpendicularB(axis);
+    return add(
+        center,
+        add(
+            scale(a, std::cos(radians) * radius),
+            scale(b, std::sin(radians) * radius)));
+}
+
+void addCylinder(
+    std::vector<ViewportVertex>& output,
+    const GizmoAxis axis,
+    const float start,
+    const float end,
+    const float radius,
+    const std::array<float, 3>& color) {
+    const vortex::Vec3 startCenter = scale(axisVector(axis), start);
+    const vortex::Vec3 endCenter = scale(axisVector(axis), end);
+    for (std::size_t segment = 0U; segment < kShaftSegments; ++segment) {
+        const float angle0 = (2.0F * kPi * static_cast<float>(segment)) /
+                             static_cast<float>(kShaftSegments);
+        const float angle1 = (2.0F * kPi * static_cast<float>(segment + 1U)) /
+                             static_cast<float>(kShaftSegments);
+        const vortex::Vec3 start0 = axisCirclePoint(axis, start, angle0, radius);
+        const vortex::Vec3 start1 = axisCirclePoint(axis, start, angle1, radius);
+        const vortex::Vec3 end0 = axisCirclePoint(axis, end, angle0, radius);
+        const vortex::Vec3 end1 = axisCirclePoint(axis, end, angle1, radius);
+
+        addTriangle(output, start0, end0, end1, color);
+        addTriangle(output, start0, end1, start1, color);
+        addTriangle(output, startCenter, start1, start0, color);
+        addTriangle(output, endCenter, end0, end1, color);
+    }
+}
+
+void addCone(
+    std::vector<ViewportVertex>& output,
+    const GizmoAxis axis,
+    const float baseDistance,
+    const float tipDistance,
+    const float radius,
+    const std::array<float, 3>& color) {
+    const vortex::Vec3 baseCenter = scale(axisVector(axis), baseDistance);
+    const vortex::Vec3 tip = scale(axisVector(axis), tipDistance);
+    for (std::size_t segment = 0U; segment < kArrowSegments; ++segment) {
+        const float angle0 = (2.0F * kPi * static_cast<float>(segment)) /
+                             static_cast<float>(kArrowSegments);
+        const float angle1 = (2.0F * kPi * static_cast<float>(segment + 1U)) /
+                             static_cast<float>(kArrowSegments);
+        const vortex::Vec3 base0 = axisCirclePoint(axis, baseDistance, angle0, radius);
+        const vortex::Vec3 base1 = axisCirclePoint(axis, baseDistance, angle1, radius);
+        addTriangle(output, base0, tip, base1, color);
+        addTriangle(output, baseCenter, base1, base0, color);
+    }
+}
+
+void addCube(
     std::vector<ViewportVertex>& output,
     const vortex::Vec3 center,
     const float halfExtent,
     const std::array<float, 3>& color) {
-    std::array<vortex::Vec3, 8> corners{};
-    std::size_t index = 0U;
-    for (int z = -1; z <= 1; z += 2) {
-        for (int y = -1; y <= 1; y += 2) {
-            for (int x = -1; x <= 1; x += 2) {
-                corners[index++] = {
-                    center.x + static_cast<float>(x) * halfExtent,
-                    center.y + static_cast<float>(y) * halfExtent,
-                    center.z + static_cast<float>(z) * halfExtent,
-                };
-            }
-        }
-    }
-
-    constexpr std::array<std::array<std::size_t, 2>, 12> edges{{
-        {{0U, 1U}}, {{2U, 3U}}, {{4U, 5U}}, {{6U, 7U}},
-        {{0U, 2U}}, {{1U, 3U}}, {{4U, 6U}}, {{5U, 7U}},
-        {{0U, 4U}}, {{1U, 5U}}, {{2U, 6U}}, {{3U, 7U}},
+    const std::array<vortex::Vec3, 8> corners{{
+        {center.x - halfExtent, center.y - halfExtent, center.z - halfExtent},
+        {center.x + halfExtent, center.y - halfExtent, center.z - halfExtent},
+        {center.x + halfExtent, center.y + halfExtent, center.z - halfExtent},
+        {center.x - halfExtent, center.y + halfExtent, center.z - halfExtent},
+        {center.x - halfExtent, center.y - halfExtent, center.z + halfExtent},
+        {center.x + halfExtent, center.y - halfExtent, center.z + halfExtent},
+        {center.x + halfExtent, center.y + halfExtent, center.z + halfExtent},
+        {center.x - halfExtent, center.y + halfExtent, center.z + halfExtent},
     }};
-    for (const auto& edge : edges) {
-        addLine(output, corners[edge[0]], corners[edge[1]], color);
+    constexpr std::array<std::array<std::size_t, 3>, 12> triangles{{
+        {{0U, 2U, 1U}}, {{0U, 3U, 2U}},
+        {{4U, 5U, 6U}}, {{4U, 6U, 7U}},
+        {{0U, 1U, 5U}}, {{0U, 5U, 4U}},
+        {{3U, 7U, 6U}}, {{3U, 6U, 2U}},
+        {{0U, 4U, 7U}}, {{0U, 7U, 3U}},
+        {{1U, 2U, 6U}}, {{1U, 6U, 5U}},
+    }};
+    for (const auto& triangle : triangles) {
+        addTriangle(
+            output,
+            corners[triangle[0]],
+            corners[triangle[1]],
+            corners[triangle[2]],
+            color);
     }
 }
 
@@ -148,6 +221,44 @@ void addWireCube(
             return {c, s, 0.0F};
     }
     return {0.0F, c, s};
+}
+
+[[nodiscard]] vortex::Vec3 torusPoint(
+    const GizmoAxis axis,
+    const float ringRadians,
+    const float tubeRadians) noexcept {
+    const vortex::Vec3 radial = ringPoint(axis, ringRadians, 1.0F);
+    const vortex::Vec3 center = scale(radial, kRotateRingRadius);
+    const vortex::Vec3 axisDirection = axisVector(axis);
+    return add(
+        center,
+        add(
+            scale(radial, std::cos(tubeRadians) * kRotateTubeRadius),
+            scale(axisDirection, std::sin(tubeRadians) * kRotateTubeRadius)));
+}
+
+void addTorus(
+    std::vector<ViewportVertex>& output,
+    const GizmoAxis axis,
+    const std::array<float, 3>& color) {
+    for (std::size_t ringSegment = 0U; ringSegment < kRotateRingSegments; ++ringSegment) {
+        const float ring0 = (2.0F * kPi * static_cast<float>(ringSegment)) /
+                            static_cast<float>(kRotateRingSegments);
+        const float ring1 = (2.0F * kPi * static_cast<float>(ringSegment + 1U)) /
+                            static_cast<float>(kRotateRingSegments);
+        for (std::size_t tubeSegment = 0U; tubeSegment < kRotateTubeSegments; ++tubeSegment) {
+            const float tube0 = (2.0F * kPi * static_cast<float>(tubeSegment)) /
+                                static_cast<float>(kRotateTubeSegments);
+            const float tube1 = (2.0F * kPi * static_cast<float>(tubeSegment + 1U)) /
+                                static_cast<float>(kRotateTubeSegments);
+            const vortex::Vec3 p00 = torusPoint(axis, ring0, tube0);
+            const vortex::Vec3 p01 = torusPoint(axis, ring0, tube1);
+            const vortex::Vec3 p10 = torusPoint(axis, ring1, tube0);
+            const vortex::Vec3 p11 = torusPoint(axis, ring1, tube1);
+            addTriangle(output, p00, p10, p11, color);
+            addTriangle(output, p00, p11, p01, color);
+        }
+    }
 }
 
 [[nodiscard]] float length3(const vortex::Vec3 value) noexcept {
@@ -226,55 +337,25 @@ std::vector<ViewportVertex> VulkanViewport::buildGizmoVertices() const {
     std::vector<ViewportVertex> vertices;
     vertices.reserve(kGizmoVertexCapacity);
 
-    addWireCube(vertices, {0.0F, 0.0F, 0.0F}, 0.065F, kCenterColor);
-
     constexpr std::array<GizmoAxis, 3> axes{GizmoAxis::X, GizmoAxis::Y, GizmoAxis::Z};
     for (const GizmoAxis axis : axes) {
-        const vortex::Vec3 direction = axisVector(axis);
-        const vortex::Vec3 a = perpendicularA(axis);
-        const vortex::Vec3 b = perpendicularB(axis);
         const auto& color = axisColor(axis);
 
-        // Move shaft and a four-sided wire arrowhead.
-        const vortex::Vec3 arrowBase = scale(direction, kArrowBase);
-        const vortex::Vec3 arrowTip = scale(direction, kMoveTip);
-        addLine(vertices, {0.0F, 0.0F, 0.0F}, arrowBase, color);
-
-        const vortex::Vec3 p0 = add(add(arrowBase, scale(a, kArrowRadius)), scale(b, kArrowRadius));
-        const vortex::Vec3 p1 = add(add(arrowBase, scale(a, -kArrowRadius)), scale(b, kArrowRadius));
-        const vortex::Vec3 p2 = add(add(arrowBase, scale(a, -kArrowRadius)), scale(b, -kArrowRadius));
-        const vortex::Vec3 p3 = add(add(arrowBase, scale(a, kArrowRadius)), scale(b, -kArrowRadius));
-        addLine(vertices, arrowTip, p0, color);
-        addLine(vertices, arrowTip, p1, color);
-        addLine(vertices, arrowTip, p2, color);
-        addLine(vertices, arrowTip, p3, color);
-        addLine(vertices, p0, p1, color);
-        addLine(vertices, p1, p2, color);
-        addLine(vertices, p2, p3, color);
-        addLine(vertices, p3, p0, color);
-
-        // Scale handle: a small wire cube placed before the move arrowhead.
-        addWireCube(
+        // One solid shaft is shared visually by Move and Scale, like a combined DCC gizmo.
+        // The scale box sits on the shaft and the move cone extends beyond it.
+        addCylinder(vertices, axis, kAxisShaftStart, kArrowBase, kAxisShaftRadius, color);
+        addCone(vertices, axis, kArrowBase, kMoveTip, kArrowRadius, color);
+        addCube(
             vertices,
-            scale(direction, kScaleHandleCenter),
+            scale(axisVector(axis), kScaleHandleCenter),
             kScaleHandleHalfExtent,
             color);
     }
 
-    // Rotate handles: three colored local-axis rings around the object origin.
+    // Thick torus geometry gives Rotate the Blender-style ball/ring appearance without
+    // depending on optional wide-line Vulkan features on mobile GPUs.
     for (const GizmoAxis axis : axes) {
-        const auto& color = axisColor(axis);
-        for (std::size_t segment = 0U; segment < kRotateRingSegments; ++segment) {
-            const float a = (2.0F * kPi * static_cast<float>(segment)) /
-                            static_cast<float>(kRotateRingSegments);
-            const float b = (2.0F * kPi * static_cast<float>(segment + 1U)) /
-                            static_cast<float>(kRotateRingSegments);
-            addLine(
-                vertices,
-                ringPoint(axis, a, kRotateRingRadius),
-                ringPoint(axis, b, kRotateRingRadius),
-                color);
-        }
+        addTorus(vertices, axis, axisColor(axis));
     }
 
     return vertices;
@@ -440,9 +521,8 @@ std::optional<GizmoHit> VulkanViewport::hitTestGizmo(
             continue;
         }
 
-        // Rotate mode: touch the visible colored ring and use the local screen tangent as
-        // the drag direction. The ring itself is screen-scaled, so it remains usable when
-        // zooming in or out.
+        // Rotate mode follows the visible torus centerline. The closest ring segment gives
+        // both the axis and the tangent direction used by the existing drag math.
         for (std::size_t segment = 0U; segment < kRotateRingSegments; ++segment) {
             const float angleA = (2.0F * kPi * static_cast<float>(segment)) /
                                  static_cast<float>(kRotateRingSegments);
