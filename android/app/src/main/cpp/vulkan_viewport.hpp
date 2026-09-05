@@ -107,7 +107,9 @@ public:
     [[nodiscard]] std::string info() const;
 
 private:
-    static constexpr std::size_t kGizmoVertexCapacity = 512U;
+    // Fixed host-visible capacity keeps selection/gizmo refreshes allocation-free while a
+    // selected object is active. Current solid Move/Rotate/Scale mesh is comfortably below it.
+    static constexpr std::size_t kGizmoVertexCapacity = 8192U;
 
     // Legacy single-snapshot helper remains private while Phase 6 uses per-object draw items.
     [[nodiscard]] bool setViewportMesh(const vortex::ViewportMesh& mesh);
@@ -264,6 +266,7 @@ private:
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
     VkPipeline gridPipeline_ = VK_NULL_HANDLE;
+    VkPipeline gizmoPipeline_ = VK_NULL_HANDLE;
 
     ViewportCamera camera_{};
     bool commandBuffersDirty_ = false;
