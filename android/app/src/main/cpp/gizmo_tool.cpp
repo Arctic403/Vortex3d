@@ -27,18 +27,6 @@ constexpr float kTwoPi = 6.2831853071795864769F;
     return {1.0F, 0.0F, 0.0F};
 }
 
-[[nodiscard]] GizmoMode gizmoMode(const TransformToolMode mode) noexcept {
-    switch (mode) {
-        case TransformToolMode::Move:
-            return GizmoMode::Move;
-        case TransformToolMode::Rotate:
-            return GizmoMode::Rotate;
-        case TransformToolMode::Scale:
-            return GizmoMode::Scale;
-    }
-    return GizmoMode::Move;
-}
-
 [[nodiscard]] float length3(const Vec3 value) noexcept {
     return std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
 }
@@ -118,8 +106,13 @@ bool ViewportHost::beginTransformGesture(
     if (!hit || hit->pixelsPerWorldUnit <= kMathEpsilon) {
         return false;
     }
+    const auto hitAxis = gizmoAxis(hit->handle);
+    if (!hitAxis) {
+        return false;
+    }
+    const GizmoAxis axis = *hitAxis;
 
-    const Vec3 basis = axisVector(hit->axis);
+    const Vec3 basis = axisVector(axis);
     const TransformMatrix localMatrix = objectTransformMatrix(object->transform);
     Vec3 translationAxisParent = transformVector(localMatrix, basis);
     const float parentAxisLength = length3(translationAxisParent);
@@ -146,7 +139,7 @@ bool ViewportHost::beginTransformGesture(
 
     transformDrag_.active = true;
     transformDrag_.mode = mode;
-    transformDrag_.axis = hit->axis;
+    transformDrag_.axis = axis;
     transformDrag_.objectId = objectId;
     transformDrag_.before = object->transform;
     transformDrag_.preview = object->transform;
