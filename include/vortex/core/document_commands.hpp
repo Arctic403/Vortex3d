@@ -93,6 +93,35 @@ private:
     MeshId meshId_;
 };
 
+class SetObjectTransformCommand final : public Command {
+public:
+    SetObjectTransformCommand(ObjectId objectId, ObjectTransform transform)
+        : objectId_(objectId), transform_(transform) {}
+    [[nodiscard]] std::string_view name() const noexcept override { return "Set Object Transform"; }
+
+    [[nodiscard]] std::optional<DocumentHistoryRecord> apply(Document& document) override {
+        const ObjectBlock* object = document.object(objectId_);
+        if (object == nullptr || !isFiniteObjectTransform(transform_)) {
+            return std::nullopt;
+        }
+
+        const ObjectTransform before = object->transform;
+        if (!document.setObjectTransform(objectId_, transform_)) {
+            return std::nullopt;
+        }
+
+        DocumentHistoryRecord record{std::string{name()}, {}};
+        if (!(before == transform_)) {
+            record.deltas.emplace_back(SetObjectTransformDelta{objectId_, before, transform_});
+        }
+        return record;
+    }
+
+private:
+    ObjectId objectId_;
+    ObjectTransform transform_;
+};
+
 class MakeObjectMeshUniqueCommand final : public Command {
 public:
     explicit MakeObjectMeshUniqueCommand(ObjectId objectId) : objectId_(objectId) {}
