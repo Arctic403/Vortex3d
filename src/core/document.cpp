@@ -8,6 +8,7 @@
 #include <limits>
 #include <memory>
 #include <utility>
+#include <vector>
 
 namespace vortex {
 namespace {
@@ -274,6 +275,52 @@ bool Document::setObjectParent(const ObjectId objectId, const ObjectId parentId)
     ++objectIt->second.revision;
     markChanged(DataKind::Object, ChangeKind::Updated, objectId.value());
     return true;
+}
+
+bool Document::setObjectTransform(const ObjectId objectId, const ObjectTransform& transform) {
+    const auto objectIt = objects_.find(objectId);
+    if (objectIt == objects_.end() || !isFiniteObjectTransform(transform)) {
+        return false;
+    }
+    if (objectIt->second.transform == transform) {
+        return true;
+    }
+
+    objectIt->second.transform = transform;
+    ++objectIt->second.revision;
+    markChanged(DataKind::Object, ChangeKind::Updated, objectId.value());
+    return true;
+}
+
+std::optional<TransformMatrix> Document::objectWorldMatrix(const ObjectId objectId) const {
+    const auto objectIt = objects_.find(objectId);
+    if (objectIt == objects_.end()) {
+        return std::nullopt;
+    }
+
+    std::vector<const ObjectBlock*> chain;
+    chain.reserve(8U);
+    const ObjectBlock* cursor = &objectIt->second;
+    while (cursor != nullptr) {
+        chain.push_back(cursor);
+        if (chain.size() > objects_.size()) {
+            return std::nullopt;
+        }
+        if (!cursor->parentId) {
+            break;
+        }
+        const auto parentIt = objects_.find(cursor->parentId);
+        if (parentIt == objects_.end()) {
+            return std::nullopt;
+        }
+        cursor = &parentIt->second;
+    }
+
+    TransformMatrix world = identityTransformMatrix();
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        world = multiplyTransformMatrices(world, objectTransformMatrix((*it)->transform));
+    }
+    return world;
 }
 
 MeshId Document::makeObjectMeshUnique(const ObjectId objectId) {
@@ -633,7 +680,8 @@ bool Document::validate() const noexcept {
 
     for (const auto& [objectId, object] : objects_) {
         if (!objectId || object.id != objectId || object.revision == 0U ||
-            object.revision == std::numeric_limits<std::uint64_t>::max()) {
+            object.revision == std::numeric_limits<std::uint64_t>::max() ||
+            !isFiniteObjectTransform(object.transform)) {
             return false;
         }
         maximumPersistentId = std::max(maximumPersistentId, objectId.value());
