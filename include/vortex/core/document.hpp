@@ -1,11 +1,13 @@
 #pragma once
 
 #include "vortex/core/id.hpp"
+#include "vortex/core/transform.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -101,6 +103,8 @@ struct ObjectBlock final {
     MeshId meshId;
     ObjectId parentId;
     std::uint64_t revision = 1;
+    // Authored local-to-parent transform. Identity is the durable default for legacy data.
+    ObjectTransform transform{};
 };
 
 struct CollectionBlock final {
@@ -157,6 +161,8 @@ public:
 
     [[nodiscard]] bool setObjectMesh(ObjectId objectId, MeshId meshId);
     [[nodiscard]] bool setObjectParent(ObjectId objectId, ObjectId parentId);
+    [[nodiscard]] bool setObjectTransform(ObjectId objectId, const ObjectTransform& transform);
+    [[nodiscard]] std::optional<TransformMatrix> objectWorldMatrix(ObjectId objectId) const;
     [[nodiscard]] MeshId makeObjectMeshUnique(ObjectId objectId);
 
     [[nodiscard]] bool executeMeshCommand(
