@@ -36,8 +36,8 @@ struct CameraPushConstants final {
 };
 static_assert(sizeof(CameraPushConstants) == sizeof(float) * 16U);
 
-// One visible editor object and its derived evaluated render snapshot. Object identity is
-// preserved across the renderer boundary, while authored topology remains engine-owned.
+// One visible editor object and its evaluated/extracted render snapshot. Object identity
+// crosses the renderer boundary, while authored topology stays owned by the engine.
 struct ViewportObjectSnapshot final {
     vortex::ObjectId objectId;
     vortex::ViewportMesh mesh;
@@ -57,7 +57,6 @@ public:
     VulkanViewport(const VulkanViewport&) = delete;
     VulkanViewport& operator=(const VulkanViewport&) = delete;
 
-    // Stage 5B supplies the full visible render list before Vulkan device creation.
     [[nodiscard]] bool setViewportObjects(const std::vector<ViewportObjectSnapshot>& objects);
     [[nodiscard]] std::optional<ViewportPick> pickObject(float xPixels, float yPixels) const noexcept;
     [[nodiscard]] bool setSelectedObject(vortex::ObjectId objectId) noexcept;
@@ -76,20 +75,17 @@ public:
     [[nodiscard]] std::string info() const;
 
 private:
-    struct RenderObjectRange final {
-        vortex::ObjectId objectId;
-        std::uint32_t firstIndex = 0U;
-        std::uint32_t indexCount = 0U;
-        std::uint32_t selectionFirstVertex = 0U;
-        std::uint32_t selectionVertexCount = 0U;
-    };
-
     struct PickTriangle final {
         std::array<float, 3> a{};
         std::array<float, 3> b{};
         std::array<float, 3> c{};
         vortex::ObjectId objectId;
         vortex::FaceId sourceFace;
+    };
+
+    struct SelectionOverlay final {
+        vortex::ObjectId objectId;
+        std::vector<ViewportVertex> vertices;
     };
 
     [[nodiscard]] bool createInstance();
@@ -106,6 +102,7 @@ private:
     [[nodiscard]] bool createGraphicsPipeline();
     [[nodiscard]] bool recordCommandBuffers();
     [[nodiscard]] bool rebuildCommandBuffers();
+    [[nodiscard]] bool refreshSelectionOverlay();
     [[nodiscard]] CameraPushConstants cameraPushConstants(float aspect) const noexcept;
 
     [[nodiscard]] bool createBuffer(
@@ -150,12 +147,12 @@ private:
     VkImageView depthView_ = VK_NULL_HANDLE;
     VkFormat depthFormat_ = VK_FORMAT_UNDEFINED;
 
-    // CPU-side data below is rebuildable render/pick state derived from RenderExtractor.
+    // CPU-side state is fully rebuildable from RenderExtractor snapshots.
     std::vector<ViewportVertex> sceneVertices_;
     std::vector<std::uint32_t> sceneIndices_;
-    std::vector<RenderObjectRange> renderObjects_;
-    std::vector<ViewportVertex> selectionOverlayVertices_;
     std::vector<PickTriangle> pickTriangles_;
+    std::vector<SelectionOverlay> selectionOverlays_;
+    std::size_t selectionOverlayCapacity_ = 0U;
 
     VkBuffer vertexBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory vertexMemory_ = VK_NULL_HANDLE;
@@ -171,6 +168,7 @@ private:
     VkDeviceMemory selectionVertexMemory_ = VK_NULL_HANDLE;
     std::uint32_t selectionVertexCount_ = 0U;
     vortex::ObjectId selectedObject_;
+    bool selectionVisible_ = false;
 
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
@@ -178,6 +176,7 @@ private:
 
     ViewportCamera camera_{};
     bool commandBuffersDirty_ = false;
+    bool selectionOverlayDirty_ = false;
 
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> commandBuffers_;
