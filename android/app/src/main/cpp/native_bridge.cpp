@@ -118,6 +118,16 @@ Java_com_vortex3d_app_MainActivity_nativeTapViewport(
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
+Java_com_vortex3d_app_MainActivity_nativeSetTransformTool(
+    JNIEnv*, jclass, const jlong handle, const jint mode) {
+    auto* host = hostFromHandle(handle);
+    const auto resolvedMode = transformToolMode(mode);
+    return host != nullptr && resolvedMode && host->setTransformTool(*resolvedMode)
+        ? JNI_TRUE
+        : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
 Java_com_vortex3d_app_MainActivity_nativeBeginTransformGesture(
     JNIEnv*,
     jclass,
