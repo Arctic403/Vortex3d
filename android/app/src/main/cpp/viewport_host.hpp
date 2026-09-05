@@ -35,10 +35,7 @@ public:
 
 private:
     [[nodiscard]] bool initializeScene();
-    [[nodiscard]] bool appendObjectSnapshot(
-        ObjectId objectId,
-        MeshId meshId,
-        const std::array<float, 3>& origin);
+    [[nodiscard]] bool appendObjectSnapshot(ObjectId objectId, MeshId meshId);
 
     Document document_;
     EditorHistory history_;
