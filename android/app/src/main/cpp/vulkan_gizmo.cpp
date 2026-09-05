@@ -25,6 +25,12 @@ constexpr float kScaleHandleCenter = 0.98F;
 constexpr float kScaleHandleHalfExtent = 0.10F;
 constexpr float kRotateRingRadius = 1.45F;
 constexpr float kRotateTubeRadius = 0.045F;
+constexpr float kRotateActiveTubeRadius = 0.060F;
+constexpr float kRotateFeedbackRadius = 1.16F;
+constexpr float kRotateFeedbackHalfWidth = 0.028F;
+constexpr float kRotateFeedbackSpokeInnerRadius = 0.18F;
+constexpr float kRotateFeedbackSpokeOuterRadius = 1.30F;
+constexpr std::size_t kRotateFeedbackMaxSegments = 36U;
 constexpr std::size_t kShaftSegments = 10U;
 constexpr std::size_t kArrowSegments = 12U;
 constexpr std::size_t kRotateRingSegments = 40U;
@@ -98,6 +104,22 @@ constexpr std::array<float, 3> kZColor{0.18F, 0.44F, 1.0F};
             return kZColor;
     }
     return kXColor;
+}
+
+[[nodiscard]] std::array<float, 3> highlightedColor(
+    const std::array<float, 3>& color) noexcept {
+    constexpr float kWhiteMix = 0.42F;
+    return {
+        std::clamp(color[0] * (1.0F - kWhiteMix) + kWhiteMix, 0.0F, 1.0F),
+        std::clamp(color[1] * (1.0F - kWhiteMix) + kWhiteMix, 0.0F, 1.0F),
+        std::clamp(color[2] * (1.0F - kWhiteMix) + kWhiteMix, 0.0F, 1.0F),
+    };
+}
+
+[[nodiscard]] float ringRotationSign(const GizmoAxis axis) noexcept {
+    // ringPoint(Y) uses +Z for increasing parameter while positive Y-axis rotation moves
+    // +X toward -Z. X and Z parameterizations follow the positive axis-angle direction.
+    return axis == GizmoAxis::Y ? -1.0F : 1.0F;
 }
 
 [[nodiscard]] vortex::Vec3 add(const vortex::Vec3 a, const vortex::Vec3 b) noexcept {
@@ -238,20 +260,22 @@ void addCube(
 [[nodiscard]] vortex::Vec3 torusPoint(
     const GizmoAxis axis,
     const float ringRadians,
-    const float tubeRadians) noexcept {
+    const float tubeRadians,
+    const float tubeRadius) noexcept {
     const vortex::Vec3 radial = ringPoint(axis, ringRadians, 1.0F);
     const vortex::Vec3 center = scale(radial, kRotateRingRadius);
     const vortex::Vec3 axisDirection = axisVector(axis);
     return add(
         center,
         add(
-            scale(radial, std::cos(tubeRadians) * kRotateTubeRadius),
-            scale(axisDirection, std::sin(tubeRadians) * kRotateTubeRadius)));
+            scale(radial, std::cos(tubeRadians) * tubeRadius),
+            scale(axisDirection, std::sin(tubeRadians) * tubeRadius)));
 }
 
 void addTorus(
     std::vector<ViewportVertex>& output,
     const GizmoAxis axis,
+    const float tubeRadius,
     const std::array<float, 3>& color) {
     for (std::size_t ringSegment = 0U; ringSegment < kRotateRingSegments; ++ringSegment) {
         const float ring0 = (2.0F * kPi * static_cast<float>(ringSegment)) /
@@ -263,13 +287,110 @@ void addTorus(
                                 static_cast<float>(kRotateTubeSegments);
             const float tube1 = (2.0F * kPi * static_cast<float>(tubeSegment + 1U)) /
                                 static_cast<float>(kRotateTubeSegments);
-            const vortex::Vec3 p00 = torusPoint(axis, ring0, tube0);
-            const vortex::Vec3 p01 = torusPoint(axis, ring0, tube1);
-            const vortex::Vec3 p10 = torusPoint(axis, ring1, tube0);
-            const vortex::Vec3 p11 = torusPoint(axis, ring1, tube1);
+            const vortex::Vec3 p00 = torusPoint(axis, ring0, tube0, tubeRadius);
+            const vortex::Vec3 p01 = torusPoint(axis, ring0, tube1, tubeRadius);
+            const vortex::Vec3 p10 = torusPoint(axis, ring1, tube0, tubeRadius);
+            const vortex::Vec3 p11 = torusPoint(axis, ring1, tube1, tubeRadius);
             addTriangle(output, p00, p10, p11, color);
             addTriangle(output, p00, p11, p01, color);
         }
+    }
+}
+
+[[nodiscard]] vortex::Vec3 ringTangent(
+    const GizmoAxis axis,
+    const float radians) noexcept {
+    const float c = std::cos(radians);
+    const float s = std::sin(radians);
+    switch (axis) {
+        case GizmoAxis::X:
+            return {0.0F, -s, c};
+        case GizmoAxis::Y:
+            return {-s, 0.0F, c};
+        case GizmoAxis::Z:
+            return {-s, c, 0.0F};
+    }
+    return {0.0F, -s, c};
+}
+
+void addPlanarSpoke(
+    std::vector<ViewportVertex>& output,
+    const GizmoAxis axis,
+    const float radians,
+    const float innerRadius,
+    const float outerRadius,
+    const float halfWidth,
+    const std::array<float, 3>& color) {
+    const vortex::Vec3 radial = ringPoint(axis, radians, 1.0F);
+    const vortex::Vec3 tangent = ringTangent(axis, radians);
+    const vortex::Vec3 inner = scale(radial, innerRadius);
+    const vortex::Vec3 outer = scale(radial, outerRadius);
+    const vortex::Vec3 width = scale(tangent, halfWidth);
+    addTriangle(output, add(inner, width), add(outer, width), add(outer, scale(width, -1.0F)), color);
+    addTriangle(output, add(inner, width), add(outer, scale(width, -1.0F)), add(inner, scale(width, -1.0F)), color);
+}
+
+void addRotationFeedback(
+    std::vector<ViewportVertex>& output,
+    const GizmoAxis axis,
+    const GizmoInteractionFeedback& feedback,
+    const std::array<float, 3>& color) {
+    if (!feedback.hasRotationReference) {
+        return;
+    }
+
+    const float directionSign = ringRotationSign(axis);
+    const float startLocal =
+        feedback.rotationStartRingRadians - directionSign * feedback.rotationRadians;
+    const float currentLocal =
+        feedback.rotationCurrentRingRadians - directionSign * feedback.rotationRadians;
+
+    addPlanarSpoke(
+        output,
+        axis,
+        startLocal,
+        kRotateFeedbackSpokeInnerRadius,
+        kRotateFeedbackSpokeOuterRadius,
+        kRotateFeedbackHalfWidth,
+        color);
+    addPlanarSpoke(
+        output,
+        axis,
+        currentLocal,
+        kRotateFeedbackSpokeInnerRadius,
+        kRotateFeedbackSpokeOuterRadius,
+        kRotateFeedbackHalfWidth * 1.35F,
+        color);
+
+    const float visibleSweep = std::remainder(
+        directionSign * feedback.rotationRadians,
+        2.0F * kPi);
+    const float sweepMagnitude = std::abs(visibleSweep);
+    if (sweepMagnitude <= 1.0e-4F) {
+        return;
+    }
+
+    const std::size_t segments = std::clamp<std::size_t>(
+        static_cast<std::size_t>(std::ceil(
+            sweepMagnitude / (2.0F * kPi) * static_cast<float>(kRotateFeedbackMaxSegments))),
+        2U,
+        kRotateFeedbackMaxSegments);
+    const float arcStart = startLocal;
+    for (std::size_t segment = 0U; segment < segments; ++segment) {
+        const float t0 = static_cast<float>(segment) / static_cast<float>(segments);
+        const float t1 = static_cast<float>(segment + 1U) / static_cast<float>(segments);
+        const float a0 = arcStart + visibleSweep * t0;
+        const float a1 = arcStart + visibleSweep * t1;
+        const vortex::Vec3 inner0 = ringPoint(
+            axis, a0, kRotateFeedbackRadius - kRotateFeedbackHalfWidth);
+        const vortex::Vec3 outer0 = ringPoint(
+            axis, a0, kRotateFeedbackRadius + kRotateFeedbackHalfWidth);
+        const vortex::Vec3 inner1 = ringPoint(
+            axis, a1, kRotateFeedbackRadius - kRotateFeedbackHalfWidth);
+        const vortex::Vec3 outer1 = ringPoint(
+            axis, a1, kRotateFeedbackRadius + kRotateFeedbackHalfWidth);
+        addTriangle(output, inner0, outer0, outer1, color);
+        addTriangle(output, inner0, outer1, inner1, color);
     }
 }
 
@@ -365,15 +486,41 @@ bool VulkanViewport::setGizmoMode(const GizmoMode mode) noexcept {
     return true;
 }
 
+bool VulkanViewport::setGizmoInteractionFeedback(
+    const GizmoInteractionFeedback& feedback) noexcept {
+    if (feedback.active && feedback.mode != gizmoMode_) {
+        return false;
+    }
+    if (!std::isfinite(feedback.rotationRadians) ||
+        !std::isfinite(feedback.rotationStartRingRadians) ||
+        !std::isfinite(feedback.rotationCurrentRingRadians)) {
+        return false;
+    }
+
+    gizmoInteractionFeedback_ = feedback;
+    if (selectedObject_) {
+        selectionOverlayDirty_ = true;
+    }
+    commandBuffersDirty_ = true;
+    return true;
+}
+
 std::vector<ViewportVertex> VulkanViewport::buildGizmoVertices() const {
     std::vector<ViewportVertex> vertices;
     vertices.reserve(kGizmoVertexCapacity);
+
+    const auto isActiveAxis = [this](const GizmoAxis axis) noexcept {
+        return gizmoInteractionFeedback_.active &&
+               gizmoInteractionFeedback_.mode == gizmoMode_ &&
+               gizmoInteractionFeedback_.handle == axisGizmoHandle(axis);
+    };
 
     constexpr std::array<GizmoAxis, 3> axes{GizmoAxis::X, GizmoAxis::Y, GizmoAxis::Z};
     switch (gizmoMode_) {
         case GizmoMode::Move:
             for (const GizmoAxis axis : axes) {
-                const auto& color = axisColor(axis);
+                const std::array<float, 3> color =
+                    isActiveAxis(axis) ? highlightedColor(axisColor(axis)) : axisColor(axis);
                 addCylinder(vertices, axis, kAxisShaftStart, kArrowBase, kAxisShaftRadius, color);
                 addCone(vertices, axis, kArrowBase, kMoveTip, kArrowRadius, color);
             }
@@ -381,7 +528,8 @@ std::vector<ViewportVertex> VulkanViewport::buildGizmoVertices() const {
 
         case GizmoMode::Scale:
             for (const GizmoAxis axis : axes) {
-                const auto& color = axisColor(axis);
+                const std::array<float, 3> color =
+                    isActiveAxis(axis) ? highlightedColor(axisColor(axis)) : axisColor(axis);
                 addCylinder(
                     vertices,
                     axis,
@@ -398,10 +546,22 @@ std::vector<ViewportVertex> VulkanViewport::buildGizmoVertices() const {
             break;
 
         case GizmoMode::Rotate:
-            // Thick torus geometry gives Rotate the Blender-style ball/ring appearance
-            // without depending on optional wide-line Vulkan features on mobile GPUs.
             for (const GizmoAxis axis : axes) {
-                addTorus(vertices, axis, axisColor(axis));
+                const bool active = isActiveAxis(axis);
+                const std::array<float, 3> color =
+                    active ? highlightedColor(axisColor(axis)) : axisColor(axis);
+                addTorus(
+                    vertices,
+                    axis,
+                    active ? kRotateActiveTubeRadius : kRotateTubeRadius,
+                    color);
+                if (active) {
+                    addRotationFeedback(
+                        vertices,
+                        axis,
+                        gizmoInteractionFeedback_,
+                        highlightedColor(color));
+                }
             }
             break;
     }

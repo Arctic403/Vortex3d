@@ -54,6 +54,84 @@ enum class GizmoVisualState : std::uint8_t {
     Disabled = 3U,
 };
 
+
+enum class GizmoConstraintKind : std::uint8_t {
+    AxisTranslation = 0U,
+    AxisRotation = 1U,
+    AxisScale = 2U,
+    PlaneTranslation = 3U,
+    PlaneScale = 4U,
+    UniformScale = 5U,
+    ViewRotation = 6U,
+};
+
+struct GizmoConstraint final {
+    TransformToolMode mode = TransformToolMode::Move;
+    GizmoHandle handle = GizmoHandle::AxisX;
+    TransformOrientation orientation = TransformOrientation::Local;
+};
+
+struct AxisConstraintSample final {
+    float parameter = 0.0F;
+};
+
+struct RotationConstraintSample final {
+    float deltaRadians = 0.0F;
+    float previousRingRadians = 0.0F;
+    float currentRingRadians = 0.0F;
+};
+
+struct GizmoInteractionFeedback final {
+    bool active = false;
+    GizmoMode mode = GizmoMode::Move;
+    GizmoHandle handle = GizmoHandle::AxisX;
+    float rotationRadians = 0.0F;
+    float rotationStartRingRadians = 0.0F;
+    float rotationCurrentRingRadians = 0.0F;
+    bool hasRotationReference = false;
+};
+
+[[nodiscard]] constexpr std::optional<GizmoConstraintKind> gizmoConstraintKind(
+    const GizmoConstraint& constraint) noexcept {
+    switch (constraint.handle) {
+        case GizmoHandle::AxisX:
+        case GizmoHandle::AxisY:
+        case GizmoHandle::AxisZ:
+            switch (constraint.mode) {
+                case TransformToolMode::Move:
+                    return GizmoConstraintKind::AxisTranslation;
+                case TransformToolMode::Rotate:
+                    return GizmoConstraintKind::AxisRotation;
+                case TransformToolMode::Scale:
+                    return GizmoConstraintKind::AxisScale;
+            }
+            break;
+        case GizmoHandle::PlaneXY:
+        case GizmoHandle::PlaneXZ:
+        case GizmoHandle::PlaneYZ:
+            if (constraint.mode == TransformToolMode::Move) {
+                return GizmoConstraintKind::PlaneTranslation;
+            }
+            if (constraint.mode == TransformToolMode::Scale) {
+                return GizmoConstraintKind::PlaneScale;
+            }
+            break;
+        case GizmoHandle::UniformScale:
+            if (constraint.mode == TransformToolMode::Scale) {
+                return GizmoConstraintKind::UniformScale;
+            }
+            break;
+        case GizmoHandle::ViewRing:
+            if (constraint.mode == TransformToolMode::Rotate) {
+                return GizmoConstraintKind::ViewRotation;
+            }
+            break;
+        case GizmoHandle::Center:
+            break;
+    }
+    return std::nullopt;
+}
+
 [[nodiscard]] constexpr GizmoMode gizmoMode(const TransformToolMode mode) noexcept {
     switch (mode) {
         case TransformToolMode::Move:

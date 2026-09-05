@@ -84,18 +84,20 @@ public:
         GizmoMode mode,
         float xPixels,
         float yPixels) const noexcept;
-    [[nodiscard]] std::optional<float> axisDragParameter(
+    [[nodiscard]] std::optional<AxisConstraintSample> sampleAxisConstraint(
         const vortex::TransformMatrix& interactionWorldMatrix,
         GizmoAxis axis,
         float xPixels,
         float yPixels) const noexcept;
-    [[nodiscard]] std::optional<float> rotationDragRadians(
+    [[nodiscard]] std::optional<RotationConstraintSample> sampleRotationConstraint(
         const vortex::TransformMatrix& interactionWorldMatrix,
         GizmoAxis axis,
         float previousXPixels,
         float previousYPixels,
         float currentXPixels,
         float currentYPixels) const noexcept;
+    [[nodiscard]] bool setGizmoInteractionFeedback(
+        const GizmoInteractionFeedback& feedback) noexcept;
 
     // Takes ownership of the ANativeWindow reference returned by ANativeWindow_fromSurface().
     [[nodiscard]] bool attach(ANativeWindow* window);
@@ -240,6 +242,7 @@ private:
     vortex::TransformMatrix selectionWorldMatrix_{};
     GizmoMode gizmoMode_ = GizmoMode::Move;
     float displayDensity_ = 1.0F;
+    GizmoInteractionFeedback gizmoInteractionFeedback_{};
     bool selectionOverlayDirty_ = false;
 
     VkBuffer vertexBuffer_ = VK_NULL_HANDLE;

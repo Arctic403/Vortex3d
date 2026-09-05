@@ -167,6 +167,41 @@ constexpr float kParallelEpsilon = 1.0e-4F;
     return {1.0F, 0.0F, 0.0F};
 }
 
+[[nodiscard]] vortex::Vec3 perpendicularA(const GizmoAxis axis) noexcept {
+    switch (axis) {
+        case GizmoAxis::X:
+            return {0.0F, 1.0F, 0.0F};
+        case GizmoAxis::Y:
+        case GizmoAxis::Z:
+            return {1.0F, 0.0F, 0.0F};
+    }
+    return {0.0F, 1.0F, 0.0F};
+}
+
+[[nodiscard]] vortex::Vec3 perpendicularB(const GizmoAxis axis) noexcept {
+    switch (axis) {
+        case GizmoAxis::X:
+        case GizmoAxis::Y:
+            return {0.0F, 0.0F, 1.0F};
+        case GizmoAxis::Z:
+            return {0.0F, 1.0F, 0.0F};
+    }
+    return {0.0F, 0.0F, 1.0F};
+}
+
+[[nodiscard]] std::optional<Vec3f> projectedPlaneBasis(
+    const vortex::TransformMatrix& matrix,
+    const vortex::Vec3 localBasis,
+    const Vec3f normal,
+    const std::optional<Vec3f>& rejectBasis = std::nullopt) noexcept {
+    Vec3f basis = toVec3f(vortex::transformVector(matrix, localBasis));
+    basis = subtract(basis, scale(normal, dot(normal, basis)));
+    if (rejectBasis) {
+        basis = subtract(basis, scale(*rejectBasis, dot(*rejectBasis, basis)));
+    }
+    return normalized(basis);
+}
+
 [[nodiscard]] std::optional<Ray3f> screenRay(
     const Mat4& inverseViewProjection,
     const float width,
@@ -221,7 +256,7 @@ constexpr float kParallelEpsilon = 1.0e-4F;
 
 } // namespace
 
-std::optional<float> VulkanViewport::axisDragParameter(
+std::optional<AxisConstraintSample> VulkanViewport::sampleAxisConstraint(
     const vortex::TransformMatrix& interactionWorldMatrix,
     const GizmoAxis axis,
     const float xPixels,
@@ -268,10 +303,10 @@ std::optional<float> VulkanViewport::axisDragParameter(
     if (!std::isfinite(axisParameter) || !std::isfinite(rayParameter) || rayParameter < 0.0F) {
         return std::nullopt;
     }
-    return axisParameter;
+    return AxisConstraintSample{axisParameter};
 }
 
-std::optional<float> VulkanViewport::rotationDragRadians(
+std::optional<RotationConstraintSample> VulkanViewport::sampleRotationConstraint(
     const vortex::TransformMatrix& interactionWorldMatrix,
     const GizmoAxis axis,
     const float previousXPixels,
@@ -317,8 +352,40 @@ std::optional<float> VulkanViewport::rotationDragRadians(
 
     const float cosine = std::clamp(dot(*previousRadial, *currentRadial), -1.0F, 1.0F);
     const float sine = dot(*normal, cross(*previousRadial, *currentRadial));
-    const float radians = std::atan2(sine, cosine);
-    return std::isfinite(radians) ? std::optional<float>{radians} : std::nullopt;
+    const float deltaRadians = std::atan2(sine, cosine);
+    if (!std::isfinite(deltaRadians)) {
+        return std::nullopt;
+    }
+
+    // The interaction result also exposes the pointer's phase around the visible ring.
+    // Rendering uses this only for feedback (reference/current spokes and arc); transform
+    // semantics still come exclusively from the signed geometric delta above.
+    const auto basisA = projectedPlaneBasis(
+        interactionWorldMatrix, perpendicularA(axis), *normal);
+    if (!basisA) {
+        return std::nullopt;
+    }
+    const auto basisB = projectedPlaneBasis(
+        interactionWorldMatrix, perpendicularB(axis), *normal, basisA);
+    if (!basisB) {
+        return std::nullopt;
+    }
+
+    const float previousRingRadians = std::atan2(
+        dot(*previousRadial, *basisB),
+        dot(*previousRadial, *basisA));
+    const float currentRingRadians = std::atan2(
+        dot(*currentRadial, *basisB),
+        dot(*currentRadial, *basisA));
+    if (!std::isfinite(previousRingRadians) || !std::isfinite(currentRingRadians)) {
+        return std::nullopt;
+    }
+
+    return RotationConstraintSample{
+        deltaRadians,
+        previousRingRadians,
+        currentRingRadians,
+    };
 }
 
 } // namespace vortex::android

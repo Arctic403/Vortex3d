@@ -34,7 +34,8 @@ public:
     [[nodiscard]] bool tap(float xPixels, float yPixels) noexcept;
 
     [[nodiscard]] bool setTransformTool(const TransformToolMode mode) noexcept {
-        return renderer_.setGizmoMode(gizmoMode(mode));
+        return renderer_.setGizmoInteractionFeedback({}) &&
+               renderer_.setGizmoMode(gizmoMode(mode));
     }
     [[nodiscard]] bool setDisplayDensity(const float density) noexcept {
         return renderer_.setDisplayDensity(density);
@@ -54,7 +55,7 @@ public:
 private:
     struct TransformDragState final {
         bool active = false;
-        TransformToolMode mode = TransformToolMode::Move;
+        GizmoConstraint constraint{};
         GizmoAxis axis = GizmoAxis::X;
         ObjectId objectId;
         ObjectTransform before{};
@@ -66,6 +67,9 @@ private:
         float previousX = 0.0F;
         float previousY = 0.0F;
         float accumulatedRotationRadians = 0.0F;
+        float rotationStartRingRadians = 0.0F;
+        float rotationCurrentRingRadians = 0.0F;
+        bool hasRotationReference = false;
     };
 
     [[nodiscard]] bool initializeScene();

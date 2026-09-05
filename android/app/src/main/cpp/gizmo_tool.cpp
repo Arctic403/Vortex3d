@@ -99,6 +99,14 @@ bool ViewportHost::beginTransformGesture(
         return false;
     }
     const GizmoAxis axis = *hitAxis;
+    const GizmoConstraint constraint{
+        mode,
+        hit->handle,
+        TransformOrientation::Local,
+    };
+    if (!gizmoConstraintKind(constraint)) {
+        return false;
+    }
 
     const auto interactionWorld = previewWorldMatrix(objectId, object->transform);
     if (!interactionWorld) {
@@ -107,13 +115,14 @@ bool ViewportHost::beginTransformGesture(
 
     float startAxisParameter = 0.0F;
     if (mode == TransformToolMode::Move || mode == TransformToolMode::Scale) {
-        const auto parameter = renderer_.axisDragParameter(
+        const auto parameter = renderer_.sampleAxisConstraint(
             *interactionWorld, axis, xPixels, yPixels);
         if (!parameter ||
-            (mode == TransformToolMode::Scale && std::abs(*parameter) <= kMathEpsilon)) {
+            (mode == TransformToolMode::Scale &&
+             std::abs(parameter->parameter) <= kMathEpsilon)) {
             return false;
         }
-        startAxisParameter = *parameter;
+        startAxisParameter = parameter->parameter;
     }
 
     Vec3 translationAxisParent{};
@@ -147,7 +156,7 @@ bool ViewportHost::beginTransformGesture(
     }
 
     transformDrag_.active = true;
-    transformDrag_.mode = mode;
+    transformDrag_.constraint = constraint;
     transformDrag_.axis = axis;
     transformDrag_.objectId = objectId;
     transformDrag_.before = object->transform;
@@ -159,6 +168,23 @@ bool ViewportHost::beginTransformGesture(
     transformDrag_.previousX = xPixels;
     transformDrag_.previousY = yPixels;
     transformDrag_.accumulatedRotationRadians = 0.0F;
+    transformDrag_.rotationStartRingRadians = 0.0F;
+    transformDrag_.rotationCurrentRingRadians = 0.0F;
+    transformDrag_.hasRotationReference = false;
+
+    const GizmoInteractionFeedback feedback{
+        true,
+        gizmoMode(mode),
+        hit->handle,
+        0.0F,
+        0.0F,
+        0.0F,
+        false,
+    };
+    if (!renderer_.setGizmoInteractionFeedback(feedback)) {
+        transformDrag_ = {};
+        return false;
+    }
     return true;
 }
 
@@ -170,11 +196,14 @@ bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixe
 
     ObjectTransform preview = transformDrag_.before;
     float nextAccumulatedRotation = transformDrag_.accumulatedRotationRadians;
+    float nextRotationStartRingRadians = transformDrag_.rotationStartRingRadians;
+    float nextRotationCurrentRingRadians = transformDrag_.rotationCurrentRingRadians;
+    bool nextHasRotationReference = transformDrag_.hasRotationReference;
     bool commitRotationStep = false;
 
-    switch (transformDrag_.mode) {
+    switch (transformDrag_.constraint.mode) {
         case TransformToolMode::Move: {
-            const auto currentParameter = renderer_.axisDragParameter(
+            const auto currentParameter = renderer_.sampleAxisConstraint(
                 transformDrag_.interactionWorldMatrix,
                 transformDrag_.axis,
                 xPixels,
@@ -184,7 +213,7 @@ bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixe
                 // instead of changing interaction models or cancelling the gesture.
                 return true;
             }
-            const float worldDistance = *currentParameter - transformDrag_.startAxisParameter;
+            const float worldDistance = currentParameter->parameter - transformDrag_.startAxisParameter;
             const float localDistance = worldDistance / transformDrag_.worldUnitsPerTranslationUnit;
             preview.translation.x += transformDrag_.translationAxisParent.x * localDistance;
             preview.translation.y += transformDrag_.translationAxisParent.y * localDistance;
@@ -192,20 +221,25 @@ bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixe
             break;
         }
         case TransformToolMode::Rotate: {
-            const auto angularDelta = renderer_.rotationDragRadians(
+            const auto rotationSample = renderer_.sampleRotationConstraint(
                 transformDrag_.interactionWorldMatrix,
                 transformDrag_.axis,
                 transformDrag_.previousX,
                 transformDrag_.previousY,
                 xPixels,
                 yPixels);
-            if (!angularDelta) {
+            if (!rotationSample) {
                 // Keep the previous valid angular state. Once the ray/plane geometry becomes
                 // valid again, rotation resumes from that same pointer sample with no mode swap.
                 return true;
             }
 
-            nextAccumulatedRotation += *angularDelta;
+            if (!nextHasRotationReference) {
+                nextRotationStartRingRadians = rotationSample->previousRingRadians;
+                nextHasRotationReference = true;
+            }
+            nextRotationCurrentRingRadians = rotationSample->currentRingRadians;
+            nextAccumulatedRotation += rotationSample->deltaRadians;
             if (!std::isfinite(nextAccumulatedRotation)) {
                 return false;
             }
@@ -241,7 +275,7 @@ bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixe
             break;
         }
         case TransformToolMode::Scale: {
-            const auto currentParameter = renderer_.axisDragParameter(
+            const auto currentParameter = renderer_.sampleAxisConstraint(
                 transformDrag_.interactionWorldMatrix,
                 transformDrag_.axis,
                 xPixels,
@@ -250,7 +284,7 @@ bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixe
                 return true;
             }
 
-            const float ratio = *currentParameter / transformDrag_.startAxisParameter;
+            const float ratio = currentParameter->parameter / transformDrag_.startAxisParameter;
             if (!std::isfinite(ratio)) {
                 return false;
             }
@@ -273,7 +307,22 @@ bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixe
     }
 
     if (commitRotationStep) {
+        const GizmoInteractionFeedback feedback{
+            true,
+            GizmoMode::Rotate,
+            axisGizmoHandle(transformDrag_.axis),
+            nextAccumulatedRotation,
+            nextRotationStartRingRadians,
+            nextRotationCurrentRingRadians,
+            nextHasRotationReference,
+        };
+        if (!renderer_.setGizmoInteractionFeedback(feedback)) {
+            return false;
+        }
         transformDrag_.accumulatedRotationRadians = nextAccumulatedRotation;
+        transformDrag_.rotationStartRingRadians = nextRotationStartRingRadians;
+        transformDrag_.rotationCurrentRingRadians = nextRotationCurrentRingRadians;
+        transformDrag_.hasRotationReference = nextHasRotationReference;
         transformDrag_.previousX = xPixels;
         transformDrag_.previousY = yPixels;
     }
@@ -288,6 +337,9 @@ bool ViewportHost::endTransformGesture(const bool commit) {
 
     const TransformDragState completed = transformDrag_;
     transformDrag_ = {};
+    if (!renderer_.setGizmoInteractionFeedback({})) {
+        return false;
+    }
 
     if (!commit || completed.preview == completed.before) {
         const auto world = previewWorldMatrix(completed.objectId, completed.before);
