@@ -333,29 +333,57 @@ void addTorus(
 
 } // namespace
 
+bool VulkanViewport::setGizmoMode(const GizmoMode mode) noexcept {
+    if (gizmoMode_ == mode) {
+        return true;
+    }
+    gizmoMode_ = mode;
+    if (selectedObject_) {
+        selectionOverlayDirty_ = true;
+    }
+    commandBuffersDirty_ = true;
+    return true;
+}
+
 std::vector<ViewportVertex> VulkanViewport::buildGizmoVertices() const {
     std::vector<ViewportVertex> vertices;
     vertices.reserve(kGizmoVertexCapacity);
 
     constexpr std::array<GizmoAxis, 3> axes{GizmoAxis::X, GizmoAxis::Y, GizmoAxis::Z};
-    for (const GizmoAxis axis : axes) {
-        const auto& color = axisColor(axis);
+    switch (gizmoMode_) {
+        case GizmoMode::Move:
+            for (const GizmoAxis axis : axes) {
+                const auto& color = axisColor(axis);
+                addCylinder(vertices, axis, kAxisShaftStart, kArrowBase, kAxisShaftRadius, color);
+                addCone(vertices, axis, kArrowBase, kMoveTip, kArrowRadius, color);
+            }
+            break;
 
-        // One solid shaft is shared visually by Move and Scale, like a combined DCC gizmo.
-        // The scale box sits on the shaft and the move cone extends beyond it.
-        addCylinder(vertices, axis, kAxisShaftStart, kArrowBase, kAxisShaftRadius, color);
-        addCone(vertices, axis, kArrowBase, kMoveTip, kArrowRadius, color);
-        addCube(
-            vertices,
-            scale(axisVector(axis), kScaleHandleCenter),
-            kScaleHandleHalfExtent,
-            color);
-    }
+        case GizmoMode::Scale:
+            for (const GizmoAxis axis : axes) {
+                const auto& color = axisColor(axis);
+                addCylinder(
+                    vertices,
+                    axis,
+                    kAxisShaftStart,
+                    kScaleHandleCenter,
+                    kAxisShaftRadius,
+                    color);
+                addCube(
+                    vertices,
+                    scale(axisVector(axis), kScaleHandleCenter),
+                    kScaleHandleHalfExtent,
+                    color);
+            }
+            break;
 
-    // Thick torus geometry gives Rotate the Blender-style ball/ring appearance without
-    // depending on optional wide-line Vulkan features on mobile GPUs.
-    for (const GizmoAxis axis : axes) {
-        addTorus(vertices, axis, axisColor(axis));
+        case GizmoMode::Rotate:
+            // Thick torus geometry gives Rotate the Blender-style ball/ring appearance
+            // without depending on optional wide-line Vulkan features on mobile GPUs.
+            for (const GizmoAxis axis : axes) {
+                addTorus(vertices, axis, axisColor(axis));
+            }
+            break;
     }
 
     return vertices;
@@ -409,7 +437,7 @@ std::optional<GizmoHit> VulkanViewport::hitTestGizmo(
     const GizmoMode mode,
     const float xPixels,
     const float yPixels) const noexcept {
-    if (!objectId || objectId != selectedObject_ ||
+    if (!objectId || objectId != selectedObject_ || mode != gizmoMode_ ||
         !std::isfinite(xPixels) || !std::isfinite(yPixels) ||
         swapchainExtent_.width == 0U || swapchainExtent_.height == 0U) {
         return std::nullopt;
