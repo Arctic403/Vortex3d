@@ -43,8 +43,9 @@ bool ViewportHost::appendObjectSnapshot(
     const ObjectId objectId,
     const MeshId meshId,
     const std::array<float, 3>& origin) {
+    const ObjectBlock* object = document_.object(objectId);
     const MeshBlock* block = document_.mesh(meshId);
-    if (!objectId || block == nullptr) {
+    if (!objectId || !meshId || object == nullptr || block == nullptr || object->meshId != meshId) {
         return false;
     }
 
@@ -53,7 +54,9 @@ bool ViewportHost::appendObjectSnapshot(
         return false;
     }
     RenderExtractResult extracted = RenderExtractor::extract(*evaluated.mesh);
-    if (!extracted || !extracted.mesh) {
+    if (!extracted || !extracted.mesh ||
+        extracted.mesh->sourceDocumentRuntimeId != document_.runtimeId() ||
+        extracted.mesh->sourceMeshId != meshId) {
         return false;
     }
 
@@ -146,20 +149,33 @@ bool ViewportHost::tap(const float xPixels, const float yPixels) noexcept {
         return false;
     }
 
+    const ObjectId previousObject = editor_.activeObject();
+    const FaceId previousFace = lastPickedFace_;
+    const auto restoreEditorSelection = [this, previousObject, previousFace]() noexcept {
+        lastPickedFace_ = previousFace;
+        return editor_.setActiveObject(previousObject);
+    };
+
     const auto picked = renderer_.pickObject(xPixels, yPixels);
     if (picked) {
         if (!editor_.setActiveObject(picked->objectId)) {
             return false;
         }
         lastPickedFace_ = picked->sourceFace;
-        return renderer_.setSelectedObject(picked->objectId);
+        if (renderer_.setSelectedObject(picked->objectId)) {
+            return true;
+        }
+        return restoreEditorSelection() && false;
     }
 
     if (!editor_.setActiveObject({})) {
         return false;
     }
     lastPickedFace_ = {};
-    return renderer_.setSelectedObject({});
+    if (renderer_.setSelectedObject({})) {
+        return true;
+    }
+    return restoreEditorSelection() && false;
 }
 
 std::string ViewportHost::info() const {
