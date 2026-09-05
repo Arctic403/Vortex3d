@@ -51,6 +51,22 @@ struct ViewportPick final {
     vortex::FaceId sourceFace;
 };
 
+enum class GizmoAxis : std::uint8_t {
+    X = 0U,
+    Y = 1U,
+    Z = 2U,
+};
+
+// Screen-space metadata captured when a touch hits one of the visible XYZ gizmo axes.
+// pixelsPerWorldUnit is measured at the selected object's depth and gives the editor host
+// a stable drag scale without giving Vulkan ownership of authored transforms.
+struct GizmoHit final {
+    GizmoAxis axis = GizmoAxis::X;
+    float screenDirectionX = 0.0F;
+    float screenDirectionY = 0.0F;
+    float pixelsPerWorldUnit = 0.0F;
+};
+
 class VulkanViewport final {
 public:
     VulkanViewport() = default;
@@ -62,6 +78,13 @@ public:
     [[nodiscard]] bool setViewportObjects(const std::vector<ViewportObjectSnapshot>& objects);
     [[nodiscard]] std::optional<ViewportPick> pickObject(float xPixels, float yPixels) const noexcept;
     [[nodiscard]] bool setSelectedObject(vortex::ObjectId objectId) noexcept;
+    [[nodiscard]] bool updateObjectWorldMatrix(
+        vortex::ObjectId objectId,
+        const vortex::TransformMatrix& worldMatrix) noexcept;
+    [[nodiscard]] std::optional<GizmoHit> hitTestGizmo(
+        vortex::ObjectId objectId,
+        float xPixels,
+        float yPixels) const noexcept;
 
     // Takes ownership of the ANativeWindow reference returned by ANativeWindow_fromSurface().
     [[nodiscard]] bool attach(ANativeWindow* window);
@@ -77,12 +100,34 @@ public:
     [[nodiscard]] std::string info() const;
 
 private:
-    // Legacy single-snapshot helper remains private while Phase 6B uses per-object draw items.
+    // Legacy single-snapshot helper remains private while Phase 6 uses per-object draw items.
     [[nodiscard]] bool setViewportMesh(const vortex::ViewportMesh& mesh);
     [[nodiscard]] std::optional<vortex::FaceId> pickFace(float xPixels, float yPixels) const noexcept;
     [[nodiscard]] bool setSelectionVisible(bool visible) noexcept;
 
     struct PickTriangle final {
+        PickTriangle() = default;
+        PickTriangle(
+            const std::array<float, 3>& worldA,
+            const std::array<float, 3>& worldB,
+            const std::array<float, 3>& worldC,
+            const vortex::FaceId face) noexcept
+            : localA(worldA), localB(worldB), localC(worldC),
+              a(worldA), b(worldB), c(worldC), sourceFace(face) {}
+        PickTriangle(
+            const std::array<float, 3>& sourceA,
+            const std::array<float, 3>& sourceB,
+            const std::array<float, 3>& sourceC,
+            const std::array<float, 3>& worldA,
+            const std::array<float, 3>& worldB,
+            const std::array<float, 3>& worldC,
+            const vortex::FaceId face) noexcept
+            : localA(sourceA), localB(sourceB), localC(sourceC),
+              a(worldA), b(worldB), c(worldC), sourceFace(face) {}
+
+        std::array<float, 3> localA{};
+        std::array<float, 3> localB{};
+        std::array<float, 3> localC{};
         std::array<float, 3> a{};
         std::array<float, 3> b{};
         std::array<float, 3> c{};
@@ -98,6 +143,8 @@ private:
         vortex::ObjectId objectId;
         std::uint32_t firstIndex = 0U;
         std::uint32_t indexCount = 0U;
+        std::uint32_t firstPickTriangle = 0U;
+        std::uint32_t pickTriangleCount = 0U;
         vortex::TransformMatrix worldMatrix;
     };
 

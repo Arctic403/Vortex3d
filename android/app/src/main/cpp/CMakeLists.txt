@@ -54,9 +54,11 @@ add_custom_target(vortex_stage1_shaders DEPENDS "${VORTEX_STAGE1_HEADER}")
 add_library(vortex_android SHARED
     native_bridge.cpp
     viewport_host.cpp
+    gizmo_tool.cpp
     vulkan_camera.cpp
     vulkan_device.cpp
     vulkan_geometry.cpp
+    vulkan_gizmo.cpp
     vulkan_scene.cpp
     vulkan_swapchain.cpp
     vulkan_viewport.cpp

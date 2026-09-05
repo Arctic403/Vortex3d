@@ -1,27 +1,31 @@
 # Vortex3D Native Status
 
-Last updated: 2026-09-04
+Last updated: 2026-09-05
 
 ## Current engineering focus
 
-The portable C++ engine foundation and the first editor-aware Android viewport are in place. Phase 5 is complete: the Android Vulkan viewport now runs from a persistent native `Document + EditorHistory + EditorContext` session, renders multiple evaluated objects, ray-picks the nearest object, maps hits back to stable engine identity, and shows active-object selection/gizmo feedback.
+The portable C++ engine foundation and editor-aware Android Vulkan viewport are in place. Phase 6 is implementation-complete on the active branch: persistent object translation/rotation/scale is authored in `Document`, persisted by project schema v2, replayed through `EditorHistory`, consumed as engine-derived world matrices by rendering/picking/selection, and manipulated through touch Move / Rotate / Scale gizmo tools.
 
-The next major phase is engine-owned object transforms and interactive gizmo manipulation.
+The remaining Phase 6 gate is exact-head CI plus the normal 32-bit Samsung on-device behavior pass. Device verification is recorded separately from implementation completion.
 
 ## Foundation state
 
 The portable C++20 foundation remains the authored source of truth:
 
 - `Document` owns Scene / Collection / Object / Mesh datablocks.
+- `ObjectBlock` owns finite local translation/rotation/scale with explicit local-to-parent semantics.
+- Object world transforms compose through the parent chain.
 - Mesh topology uses stable typed 64-bit IDs independent from packed storage.
 - `EditableMesh` owns authored polygon topology and attributes.
 - Commands, transactions, `EditorHistory`, and mesh history provide bounded undo/redo.
+- `SetObjectTransformCommand` is the durable commit boundary for object manipulation.
 - `MeshEvaluator` produces validated rebuildable evaluated geometry.
-- `RenderExtractor` converts evaluated geometry into renderer-facing triangle snapshots while preserving source IDs.
+- `RenderExtractor` converts evaluated geometry into renderer-facing local-space triangle snapshots while preserving source IDs.
 - `EditorContext` owns active object, mode, selection domain, and stable topology selection outside persistent Document state.
+- Project schema v2 stores object transforms and explicitly migrates schema-v1 objects to identity transforms.
 - Project serialization, validation, dependency/procedural graph infrastructure, registries, and benchmark coverage remain available above the hardened core.
 
-The renderer does not own editable topology and Android framework types do not enter the portable engine.
+The renderer does not own editable topology or persistent object transforms, and Android framework types do not enter the portable engine.
 
 ## Android / Vulkan viewport progress
 
@@ -72,7 +76,7 @@ Stage 4 is verified on the 32-bit ARM Samsung target and remains compatible with
 
 ### Phase 5 — selection foundation
 
-Complete and merged.
+Complete, merged, and verified on the 32-bit Android target.
 
 - persistent native viewport/editor session,
 - tap-candidate vs orbit arbitration,
@@ -86,53 +90,48 @@ Complete and merged.
 - renderer-local synthetic IDs kept out of editor state,
 - active selection-buffer writes deferred until the previous frame fence signals.
 
-Phase 5A and 5B were both verified on the 32-bit Android target. ARMv7 and ARM64 CI remained green.
+### Phase 6A — engine-owned transforms
 
-## Pre-Phase-6 audit
+Complete and merged.
 
-The post-Phase-5 audit found no foundation rewrite requirement. The selection/editor ownership boundary is correct and ready to support object transforms.
+- persistent `ObjectTransform { translation, rotationRadians, scale }`,
+- finite-value validation and no-op revision behavior,
+- local matrix order `T * Rz * Ry * Rx * S`,
+- parent-composed world matrices,
+- `SetObjectTransformCommand`,
+- chronological unified transform undo/redo,
+- project schema v2 transform persistence,
+- explicit schema-v1 identity migration and corruption coverage.
 
-Small Stage 5B hardening gaps were found and patched before Phase 6:
+### Phase 6B — transform-aware renderer
 
-- viewport snapshots now verify the persistent object really references the mesh being extracted;
-- extracted source document/mesh identity is checked before entering renderer state;
-- editor selection is rolled back if the renderer rejects a corresponding active-object overlay change;
-- multi-object render batches reject mixed-document snapshots, missing mesh identity, non-finite origins, and 32-bit index-capacity overflow.
+Complete and merged.
 
-See `docs/PRE_PHASE6_AUDIT.md` for the detailed transform, undo, project-format, and renderer entry contracts.
+- meshes remain object-local instead of baking placement into topology,
+- renderer receives stable `ObjectId + local ViewportMesh + engine-derived world matrix`,
+- per-object Vulkan draw ranges over shared geometry buffers,
+- object world matrices applied during command recording,
+- CPU picking transformed from retained local triangles,
+- selected outline and XYZ gizmo use the same world matrix as the object,
+- stable object/face identity preserved across renderer-local batching.
 
-## Phase 6 entry contract
+### Phase 6C — interactive transform gizmos
 
-Phase 6 begins in the portable engine, not in Vulkan:
+Implementation complete on the Phase 6 completion PR.
 
-```text
-ObjectBlock authored local transform
-    translation / rotation / scale
-        |
-        v
-Document mutation API + validation
-        |
-        v
-Document command delta
-        |
-        v
-Unified EditorHistory undo / redo
-        |
-        v
-Project codec persistence
-        |
-        v
-Derived world/model transform
-        |
-        v
-Renderer draw item / picking / gizmo
-```
+- projected X/Y/Z touch hit-testing,
+- Move, Rotate, and Scale modes,
+- axis lock before one-finger orbit begins,
+- transient renderer-only preview during `ACTION_MOVE`,
+- no authored Document mutation per move event,
+- exactly one `SetObjectTransformCommand` on successful drag completion,
+- cancellation with no history entry on multitouch, lifecycle interruption, tool change, or `ACTION_CANCEL`,
+- native Undo / Redo controls,
+- rendering, CPU picking, outline, and gizmo remain synchronized during preview,
+- existing orbit/pan/pinch/tap selection routing retained for non-gizmo gestures,
+- UI-thread JNI ownership retained.
 
-Because objects already support parenting, object transform state must have explicit local-to-parent semantics and world transforms must compose through the parent chain.
-
-The current project schema does not store transforms. Phase 6 must treat adding them as an explicit schema change and add compatibility coverage so existing v1 files load with identity transforms rather than being silently misread.
-
-The current Stage 5B renderer batches static geometry into one draw. Phase 6 should preserve mesh-local evaluated geometry and introduce per-object draw ranges/model transforms rather than rebaking unrelated vertices whenever one object moves.
+See `docs/PHASE6_TRANSFORMS.md` for the complete contract and device-test checklist.
 
 ## CI gate
 
@@ -149,18 +148,18 @@ Core CI covers:
 - split/universal debug APK build and ABI packaging verification,
 - Release benchmark smoke.
 
-Both Android ABIs remain first-class build targets.
+Both Android ABIs remain first-class build targets. Phase 6 is merged only after its exact-head CI run is fully green.
 
 ## Known non-blocking renderer debt
 
-These remain tracked but do not block the first Phase 6 engine slice:
+These remain tracked beyond Phase 6 and do not change authored ownership:
 
-- camera/selection changes currently rebuild recorded swapchain command buffers rather than using per-frame camera/object buffers,
+- camera/selection/object-preview changes currently rebuild recorded swapchain command buffers rather than using per-frame camera/object buffers,
 - static mesh/grid data currently uses host-visible coherent Vulkan memory rather than staging uploads into device-local memory,
 - Android renderer source is warnings-as-errors compiled but is not yet included in the root host clang-tidy source list,
 - some shader/build helper names still carry early-stage naming even though the renderer has advanced well beyond Stage 1.
 
-The transform renderer refactor is the right point to improve the dynamic scene path without moving authored ownership into Vulkan.
+These are renderer-performance/maintainability improvements, not reasons to move persistent transform state into Vulkan.
 
 ## First meaningful product milestone
 

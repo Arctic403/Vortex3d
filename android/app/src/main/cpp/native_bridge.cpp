@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <new>
+#include <optional>
 #include <string>
 
 namespace {
@@ -17,6 +18,20 @@ namespace {
 
 [[nodiscard]] jlong handleFromHost(vortex::android::ViewportHost* host) noexcept {
     return static_cast<jlong>(reinterpret_cast<std::uintptr_t>(host));
+}
+
+[[nodiscard]] std::optional<vortex::android::TransformToolMode> transformToolMode(const jint mode) noexcept {
+    using vortex::android::TransformToolMode;
+    switch (mode) {
+        case 0:
+            return TransformToolMode::Move;
+        case 1:
+            return TransformToolMode::Rotate;
+        case 2:
+            return TransformToolMode::Scale;
+        default:
+            return std::nullopt;
+    }
 }
 
 } // namespace
@@ -100,6 +115,47 @@ Java_com_vortex3d_app_MainActivity_nativeTapViewport(
     JNIEnv*, jclass, const jlong handle, const jfloat x, const jfloat y) {
     auto* host = hostFromHandle(handle);
     return host != nullptr && host->tap(x, y) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_vortex3d_app_MainActivity_nativeBeginTransformGesture(
+    JNIEnv*,
+    jclass,
+    const jlong handle,
+    const jint mode,
+    const jfloat x,
+    const jfloat y) {
+    auto* host = hostFromHandle(handle);
+    const auto resolvedMode = transformToolMode(mode);
+    return host != nullptr && resolvedMode && host->beginTransformGesture(*resolvedMode, x, y)
+        ? JNI_TRUE
+        : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_vortex3d_app_MainActivity_nativeUpdateTransformGesture(
+    JNIEnv*, jclass, const jlong handle, const jfloat x, const jfloat y) {
+    auto* host = hostFromHandle(handle);
+    return host != nullptr && host->updateTransformGesture(x, y) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_vortex3d_app_MainActivity_nativeEndTransformGesture(
+    JNIEnv*, jclass, const jlong handle, const jboolean commit) {
+    auto* host = hostFromHandle(handle);
+    return host != nullptr && host->endTransformGesture(commit == JNI_TRUE) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_vortex3d_app_MainActivity_nativeUndo(JNIEnv*, jclass, const jlong handle) {
+    auto* host = hostFromHandle(handle);
+    return host != nullptr && host->undo() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_vortex3d_app_MainActivity_nativeRedo(JNIEnv*, jclass, const jlong handle) {
+    auto* host = hostFromHandle(handle);
+    return host != nullptr && host->redo() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jstring JNICALL

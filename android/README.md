@@ -4,21 +4,32 @@ This directory is the Android host around the portable Vortex3D C++ engine. The 
 
 ## Current viewport state
 
-The v0.3 Android host now runs the real Vortex-owned Vulkan viewport inside a `SurfaceView`. The current renderer includes:
+The Android host runs the Vortex-owned Vulkan viewport inside a `SurfaceView`. Through Phase 6 the current path includes:
 
 - Vulkan instance/device/surface/swapchain lifecycle,
 - depth buffering,
-- evaluated engine mesh upload through `RenderExtractor`,
-- indexed mesh drawing,
+- a persistent native `Document + EditorHistory + EditorContext` session,
+- evaluated engine geometry through `MeshEvaluator -> RenderExtractor`,
+- indexed multi-object drawing,
 - XZ grid plus XYZ axes,
 - native camera matrix handling,
-- one-finger orbit,
+- one-finger orbit with tap-vs-drag arbitration,
 - coherent two-finger pan,
 - symmetric filtered pinch zoom,
+- nearest-hit CPU object picking with stable `ObjectId + FaceId` resolution,
+- active-object outline and XYZ transform gizmo,
+- engine-owned object translation/rotation/scale,
+- engine-derived world transforms shared by rendering, picking, outline and gizmo placement,
+- touch-interactive Move / Rotate / Scale axis tools,
+- transient transform previews with one `SetObjectTransformCommand` committed per completed drag,
+- native Undo / Redo controls for committed transform edits,
+- safe cancellation when multitouch, lifecycle, tool changes, or `ACTION_CANCEL` interrupts a drag,
 - safe surface recreation and resize handling,
 - GPU/API/ABI diagnostics in the Android overlay.
 
-The current cube is still a renderer-bootstrap fixture. The next editor-facing step is to replace that temporary fixture plumbing with a persistent native editor/session path so picking and selection resolve back to stable engine IDs rather than renderer-owned state.
+Authored object transforms stay in the portable engine. Vulkan receives only derived world matrices and local-space render geometry; it never becomes the source of truth for object placement. During a gizmo drag the preview remains transient host/renderer state. `ACTION_UP` commits exactly one command into `EditorHistory`, while cancellation restores the authored transform with no history entry.
+
+All viewport JNI, touch routing, lifecycle callbacks, transform-tool calls and frame-loop callbacks currently execute on the Activity/UI-thread path. Do not move `SurfaceView` or Vulkan JNI work to background threads without first introducing an explicit synchronization/ownership design.
 
 ## ABI support
 
@@ -31,8 +42,12 @@ Gradle produces three debug APK variants: an ARMv7-only APK, an ARM64-only APK, 
 
 Use the `armeabi-v7a` APK for 32-bit Android targets. Use the `arm64-v8a` APK on 64-bit Android devices. The universal APK is useful for convenience/testing but is larger because it carries both native builds.
 
+## Phase 6 device gate
+
+Before Phase 6 is called device-verified on the 32-bit target, test selection plus X/Y/Z Move, Rotate and Scale, then confirm Undo/Redo, drag cancellation via a second finger, normal orbit/pan/pinch, background/resume and surface recreation. Rendering, picking, outline and gizmo feedback should stay aligned throughout a preview and no Vulkan errors should appear.
+
 ## Host rules
 
-Android input and lifecycle calls stay in the Java host and cross into C++ through the narrow JNI bridge. Renderer and engine state remain native-owned. The current frame loop and Vulkan JNI calls execute from the Activity/UI-thread path; do not move them to background threads without first introducing an explicit synchronization/ownership design.
+Android input and lifecycle calls stay in the Java host and cross into C++ through the narrow JNI bridge. Renderer and engine state remain native-owned. Persistent authored state must never be invented in Java or Vulkan merely for UI convenience.
 
 Open `android/` in Android Studio or invoke Gradle from an Android SDK/NDK environment. No Gradle wrapper JAR is committed because repository policy rejects generated/binary artifacts.

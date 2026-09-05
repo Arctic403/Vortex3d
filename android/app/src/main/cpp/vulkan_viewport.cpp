@@ -196,7 +196,7 @@ std::string VulkanViewport::info() const {
     }
     if (graphicsPipeline_ != VK_NULL_HANDLE && gridPipeline_ != VK_NULL_HANDLE &&
         depthView_ != VK_NULL_HANDLE && indexCount_ != 0U && gridVertexCount_ != 0U) {
-        stream << " | Phase6B object transforms";
+        stream << " | Phase6 Move/Rotate/Scale";
     }
     return stream.str();
 }

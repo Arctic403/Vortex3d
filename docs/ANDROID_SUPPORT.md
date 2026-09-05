@@ -27,27 +27,31 @@ CI also builds split ARMv7/ARM64 debug APKs plus a universal APK and verifies th
 Java Android host
   - Activity/lifecycle
   - SurfaceView ownership
-  - touch gesture recognition
+  - touch gesture/tool recognition
   - future Storage Access Framework / IME / clipboard / haptics
         |
         | narrow JNI boundary
         v
 C++ Vortex engine/editor session
-  - document
+  - document + object transforms
   - editor context
   - mesh kernel
   - commands/undo
   - evaluator
   - serialization
+  - transient transform tool session
         |
         v
 RenderExtractor
         |
         v
 Vulkan viewport backend
+  - derived draw ranges/world matrices
+  - picking
+  - selection/gizmo overlays
 ```
 
-The Android layer hosts the engine. It does not become the engine.
+The Android layer hosts the engine. It does not become the engine. Persistent transform state remains in `Document`, while Java and Vulkan hold only input/tool state or rebuildable renderer data.
 
 ## 32-bit constraints are design inputs
 
@@ -64,6 +68,8 @@ The Android layer hosts the engine. It does not become the engine.
 - memory statistics are exposed in diagnostics,
 - stress fixtures include large meshes and long undo histories.
 
+Interactive transform previews are also deliberately lightweight: a drag does not create a stream of `Document` revisions or undo records. One completed transform gesture commits one command.
+
 ## Platform separation
 
 The portable core does not include Android SDK/NDK platform APIs merely because it is compiled by the NDK. Android owns lifecycle, surfaces, storage/URI integration, clipboard, IME, haptics, and device capability queries behind a narrow platform layer.
@@ -74,23 +80,30 @@ The engine sees portable services/data rather than Android `Uri`, Activity, Surf
 
 The Android host must survive surface recreation, rotation/resizing, background/foreground, activity recreation, process recovery, interrupted save/autosave, and low-memory signals. Project correctness must not depend on a Vulkan surface remaining alive.
 
-The current renderer already separates device/session lifetime from swapchain/surface lifetime and safely waits for Vulkan work before tearing down swapchain resources.
+The current renderer separates device/session lifetime from swapchain/surface lifetime and waits for Vulkan work before tearing down swapchain resources. An in-progress transform preview is cancelled before pause/destroy or surface teardown, leaving authored `Document` state unchanged.
 
 ## Current host implementation
 
-`android/app` is now a live Vulkan viewport rather than a text-only shell. `MainActivity.java` owns the `SurfaceView`, `SurfaceHolder.Callback`, `Choreographer` frame loop, and touch gesture recognition. JNI calls remain on that UI-thread path unless a future threading design explicitly changes ownership.
+`android/app` is a live Vulkan editor viewport. `MainActivity.java` owns the `SurfaceView`, `SurfaceHolder.Callback`, `Choreographer` frame loop, camera gesture recognition, and transform-tool mode toolbar. JNI calls remain on that UI-thread path unless a future threading design explicitly changes ownership.
 
 The native viewport currently provides:
 
 - Vulkan instance/device/surface/swapchain,
 - ARMv7 + ARM64 builds,
 - depth buffering,
-- evaluated engine mesh upload,
+- persistent `Document + EditorHistory + EditorContext`,
+- evaluated local-space engine mesh extraction,
+- multiple object draw ranges with engine-derived world matrices,
 - grid and XYZ axes,
 - camera matrix push constants,
-- one-finger orbit,
+- one-finger orbit with tap arbitration,
 - coherent two-finger pan,
 - symmetric filtered pinch zoom,
+- stable-ID object/face picking,
+- selection outline and XYZ transform gizmo,
+- interactive Move / Rotate / Scale axis tools,
+- transient transform preview with one-command commit,
+- native transform Undo / Redo controls,
 - surface resize/recreation handling.
 
-The next editor-facing step is a persistent native editor/session path and stable-ID picking/selection. Selection belongs to `EditorContext`; renderer arrays remain derived data only.
+Selection belongs to `EditorContext`; authored object transforms belong to `Document`; renderer arrays and matrices remain derived data only. See `docs/PHASE6_TRANSFORMS.md` for the transform interaction and device-verification gate.
