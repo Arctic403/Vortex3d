@@ -29,9 +29,20 @@ constexpr std::size_t kShaftSegments = 10U;
 constexpr std::size_t kArrowSegments = 12U;
 constexpr std::size_t kRotateRingSegments = 40U;
 constexpr std::size_t kRotateTubeSegments = 8U;
-constexpr float kMoveTouchRadiusPixels = 30.0F;
-constexpr float kScaleTouchRadiusPixels = 34.0F;
-constexpr float kRotateTouchRadiusPixels = 36.0F;
+// 3D handles stay visually pixel-locked, while invisible touch regions compensate for
+// Android display density. Upper bounds prevent neighboring RGB handles from becoming one
+// giant overlapping target on very dense screens.
+constexpr float kMoveTouchRadiusDp = 24.0F;
+constexpr float kScaleTouchRadiusDp = 24.0F;
+constexpr float kRotateTouchRadiusDp = 22.0F;
+constexpr float kMoveTouchRadiusMinPixels = 30.0F;
+constexpr float kScaleTouchRadiusMinPixels = 34.0F;
+constexpr float kRotateTouchRadiusMinPixels = 36.0F;
+constexpr float kMoveTouchRadiusMaxPixels = 52.0F;
+constexpr float kScaleTouchRadiusMaxPixels = 54.0F;
+constexpr float kRotateTouchRadiusMaxPixels = 50.0F;
+constexpr float kMoveCenterDeadZoneDp = 16.0F;
+constexpr float kMoveCenterDeadZoneMaxPixels = 38.0F;
 constexpr float kTargetPixelsPerLocalUnit = 92.0F;
 constexpr float kProjectionProbeWorldUnits = 0.10F;
 constexpr float kMinGizmoWorldScale = 0.025F;
@@ -334,6 +345,14 @@ void addTorus(
 
 } // namespace
 
+bool VulkanViewport::setDisplayDensity(const float density) noexcept {
+    if (!std::isfinite(density) || density <= 0.0F) {
+        return false;
+    }
+    displayDensity_ = std::clamp(density, 0.5F, 8.0F);
+    return true;
+}
+
 bool VulkanViewport::setGizmoMode(const GizmoMode mode) noexcept {
     if (gizmoMode_ == mode) {
         return true;
@@ -583,9 +602,6 @@ std::optional<GizmoHit> VulkanViewport::hitTestGizmo(
 
     const CameraPushConstants camera = cameraPushConstants(width / height);
     const vortex::TransformMatrix visualMatrix = gizmoWorldMatrix(draw->worldMatrix);
-    const vortex::Vec3 objectOriginWorld = vortex::transformPoint(
-        draw->worldMatrix,
-        {0.0F, 0.0F, 0.0F});
     const vortex::Vec3 visualOriginWorld = vortex::transformPoint(
         visualMatrix,
         {0.0F, 0.0F, 0.0F});
@@ -598,26 +614,26 @@ std::optional<GizmoHit> VulkanViewport::hitTestGizmo(
     const ScreenPoint touch{xPixels, yPixels};
     float bestDistance = std::numeric_limits<float>::max();
     std::optional<GizmoHit> best;
+    const float moveTouchRadiusPixels = std::clamp(
+        kMoveTouchRadiusDp * displayDensity_,
+        kMoveTouchRadiusMinPixels,
+        kMoveTouchRadiusMaxPixels);
+    const float scaleTouchRadiusPixels = std::clamp(
+        kScaleTouchRadiusDp * displayDensity_,
+        kScaleTouchRadiusMinPixels,
+        kScaleTouchRadiusMaxPixels);
+    const float rotateTouchRadiusPixels = std::clamp(
+        kRotateTouchRadiusDp * displayDensity_,
+        kRotateTouchRadiusMinPixels,
+        kRotateTouchRadiusMaxPixels);
+    const float moveCenterDeadZonePixels = std::clamp(
+        kMoveCenterDeadZoneDp * displayDensity_,
+        kAxisShaftStart * kTargetPixelsPerLocalUnit,
+        kMoveCenterDeadZoneMaxPixels);
     constexpr std::array<GizmoAxis, 3> axes{GizmoAxis::X, GizmoAxis::Y, GizmoAxis::Z};
 
     for (const GizmoAxis axis : axes) {
         const vortex::Vec3 localAxis = axisVector(axis);
-        const vortex::Vec3 worldAxisRaw = vortex::transformVector(draw->worldMatrix, localAxis);
-        const vortex::Vec3 worldAxisUnit = normalizedOr(worldAxisRaw, localAxis);
-        const vortex::Vec3 unitEndpointWorld{
-            objectOriginWorld.x + worldAxisUnit.x,
-            objectOriginWorld.y + worldAxisUnit.y,
-            objectOriginWorld.z + worldAxisUnit.z,
-        };
-        ScreenPoint objectOriginScreen{};
-        ScreenPoint unitEndpointScreen{};
-        const bool hasWorldAxisProjection =
-            projectWorldPoint(camera, swapchainExtent_, objectOriginWorld, objectOriginScreen) &&
-            projectWorldPoint(camera, swapchainExtent_, unitEndpointWorld, unitEndpointScreen);
-        float pixelsPerWorldUnit = 1.0F;
-        if (hasWorldAxisProjection) {
-            pixelsPerWorldUnit = pointDistance(objectOriginScreen, unitEndpointScreen);
-        }
 
         if (mode == GizmoMode::Move) {
             ScreenPoint endpoint{};
@@ -630,18 +646,23 @@ std::optional<GizmoHit> VulkanViewport::hitTestGizmo(
             const float directionX = endpoint.x - visualOriginScreen.x;
             const float directionY = endpoint.y - visualOriginScreen.y;
             const float directionLength = std::sqrt(directionX * directionX + directionY * directionY);
-            if (directionLength < 10.0F || pixelsPerWorldUnit < 2.0F || !std::isfinite(pixelsPerWorldUnit)) {
+            if (directionLength < 10.0F) {
                 continue;
             }
-            const float distance = pointSegmentDistance(touch, visualOriginScreen, endpoint);
-            if (distance <= kMoveTouchRadiusPixels && distance < bestDistance) {
+            ScreenPoint hitStart{};
+            const vortex::Vec3 hitStartWorld = vortex::transformPoint(
+                visualMatrix,
+                scale(localAxis, kAxisShaftStart));
+            if (!projectWorldPoint(camera, swapchainExtent_, hitStartWorld, hitStart)) {
+                continue;
+            }
+            if (pointDistance(touch, visualOriginScreen) < moveCenterDeadZonePixels) {
+                continue;
+            }
+            const float distance = pointSegmentDistance(touch, hitStart, endpoint);
+            if (distance <= moveTouchRadiusPixels && distance < bestDistance) {
                 bestDistance = distance;
-                best = GizmoHit{
-                    axis,
-                    directionX / directionLength,
-                    directionY / directionLength,
-                    pixelsPerWorldUnit,
-                };
+                best = GizmoHit{axis};
             }
             continue;
         }
@@ -657,24 +678,19 @@ std::optional<GizmoHit> VulkanViewport::hitTestGizmo(
             const float directionX = handle.x - visualOriginScreen.x;
             const float directionY = handle.y - visualOriginScreen.y;
             const float directionLength = std::sqrt(directionX * directionX + directionY * directionY);
-            if (directionLength < 8.0F || pixelsPerWorldUnit < 2.0F || !std::isfinite(pixelsPerWorldUnit)) {
+            if (directionLength < 8.0F) {
                 continue;
             }
             const float distance = pointDistance(touch, handle);
-            if (distance <= kScaleTouchRadiusPixels && distance < bestDistance) {
+            if (distance <= scaleTouchRadiusPixels && distance < bestDistance) {
                 bestDistance = distance;
-                best = GizmoHit{
-                    axis,
-                    directionX / directionLength,
-                    directionY / directionLength,
-                    pixelsPerWorldUnit,
-                };
+                best = GizmoHit{axis};
             }
             continue;
         }
 
-        // Rotate mode follows the visible torus centerline. The closest ring segment gives
-        // both the axis and the tangent direction used by the existing drag math.
+        // Rotate hit testing follows the visible torus centerline. Gesture motion itself is
+        // solved later against the selected ring's 3D plane.
         for (std::size_t segment = 0U; segment < kRotateRingSegments; ++segment) {
             const float angleA = (2.0F * kPi * static_cast<float>(segment)) /
                                  static_cast<float>(kRotateRingSegments);
@@ -699,14 +715,9 @@ std::optional<GizmoHit> VulkanViewport::hitTestGizmo(
                 continue;
             }
             const float distance = pointSegmentDistance(touch, a, b);
-            if (distance <= kRotateTouchRadiusPixels && distance < bestDistance) {
+            if (distance <= rotateTouchRadiusPixels && distance < bestDistance) {
                 bestDistance = distance;
-                best = GizmoHit{
-                    axis,
-                    directionX / directionLength,
-                    directionY / directionLength,
-                    1.0F,
-                };
+                best = GizmoHit{axis};
             }
         }
     }

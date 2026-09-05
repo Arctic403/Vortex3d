@@ -36,6 +36,9 @@ public:
     [[nodiscard]] bool setTransformTool(const TransformToolMode mode) noexcept {
         return renderer_.setGizmoMode(gizmoMode(mode));
     }
+    [[nodiscard]] bool setDisplayDensity(const float density) noexcept {
+        return renderer_.setDisplayDensity(density);
+    }
 
     [[nodiscard]] bool beginTransformGesture(
         TransformToolMode mode,
@@ -57,15 +60,12 @@ private:
         ObjectTransform before{};
         ObjectTransform preview{};
         Vec3 translationAxisParent{};
+        TransformMatrix interactionWorldMatrix{};
         float worldUnitsPerTranslationUnit = 1.0F;
-        float startX = 0.0F;
-        float startY = 0.0F;
+        float startAxisParameter = 0.0F;
         float previousX = 0.0F;
         float previousY = 0.0F;
         float accumulatedRotationRadians = 0.0F;
-        float screenDirectionX = 0.0F;
-        float screenDirectionY = 0.0F;
-        float pixelsPerWorldUnit = 1.0F;
     };
 
     [[nodiscard]] bool initializeScene();

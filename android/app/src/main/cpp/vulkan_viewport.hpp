@@ -53,26 +53,14 @@ struct ViewportPick final {
     vortex::FaceId sourceFace;
 };
 
-// Screen-space metadata captured when a touch hits the active gizmo control.
-// The handle is interaction identity; mode remains separate editor state. pixelsPerWorldUnit
-// is measured at the selected object's depth and gives the editor host a stable drag scale
-// without giving Vulkan ownership of authored transforms.
+// Hit testing identifies the interaction surface only. Transform distance/angle/ratio is
+// solved geometrically from pointer rays after the gesture begins, so hit metadata cannot
+// silently become a second transform-input model.
 struct GizmoHit final {
     GizmoHit() = default;
-    GizmoHit(
-        const GizmoAxis axis,
-        const float directionX,
-        const float directionY,
-        const float pixelsPerWorldUnitValue) noexcept
-        : handle(axisGizmoHandle(axis)),
-          screenDirectionX(directionX),
-          screenDirectionY(directionY),
-          pixelsPerWorldUnit(pixelsPerWorldUnitValue) {}
+    explicit GizmoHit(const GizmoAxis axis) noexcept : handle(axisGizmoHandle(axis)) {}
 
     GizmoHandle handle = GizmoHandle::AxisX;
-    float screenDirectionX = 0.0F;
-    float screenDirectionY = 0.0F;
-    float pixelsPerWorldUnit = 0.0F;
 };
 
 class VulkanViewport final {
@@ -87,12 +75,18 @@ public:
     [[nodiscard]] std::optional<ViewportPick> pickObject(float xPixels, float yPixels) const noexcept;
     [[nodiscard]] bool setSelectedObject(vortex::ObjectId objectId) noexcept;
     [[nodiscard]] bool setGizmoMode(GizmoMode mode) noexcept;
+    [[nodiscard]] bool setDisplayDensity(float density) noexcept;
     [[nodiscard]] bool updateObjectWorldMatrix(
         vortex::ObjectId objectId,
         const vortex::TransformMatrix& worldMatrix) noexcept;
     [[nodiscard]] std::optional<GizmoHit> hitTestGizmo(
         vortex::ObjectId objectId,
         GizmoMode mode,
+        float xPixels,
+        float yPixels) const noexcept;
+    [[nodiscard]] std::optional<float> axisDragParameter(
+        const vortex::TransformMatrix& interactionWorldMatrix,
+        GizmoAxis axis,
         float xPixels,
         float yPixels) const noexcept;
     [[nodiscard]] std::optional<float> rotationDragRadians(
@@ -245,6 +239,7 @@ private:
     vortex::ObjectId selectedObject_;
     vortex::TransformMatrix selectionWorldMatrix_{};
     GizmoMode gizmoMode_ = GizmoMode::Move;
+    float displayDensity_ = 1.0F;
     bool selectionOverlayDirty_ = false;
 
     VkBuffer vertexBuffer_ = VK_NULL_HANDLE;

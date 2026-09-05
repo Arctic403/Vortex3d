@@ -10,9 +10,6 @@ namespace vortex::android {
 namespace {
 
 constexpr float kMathEpsilon = 1.0e-6F;
-constexpr float kRotateRadiansPerPixel = 0.0085F;
-constexpr float kScaleExponentPerPixel = 0.0080F;
-constexpr float kMinScaleMagnitude = 0.05F;
 constexpr float kMaxScaleMagnitude = 20.0F;
 constexpr float kTwoPi = 6.2831853071795864769F;
 
@@ -58,15 +55,6 @@ void setComponent(Vec3& value, const GizmoAxis axis, const float componentValue)
     }
 }
 
-[[nodiscard]] float clampedScale(const float before, const float factor) noexcept {
-    const float sign = before < 0.0F ? -1.0F : 1.0F;
-    const float magnitude = std::clamp(
-        std::max(std::abs(before), kMinScaleMagnitude) * factor,
-        kMinScaleMagnitude,
-        kMaxScaleMagnitude);
-    return sign * magnitude;
-}
-
 } // namespace
 
 std::optional<TransformMatrix> ViewportHost::previewWorldMatrix(
@@ -104,7 +92,7 @@ bool ViewportHost::beginTransformGesture(
     }
 
     const auto hit = renderer_.hitTestGizmo(objectId, gizmoMode(mode), xPixels, yPixels);
-    if (!hit || hit->pixelsPerWorldUnit <= kMathEpsilon) {
+    if (!hit) {
         return false;
     }
     const auto hitAxis = gizmoAxis(hit->handle);
@@ -113,29 +101,50 @@ bool ViewportHost::beginTransformGesture(
     }
     const GizmoAxis axis = *hitAxis;
 
-    const Vec3 basis = axisVector(axis);
-    const TransformMatrix localMatrix = objectTransformMatrix(object->transform);
-    Vec3 translationAxisParent = transformVector(localMatrix, basis);
-    const float parentAxisLength = length3(translationAxisParent);
-    if (!std::isfinite(parentAxisLength) || parentAxisLength <= kMathEpsilon) {
+    const auto interactionWorld = previewWorldMatrix(objectId, object->transform);
+    if (!interactionWorld) {
         return false;
     }
-    translationAxisParent.x /= parentAxisLength;
-    translationAxisParent.y /= parentAxisLength;
-    translationAxisParent.z /= parentAxisLength;
 
-    TransformMatrix parentWorld = identityTransformMatrix();
-    if (object->parentId) {
-        const auto resolvedParentWorld = document_.objectWorldMatrix(object->parentId);
-        if (!resolvedParentWorld) {
+    float startAxisParameter = 0.0F;
+    if (mode == TransformToolMode::Move || mode == TransformToolMode::Scale) {
+        const auto parameter = renderer_.axisDragParameter(
+            *interactionWorld, axis, xPixels, yPixels);
+        if (!parameter ||
+            (mode == TransformToolMode::Scale && std::abs(*parameter) <= kMathEpsilon)) {
             return false;
         }
-        parentWorld = *resolvedParentWorld;
+        startAxisParameter = *parameter;
     }
-    const Vec3 worldTranslationUnit = transformVector(parentWorld, translationAxisParent);
-    const float worldUnitsPerTranslationUnit = length3(worldTranslationUnit);
-    if (!std::isfinite(worldUnitsPerTranslationUnit) || worldUnitsPerTranslationUnit <= kMathEpsilon) {
-        return false;
+
+    Vec3 translationAxisParent{};
+    float worldUnitsPerTranslationUnit = 1.0F;
+    if (mode == TransformToolMode::Move) {
+        const Vec3 basis = axisVector(axis);
+        const TransformMatrix localMatrix = objectTransformMatrix(object->transform);
+        translationAxisParent = transformVector(localMatrix, basis);
+        const float parentAxisLength = length3(translationAxisParent);
+        if (!std::isfinite(parentAxisLength) || parentAxisLength <= kMathEpsilon) {
+            return false;
+        }
+        translationAxisParent.x /= parentAxisLength;
+        translationAxisParent.y /= parentAxisLength;
+        translationAxisParent.z /= parentAxisLength;
+
+        TransformMatrix parentWorld = identityTransformMatrix();
+        if (object->parentId) {
+            const auto resolvedParentWorld = document_.objectWorldMatrix(object->parentId);
+            if (!resolvedParentWorld) {
+                return false;
+            }
+            parentWorld = *resolvedParentWorld;
+        }
+        const Vec3 worldTranslationUnit = transformVector(parentWorld, translationAxisParent);
+        worldUnitsPerTranslationUnit = length3(worldTranslationUnit);
+        if (!std::isfinite(worldUnitsPerTranslationUnit) ||
+            worldUnitsPerTranslationUnit <= kMathEpsilon) {
+            return false;
+        }
     }
 
     transformDrag_.active = true;
@@ -145,15 +154,12 @@ bool ViewportHost::beginTransformGesture(
     transformDrag_.before = object->transform;
     transformDrag_.preview = object->transform;
     transformDrag_.translationAxisParent = translationAxisParent;
+    transformDrag_.interactionWorldMatrix = *interactionWorld;
     transformDrag_.worldUnitsPerTranslationUnit = worldUnitsPerTranslationUnit;
-    transformDrag_.startX = xPixels;
-    transformDrag_.startY = yPixels;
+    transformDrag_.startAxisParameter = startAxisParameter;
     transformDrag_.previousX = xPixels;
     transformDrag_.previousY = yPixels;
     transformDrag_.accumulatedRotationRadians = 0.0F;
-    transformDrag_.screenDirectionX = hit->screenDirectionX;
-    transformDrag_.screenDirectionY = hit->screenDirectionY;
-    transformDrag_.pixelsPerWorldUnit = hit->pixelsPerWorldUnit;
     return true;
 }
 
@@ -163,22 +169,23 @@ bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixe
         return false;
     }
 
-    const float deltaX = xPixels - transformDrag_.startX;
-    const float deltaY = yPixels - transformDrag_.startY;
-    const float projectedPixels =
-        deltaX * transformDrag_.screenDirectionX +
-        deltaY * transformDrag_.screenDirectionY;
-    if (!std::isfinite(projectedPixels)) {
-        return false;
-    }
-
     ObjectTransform preview = transformDrag_.before;
     float nextAccumulatedRotation = transformDrag_.accumulatedRotationRadians;
     bool commitRotationStep = false;
 
     switch (transformDrag_.mode) {
         case TransformToolMode::Move: {
-            const float worldDistance = projectedPixels / transformDrag_.pixelsPerWorldUnit;
+            const auto currentParameter = renderer_.axisDragParameter(
+                transformDrag_.interactionWorldMatrix,
+                transformDrag_.axis,
+                xPixels,
+                yPixels);
+            if (!currentParameter) {
+                // A view-aligned axis is geometrically ambiguous. Keep the last valid preview
+                // instead of changing interaction models or cancelling the gesture.
+                return true;
+            }
+            const float worldDistance = *currentParameter - transformDrag_.startAxisParameter;
             const float localDistance = worldDistance / transformDrag_.worldUnitsPerTranslationUnit;
             preview.translation.x += transformDrag_.translationAxisParent.x * localDistance;
             preview.translation.y += transformDrag_.translationAxisParent.y * localDistance;
@@ -186,39 +193,20 @@ bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixe
             break;
         }
         case TransformToolMode::Rotate: {
-            float deltaRadians = 0.0F;
-            std::optional<float> angularDelta;
-            const auto interactionWorld = previewWorldMatrix(
-                transformDrag_.objectId,
-                transformDrag_.preview);
-            if (interactionWorld) {
-                angularDelta = renderer_.rotationDragRadians(
-                    *interactionWorld,
-                    transformDrag_.axis,
-                    transformDrag_.previousX,
-                    transformDrag_.previousY,
-                    xPixels,
-                    yPixels);
+            const auto angularDelta = renderer_.rotationDragRadians(
+                transformDrag_.interactionWorldMatrix,
+                transformDrag_.axis,
+                transformDrag_.previousX,
+                transformDrag_.previousY,
+                xPixels,
+                yPixels);
+            if (!angularDelta) {
+                // Keep the previous valid angular state. Once the ray/plane geometry becomes
+                // valid again, rotation resumes from that same pointer sample with no mode swap.
+                return true;
             }
 
-            if (angularDelta) {
-                deltaRadians = *angularDelta;
-            } else {
-                // A ring viewed almost exactly edge-on makes its 3D interaction plane
-                // numerically ill-conditioned. Preserve a stable mobile fallback by using
-                // the original local tangent for only that incremental motion sample.
-                const float stepX = xPixels - transformDrag_.previousX;
-                const float stepY = yPixels - transformDrag_.previousY;
-                const float stepProjectedPixels =
-                    stepX * transformDrag_.screenDirectionX +
-                    stepY * transformDrag_.screenDirectionY;
-                deltaRadians = stepProjectedPixels * kRotateRadiansPerPixel;
-            }
-            if (!std::isfinite(deltaRadians)) {
-                return false;
-            }
-
-            nextAccumulatedRotation += deltaRadians;
+            nextAccumulatedRotation += *angularDelta;
             if (!std::isfinite(nextAccumulatedRotation)) {
                 return false;
             }
@@ -231,13 +219,25 @@ bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixe
             break;
         }
         case TransformToolMode::Scale: {
-            const float exponent = std::clamp(
-                projectedPixels * kScaleExponentPerPixel,
-                -6.0F,
-                6.0F);
-            const float factor = std::exp(exponent);
+            const auto currentParameter = renderer_.axisDragParameter(
+                transformDrag_.interactionWorldMatrix,
+                transformDrag_.axis,
+                xPixels,
+                yPixels);
+            if (!currentParameter) {
+                return true;
+            }
+
+            const float ratio = *currentParameter / transformDrag_.startAxisParameter;
+            if (!std::isfinite(ratio)) {
+                return false;
+            }
             const float beforeScale = component(preview.scale, transformDrag_.axis);
-            setComponent(preview.scale, transformDrag_.axis, clampedScale(beforeScale, factor));
+            const float scaled = std::clamp(
+                beforeScale * ratio,
+                -kMaxScaleMagnitude,
+                kMaxScaleMagnitude);
+            setComponent(preview.scale, transformDrag_.axis, scaled);
             break;
         }
     }

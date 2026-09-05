@@ -31,6 +31,7 @@ public final class MainActivity extends Activity {
 
     private static native String engineVersion();
     private static native long nativeCreateRenderer();
+    private static native boolean nativeSetDisplayDensity(long handle, float density);
     private static native void nativeDestroyRenderer(long handle);
     private static native boolean nativeSurfaceCreated(long handle, Surface surface);
     private static native boolean nativeSurfaceChanged(long handle);
@@ -99,6 +100,9 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         rendererHandle = nativeCreateRenderer();
+        if (rendererHandle != 0L) {
+            nativeSetDisplayDensity(rendererHandle, getResources().getDisplayMetrics().density);
+        }
         touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
 
         FrameLayout root = new FrameLayout(this);

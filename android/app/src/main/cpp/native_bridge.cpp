@@ -46,6 +46,13 @@ Java_com_vortex3d_app_MainActivity_nativeCreateRenderer(JNIEnv*, jclass) {
     return handleFromHost(new (std::nothrow) vortex::android::ViewportHost{});
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_vortex3d_app_MainActivity_nativeSetDisplayDensity(
+    JNIEnv*, jclass, const jlong handle, const jfloat density) {
+    auto* host = hostFromHandle(handle);
+    return host != nullptr && host->setDisplayDensity(density) ? JNI_TRUE : JNI_FALSE;
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_vortex3d_app_MainActivity_nativeDestroyRenderer(JNIEnv*, jclass, const jlong handle) {
     delete hostFromHandle(handle);
