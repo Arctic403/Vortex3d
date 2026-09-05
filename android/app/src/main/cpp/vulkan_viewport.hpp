@@ -266,7 +266,6 @@ private:
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
     VkPipeline gridPipeline_ = VK_NULL_HANDLE;
-    VkPipeline gizmoPipeline_ = VK_NULL_HANDLE;
 
     ViewportCamera camera_{};
     bool commandBuffersDirty_ = false;
