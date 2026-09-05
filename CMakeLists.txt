@@ -163,6 +163,11 @@ if(VORTEX_BUILD_TESTS)
     target_compile_features(vortex_gizmo_solver_smoke PRIVATE cxx_std_20)
     add_test(NAME vortex.gizmo.solver.smoke COMMAND vortex_gizmo_solver_smoke)
 
+    add_executable(vortex_gizmo_randomized_smoke tests/gizmo_randomized_smoke.cpp)
+    target_link_libraries(vortex_gizmo_randomized_smoke PRIVATE Vortex3D::engine)
+    target_compile_features(vortex_gizmo_randomized_smoke PRIVATE cxx_std_20)
+    add_test(NAME vortex.gizmo.randomized.smoke COMMAND vortex_gizmo_randomized_smoke)
+
     add_executable(vortex_change_journal_smoke tests/change_journal_smoke.cpp)
     target_link_libraries(vortex_change_journal_smoke PRIVATE Vortex3D::core)
     target_compile_features(vortex_change_journal_smoke PRIVATE cxx_std_20)

@@ -132,7 +132,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-The current test build registers 26 native suites, including v0.2 architecture and project-format round-trip coverage.
+The registered native test suite must remain fully green; CTest is the source of truth for the current suite count. Coverage includes architecture, project-format migration, mesh invariants, randomized evaluation, and gizmo transform hardening.
 
 ## Benchmarks
 

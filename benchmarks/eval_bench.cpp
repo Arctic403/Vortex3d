@@ -125,8 +125,7 @@ int main(const int argc, char** argv) {
     try {
         const Options options = parseOptions(argc, argv);
         const std::size_t requestedFaces = std::max<std::size_t>(1U, (options.scale + 3U) / 4U);
-        const std::size_t faceCap = options.smoke ? 250U : 2'000U;
-        const std::size_t faceCount = std::min(requestedFaces, faceCap);
+        const std::size_t faceCount = requestedFaces;
 
         vortex::Document document;
         const vortex::MeshId meshId = document.createMesh("Normal Benchmark", makeSmoothQuadStrip(faceCount));

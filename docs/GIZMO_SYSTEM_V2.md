@@ -193,6 +193,8 @@ Portable smoke coverage includes:
 - local quaternion rotation composition;
 - world quaternion rotation through a parent;
 - signed/negative scale composition;
+- 2,000 deterministic randomized transform-composition cases covering parent rotation, non-uniform scale, negative scale/reflection, local/world rotation, translation inversion, and orthonormal gizmo bases;
+- singular parent-scale rejection for translation composition;
 - schema-v3 quaternion persistence;
 - schema-v2 Euler migration;
 - schema-v1 identity migration.
@@ -204,7 +206,7 @@ The architecture intentionally leaves some features as explicit follow-ups inste
 1. expose translation/rotation/scale snap controls and precision mode;
 2. optionally add deferred first-motion candidate disambiguation for dense touch overlaps;
 3. add hover/pressed states for pointer-capable Android devices;
-4. broaden parent/shear/negative-scale randomized torture tests;
+4. extend randomized coverage if true affine shear becomes authored/supported rather than only appearing as a composed matrix consequence;
 5. device-test every new plane/center/view/uniform handle and Global/Local/View mode on ARMv7 before merge.
 
 Blender remains an interaction/reference source only; GPL source/assets are not copied into this MIT repository. The implementation is Vortex-owned portable C++ plus the Android/Vulkan adapter.

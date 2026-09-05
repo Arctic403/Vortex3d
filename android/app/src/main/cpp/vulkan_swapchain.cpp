@@ -242,16 +242,35 @@ bool VulkanViewport::createSwapchain() {
 }
 
 bool VulkanViewport::recordCommandBuffers() {
-    commandBuffers_.resize(framebuffers_.size(), VK_NULL_HANDLE);
-    VkCommandBufferAllocateInfo allocationInfo{};
-    allocationInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocationInfo.commandPool = commandPool_;
-    allocationInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocationInfo.commandBufferCount = static_cast<std::uint32_t>(commandBuffers_.size());
-    VkResult result = vkAllocateCommandBuffers(device_, &allocationInfo, commandBuffers_.data());
-    if (result != VK_SUCCESS) {
-        commandBuffers_.clear();
-        return failVk("vkAllocateCommandBuffers", result);
+    if (framebuffers_.empty()) {
+        return fail("Cannot record viewport commands without swapchain framebuffers");
+    }
+
+    VkResult result = VK_SUCCESS;
+    if (commandBuffers_.size() != framebuffers_.size()) {
+        if (!commandBuffers_.empty()) {
+            vkFreeCommandBuffers(
+                device_, commandPool_, static_cast<std::uint32_t>(commandBuffers_.size()), commandBuffers_.data());
+            commandBuffers_.clear();
+        }
+        commandBuffers_.resize(framebuffers_.size(), VK_NULL_HANDLE);
+        VkCommandBufferAllocateInfo allocationInfo{};
+        allocationInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocationInfo.commandPool = commandPool_;
+        allocationInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocationInfo.commandBufferCount = static_cast<std::uint32_t>(commandBuffers_.size());
+        result = vkAllocateCommandBuffers(device_, &allocationInfo, commandBuffers_.data());
+        if (result != VK_SUCCESS) {
+            commandBuffers_.clear();
+            return failVk("vkAllocateCommandBuffers", result);
+        }
+    } else {
+        for (const VkCommandBuffer commandBuffer : commandBuffers_) {
+            result = vkResetCommandBuffer(commandBuffer, 0U);
+            if (result != VK_SUCCESS) {
+                return failVk("vkResetCommandBuffer", result);
+            }
+        }
     }
 
     const float aspect = static_cast<float>(swapchainExtent_.width) /

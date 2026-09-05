@@ -2,16 +2,16 @@
 
 ## Current representation
 
-`EditableMesh` currently keeps four kinds of information per topology domain:
+`EditableMesh` currently keeps four core kinds of information per topology domain:
 
 1. stable 64-bit public IDs,
 2. ordered ID vectors,
 3. ID -> packed-index lookup maps,
 4. ID -> topology-record maps.
 
-This is intentionally redundant. It makes the early mutation kernel easy to validate and gives stable identities independent from mutable packed order.
+Edges additionally maintain a **derived undirected endpoint-pair -> `EdgeId` acceleration index**. This preserves the stable-ID/order/registry architecture while making `edgeBetween()` and duplicate-edge detection average O(1) instead of scanning the full edge order. The index is rebuilt from authored edge records after deserialization and `validateStrict()` checks it for missing, stale, or mismatched entries. It is never serialized as authored state.
 
-The cost is extra hash nodes, buckets, indirection, allocations, and duplicate lookup state. That matters especially on 32-bit Android, but correctness comes first until measurements show where the real pressure is.
+This representation is intentionally redundant. It makes the mutation kernel easy to validate and gives stable identities independent from mutable packed order. The cost is extra hash nodes, buckets, indirection, allocations, and duplicate lookup state. That matters especially on 32-bit Android, so future storage replacement remains measurement-driven rather than assumed.
 
 ## What is measured now
 

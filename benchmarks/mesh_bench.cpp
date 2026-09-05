@@ -5,6 +5,7 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
@@ -117,13 +118,12 @@ template <typename Function>
 }
 
 [[nodiscard]] std::size_t edgeCaseElements(const Options& options) {
-    const std::size_t cap = options.smoke ? 250U : 5'000U;
-    return std::min(options.scale, cap);
+    return options.scale;
 }
 
 [[nodiscard]] std::vector<Result> runBenchmarks(const Options& options) {
     std::vector<Result> results;
-    results.reserve(12);
+    results.reserve(13);
 
     {
         vortex::EditableMesh mesh;
@@ -148,7 +148,45 @@ template <typename Function>
                 (void)mesh.addEdge(vertices[index], vertices[index + 1U]);
             }
         });
-        results.push_back({"edge_create", edgeCount, elapsed, mesh.edgeCount(), edgeCount < options.scale});
+        results.push_back({"edge_create", edgeCount, elapsed, mesh.edgeCount(), false});
+    }
+
+
+    {
+        const std::size_t side = std::max<std::size_t>(
+            1U,
+            static_cast<std::size_t>(std::sqrt(static_cast<double>(options.scale))));
+        vortex::EditableMesh gridMesh;
+        std::vector<vortex::VertexId> gridVertices;
+        gridVertices.reserve((side + 1U) * (side + 1U));
+        for (std::size_t y = 0; y <= side; ++y) {
+            for (std::size_t x = 0; x <= side; ++x) {
+                gridVertices.push_back(gridMesh.addVertex({
+                    static_cast<float>(x),
+                    static_cast<float>(y),
+                    0.0F}));
+            }
+        }
+        const auto vertexAt = [&](const std::size_t x, const std::size_t y) {
+            return gridVertices[y * (side + 1U) + x];
+        };
+        const double elapsed = timeMilliseconds([&] {
+            for (std::size_t y = 0; y < side; ++y) {
+                for (std::size_t x = 0; x < side; ++x) {
+                    (void)gridMesh.addFace({
+                        vertexAt(x, y),
+                        vertexAt(x + 1U, y),
+                        vertexAt(x + 1U, y + 1U),
+                        vertexAt(x, y + 1U)});
+                }
+            }
+        });
+        results.push_back({
+            "quad_grid_face_create",
+            side * side,
+            elapsed,
+            static_cast<std::uint64_t>(gridMesh.edgeCount()),
+            false});
     }
 
     const std::size_t faceCount = topologyCaseElements(options);
@@ -209,7 +247,7 @@ template <typename Function>
                 checksum = split->newVertex.value() ^ split->newEdge.value();
             }
         });
-        results.push_back({"edge_split", edgeCount, elapsed, checksum, edgeCount < options.scale});
+        results.push_back({"edge_split", edgeCount, elapsed, checksum, false});
     }
 
     {
@@ -341,7 +379,7 @@ void writeJson(std::ostream& output, const Options& options, const std::vector<R
     }
     output << "  ],\n";
     output << "  \"notes\": [\n";
-    output << "    \"Topology-heavy creation cases are capped while current edge lookup is linear; capped=true records that fact.\",\n";
+    output << "    \"Edge creation and shared-edge quad-grid creation run at requested scale using the maintained undirected-edge acceleration index.\",\n";
     output << "    \"Hash payload sizes exclude allocator/node bookkeeping; use them with benchmark timing before redesigning storage.\"\n";
     output << "  ]\n";
     output << "}\n";

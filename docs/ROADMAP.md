@@ -1,8 +1,8 @@
 # Vortex3D Native Roadmap
 
-This roadmap is ordered by dependency, not by what looks coolest on screen. Each phase has an exit gate. Do not advance by hiding broken foundations under more features.
+This roadmap is ordered by dependency, not by what looks coolest on screen. Each foundation milestone has an exit gate. Do not advance by hiding broken foundations under more features.
 
-## Phase 0 — Native Core Bootstrap
+## Foundation Milestone 0 — Native Core Bootstrap
 
 **Goal:** prove Vortex exists independently of Android, browsers, and rendering.
 
@@ -22,7 +22,7 @@ Exit gate:
 - Create a document, allocate IDs, add/remove basic data-blocks, and validate ownership.
 - Deterministic tests pass.
 
-## Phase 1 — Document v2
+## Foundation Milestone 1 — Document v2
 
 **Goal:** establish durable project state.
 
@@ -41,7 +41,7 @@ Exit gate:
 - Make Unique correctly forks a mesh data-block.
 - Hierarchy survives save/load round trip in tests.
 
-## Phase 2 — Mesh Kernel v2
+## Foundation Milestone 2 — Mesh Kernel v2
 
 **Goal:** make editable polygon topology trustworthy.
 
@@ -61,7 +61,7 @@ Exit gate:
 - Topology-preserving operations retain IDs.
 - Broken radial/face loops are caught by tests.
 
-## Phase 3 — Commands, Transactions, Undo
+## Foundation Milestone 3 — Commands, Transactions, Undo
 
 **Goal:** establish the only supported mutation pipeline.
 
@@ -87,7 +87,7 @@ Exit gate:
 - 100+ randomized undo/redo cycles return the document to byte/semantic-equivalent state where expected.
 - Failed commands leave the document unchanged.
 
-## Phase 4 — Evaluation Graph
+## Foundation Milestone 4 — Evaluation Graph
 
 **Goal:** separate authored geometry from generated geometry.
 
@@ -114,7 +114,7 @@ Exit gate:
 - Toggling/removing modifiers never damages source topology.
 - Repeated evaluation is deterministic.
 
-## Phase 5 — Native Project Format
+## Foundation Milestone 5 — Native Project Format
 
 **Goal:** own our authoring data safely.
 
@@ -133,7 +133,7 @@ Exit gate:
 - Save -> kill -> reopen restores exact authored scene semantics.
 - Older fixture schemas migrate forward in automated tests.
 
-## Phase 6 — Android Host
+## Foundation Milestone 6 — Android Host
 
 **Goal:** run the real engine in an APK with no WebView dependency.
 
@@ -152,7 +152,7 @@ Exit gate:
 - Same core tests run for both ABIs in CI/build tooling where possible.
 - App creates, saves, reopens a project using the native core.
 
-## Phase 7 — Vulkan Viewport
+## Foundation Milestone 7 — Vulkan Viewport
 
 **Goal:** display evaluated scenes without coupling rendering to authoring.
 
@@ -174,7 +174,7 @@ Exit gate:
 - Editing an object updates only affected GPU resources.
 - Surface loss/orientation/background-resume paths survive reliably.
 
-## Phase 8 — Editor Framework
+## Foundation Milestone 8 — Editor Framework
 
 **Goal:** make native Vortex pleasant to operate.
 
@@ -193,7 +193,7 @@ Exit gate:
 - No editor action directly mutates document internals.
 - Every user-visible mutation appears as a valid undo step.
 
-## Phase 9 — Modeling Tool Set v1
+## Foundation Milestone 9 — Modeling Tool Set v1
 
 **Goal:** become genuinely useful for game-asset modeling.
 
@@ -215,7 +215,7 @@ Exit gate:
 - Build a representative low-poly game prop entirely inside Vortex.
 - Undo/redo and save/load survive the full workflow.
 
-## Phase 10 — UV, Materials, Import/Export
+## Foundation Milestone 10 — UV, Materials, Import/Export
 
 Deliverables:
 
@@ -231,7 +231,7 @@ Exit gate:
 
 - Create asset -> UV/material -> GLB export -> re-import -> semantic validation.
 
-## Phase 11 — Procedural / Node Foundation
+## Foundation Milestone 11 — Procedural / Node Foundation
 
 Deliverables:
 
@@ -243,7 +243,7 @@ Deliverables:
 
 Do not build this before the evaluator is proven.
 
-## Phase 12 — Plugin / Automation / AI Surface
+## Foundation Milestone 12 — Plugin / Automation / AI Surface
 
 Deliverables:
 

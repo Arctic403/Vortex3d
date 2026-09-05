@@ -16,6 +16,13 @@ jobs:
       - name: Check repository policy
         run: python3 scripts/check_repository_policy.py
 
+  project-truth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check current project truth
+        run: python3 scripts/check_project_truth.py
+
   portable-boundary:
     runs-on: ubuntu-latest
     steps:

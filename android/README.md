@@ -45,9 +45,11 @@ Gradle produces three debug APK variants: an ARMv7-only APK, an ARM64-only APK, 
 
 Use the `armeabi-v7a` APK for 32-bit Android targets. Use the `arm64-v8a` APK on 64-bit Android devices. The universal APK is useful for convenience/testing but is larger because it carries both native builds.
 
-## Phase 6 device gate
+## Gizmo System v2 ARMv7 device gate
 
-Before Phase 6 is called device-verified on the 32-bit target, test selection plus X/Y/Z Move, Rotate and Scale, then confirm Undo/Redo, drag cancellation via a second finger, normal orbit/pan/pinch, background/resume and surface recreation. Rendering, picking, outline and gizmo feedback should stay aligned throughout a preview and no Vulkan errors should appear.
+The historical Phase-6 axis gizmo baseline was device-verified. The current Gizmo System v2 branch must receive a fresh 32-bit device pass before its expanded interaction set is called verified. Exercise Move / Rotate / Scale in **Global, Local and View** orientation on: an unrotated object, a rotated object, a rotated child, a child under non-uniform parent scale, a negative-scale object, and a child under a negative-scale parent.
+
+For each applicable mode, test axis, plane, center/view-ring/uniform handles. Also hit camera-nearly-aligned constraints, rotations across the +/-pi phase seam and through multiple turns, scale crossing through zero into reflection, fast repeated drags, second-finger cancellation, orbit immediately after gizmo use, Undo/Redo, background/resume and surface recreation. Rendering, picking, outline and gizmo feedback must stay aligned throughout preview/commit and no Vulkan validation/runtime errors should appear.
 
 ## Host rules
 

@@ -35,6 +35,11 @@ struct MeshValidationTestAccess final {
         second.vertexB = first.vertexB;
     }
 
+    static void corruptEdgeLookup(EditableMesh& mesh, const EdgeId id) {
+        const MeshEdge& edge = mesh.edges_.at(id);
+        mesh.edgeLookup_.erase(EditableMesh::edgeLookupKey(edge.vertexA, edge.vertexB));
+    }
+
     static void rewindAllocator(EditableMesh& mesh) {
         mesh.nextElementId_ = 1U;
     }
@@ -127,6 +132,14 @@ void testDuplicateUndirectedEdgeDiagnostic() {
     assert(hasIssue(result, vortex::MeshValidationCode::DuplicateEdge));
 }
 
+void testEdgeLookupMismatchDiagnostic() {
+    auto fixture = makeQuad();
+    vortex::MeshValidationTestAccess::corruptEdgeLookup(fixture.mesh, fixture.edgeAB);
+    const auto result = fixture.mesh.validateStrict();
+    assert(!result);
+    assert(hasIssue(result, vortex::MeshValidationCode::EdgeLookupMismatch));
+}
+
 void testAllocatorMonotonicityDiagnostic() {
     auto fixture = makeQuad();
     vortex::MeshValidationTestAccess::rewindAllocator(fixture.mesh);
@@ -162,6 +175,7 @@ int main() {
     testRegistrySizeMismatch();
     testRegistryRecordIdentityMismatch();
     testDuplicateUndirectedEdgeDiagnostic();
+    testEdgeLookupMismatchDiagnostic();
     testAllocatorMonotonicityDiagnostic();
     testStrictFaceCycleUniqueness();
     testSupportedMutationRemainsStrictlyValid();

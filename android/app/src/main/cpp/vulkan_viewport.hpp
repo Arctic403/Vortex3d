@@ -197,6 +197,18 @@ private:
         VkMemoryPropertyFlags properties,
         VkBuffer& buffer,
         VkDeviceMemory& memory);
+    [[nodiscard]] bool createDynamicHostBuffer(
+        VkDeviceSize size,
+        VkBufferUsageFlags usage,
+        VkBuffer& buffer,
+        VkDeviceMemory& memory);
+    [[nodiscard]] bool createStaticDeviceBuffer(
+        const void* sourceData,
+        VkDeviceSize size,
+        VkBufferUsageFlags usage,
+        VkBuffer& buffer,
+        VkDeviceMemory& memory);
+    [[nodiscard]] bool copyBuffer(VkBuffer source, VkBuffer destination, VkDeviceSize size);
     [[nodiscard]] std::uint32_t findMemoryType(
         std::uint32_t typeBits,
         VkMemoryPropertyFlags properties) const;

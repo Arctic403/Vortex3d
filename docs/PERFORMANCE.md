@@ -19,6 +19,7 @@ The `vortex_mesh_bench` executable measures:
 - vertex creation,
 - edge creation,
 - face creation,
+- shared-edge quad-grid face creation,
 - topology traversal,
 - edge split,
 - face extrusion,
@@ -39,7 +40,7 @@ Manual benchmark workflow profiles are available at approximately:
 - 100,000 requested elements,
 - 1,000,000 requested elements.
 
-Bulk vertex/value cases can use the full requested scale. Topology-heavy creation cases are intentionally capped while `findEdge()` remains linear and face creation composes that lookup repeatedly. The JSON records `capped: true`; this is evidence of the current scaling boundary rather than a hidden benchmark shortcut.
+Edge creation now runs at the full requested scale through the maintained undirected-edge acceleration index, and the mesh benchmark includes a shared-edge quad grid so normal modeling topology exercises edge reuse directly. Some unrelated history/topology fixtures may still report `capped: true` when their own benchmark cost is intentionally bounded; each JSON result records that explicitly.
 
 A lightweight smoke profile runs on normal CI and is stored as a GitHub Actions artifact for each commit. Full-scale profiles are explicit/manual to avoid turning normal correctness CI into an uncontrolled performance bill.
 

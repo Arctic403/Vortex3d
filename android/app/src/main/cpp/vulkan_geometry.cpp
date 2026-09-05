@@ -99,6 +99,8 @@ bool VulkanViewport::createBuffer(
     vkGetBufferMemoryRequirements(device_, buffer, &requirements);
     const std::uint32_t memoryType = findMemoryType(requirements.memoryTypeBits, properties);
     if (memoryType == UINT32_MAX) {
+        vkDestroyBuffer(device_, buffer, nullptr);
+        buffer = VK_NULL_HANDLE;
         return fail("No compatible Vulkan memory type for viewport buffer");
     }
 
@@ -109,10 +111,128 @@ bool VulkanViewport::createBuffer(
     result = vkAllocateMemory(device_, &allocationInfo, nullptr, &memory);
     if (result != VK_SUCCESS) {
         memory = VK_NULL_HANDLE;
+        vkDestroyBuffer(device_, buffer, nullptr);
+        buffer = VK_NULL_HANDLE;
         return failVk("vkAllocateMemory(buffer)", result);
     }
     result = vkBindBufferMemory(device_, buffer, memory, 0U);
-    return result == VK_SUCCESS || failVk("vkBindBufferMemory", result);
+    if (result != VK_SUCCESS) {
+        vkFreeMemory(device_, memory, nullptr);
+        vkDestroyBuffer(device_, buffer, nullptr);
+        memory = VK_NULL_HANDLE;
+        buffer = VK_NULL_HANDLE;
+        return failVk("vkBindBufferMemory", result);
+    }
+    return true;
+}
+
+bool VulkanViewport::createDynamicHostBuffer(
+    const VkDeviceSize size,
+    const VkBufferUsageFlags usage,
+    VkBuffer& buffer,
+    VkDeviceMemory& memory) {
+    return createBuffer(
+        size,
+        usage,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        buffer,
+        memory);
+}
+
+bool VulkanViewport::copyBuffer(
+    const VkBuffer source,
+    const VkBuffer destination,
+    const VkDeviceSize size) {
+    if (source == VK_NULL_HANDLE || destination == VK_NULL_HANDLE || size == 0U ||
+        commandPool_ == VK_NULL_HANDLE || graphicsQueue_ == VK_NULL_HANDLE) {
+        return fail("Invalid Vulkan staging-copy request");
+    }
+
+    VkCommandBufferAllocateInfo allocationInfo{};
+    allocationInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocationInfo.commandPool = commandPool_;
+    allocationInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocationInfo.commandBufferCount = 1U;
+    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+    VkResult result = vkAllocateCommandBuffers(device_, &allocationInfo, &commandBuffer);
+    if (result != VK_SUCCESS) {
+        return failVk("vkAllocateCommandBuffers(staging)", result);
+    }
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    result = vkBeginCommandBuffer(commandBuffer, &beginInfo);
+    if (result != VK_SUCCESS) {
+        vkFreeCommandBuffers(device_, commandPool_, 1U, &commandBuffer);
+        return failVk("vkBeginCommandBuffer(staging)", result);
+    }
+
+    const VkBufferCopy region{0U, 0U, size};
+    vkCmdCopyBuffer(commandBuffer, source, destination, 1U, &region);
+    result = vkEndCommandBuffer(commandBuffer);
+    if (result == VK_SUCCESS) {
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.commandBufferCount = 1U;
+        submitInfo.pCommandBuffers = &commandBuffer;
+        result = vkQueueSubmit(graphicsQueue_, 1U, &submitInfo, VK_NULL_HANDLE);
+    }
+    if (result == VK_SUCCESS) {
+        result = vkQueueWaitIdle(graphicsQueue_);
+    }
+    vkFreeCommandBuffers(device_, commandPool_, 1U, &commandBuffer);
+    return result == VK_SUCCESS || failVk("viewport staging copy", result);
+}
+
+bool VulkanViewport::createStaticDeviceBuffer(
+    const void* sourceData,
+    const VkDeviceSize size,
+    const VkBufferUsageFlags usage,
+    VkBuffer& buffer,
+    VkDeviceMemory& memory) {
+    if (sourceData == nullptr || size == 0U) {
+        return fail("Static viewport buffer upload received no data");
+    }
+
+    VkBuffer stagingBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+    if (!createDynamicHostBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, stagingBuffer, stagingMemory)) {
+        return false;
+    }
+
+    void* mapped = nullptr;
+    VkResult result = vkMapMemory(device_, stagingMemory, 0U, size, 0U, &mapped);
+    if (result != VK_SUCCESS) {
+        vkDestroyBuffer(device_, stagingBuffer, nullptr);
+        vkFreeMemory(device_, stagingMemory, nullptr);
+        return failVk("vkMapMemory(staging)", result);
+    }
+    std::memcpy(mapped, sourceData, static_cast<std::size_t>(size));
+    vkUnmapMemory(device_, stagingMemory);
+
+    const bool destinationCreated = createBuffer(
+        size,
+        usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        buffer,
+        memory);
+    const bool copied = destinationCreated && copyBuffer(stagingBuffer, buffer, size);
+
+    vkDestroyBuffer(device_, stagingBuffer, nullptr);
+    vkFreeMemory(device_, stagingMemory, nullptr);
+    if (!copied) {
+        if (buffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device_, buffer, nullptr);
+            buffer = VK_NULL_HANDLE;
+        }
+        if (memory != VK_NULL_HANDLE) {
+            vkFreeMemory(device_, memory, nullptr);
+            memory = VK_NULL_HANDLE;
+        }
+        return false;
+    }
+    return true;
 }
 
 bool VulkanViewport::createGeometryResources() {
@@ -125,40 +245,32 @@ bool VulkanViewport::createGeometryResources() {
 
     const VkDeviceSize vertexBytes = static_cast<VkDeviceSize>(sceneVertices_.size() * sizeof(ViewportVertex));
     const VkDeviceSize indexBytes = static_cast<VkDeviceSize>(sceneIndices_.size() * sizeof(std::uint32_t));
-    const VkMemoryPropertyFlags hostMemory =
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    if (!createBuffer(vertexBytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, hostMemory, vertexBuffer_, vertexMemory_) ||
-        !createBuffer(indexBytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, hostMemory, indexBuffer_, indexMemory_)) {
+    if (!createStaticDeviceBuffer(
+            sceneVertices_.data(),
+            vertexBytes,
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            vertexBuffer_,
+            vertexMemory_) ||
+        !createStaticDeviceBuffer(
+            sceneIndices_.data(),
+            indexBytes,
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+            indexBuffer_,
+            indexMemory_)) {
         destroyGeometry();
         return false;
     }
 
     void* mapped = nullptr;
-    VkResult result = vkMapMemory(device_, vertexMemory_, 0U, vertexBytes, 0U, &mapped);
-    if (result != VK_SUCCESS) {
-        destroyGeometry();
-        return failVk("vkMapMemory(vertex)", result);
-    }
-    std::memcpy(mapped, sceneVertices_.data(), static_cast<std::size_t>(vertexBytes));
-    vkUnmapMemory(device_, vertexMemory_);
-
-    mapped = nullptr;
-    result = vkMapMemory(device_, indexMemory_, 0U, indexBytes, 0U, &mapped);
-    if (result != VK_SUCCESS) {
-        destroyGeometry();
-        return failVk("vkMapMemory(index)", result);
-    }
-    std::memcpy(mapped, sceneIndices_.data(), static_cast<std::size_t>(indexBytes));
-    vkUnmapMemory(device_, indexMemory_);
+    VkResult result = VK_SUCCESS;
     indexCount_ = static_cast<std::uint32_t>(sceneIndices_.size());
 
     if (!selectionOverlayVertices_.empty()) {
         const VkDeviceSize overlayBytes =
             static_cast<VkDeviceSize>(selectionOverlayVertices_.size() * sizeof(ViewportVertex));
-        if (!createBuffer(
+        if (!createDynamicHostBuffer(
                 overlayBytes,
                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                hostMemory,
                 selectionVertexBuffer_,
                 selectionVertexMemory_)) {
             destroyGeometry();
@@ -187,19 +299,14 @@ bool VulkanViewport::createGridResources() {
     }
 
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(vertices.size() * sizeof(ViewportVertex));
-    const VkMemoryPropertyFlags hostMemory =
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    if (!createBuffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, hostMemory, gridVertexBuffer_, gridVertexMemory_)) {
+    if (!createStaticDeviceBuffer(
+            vertices.data(),
+            bytes,
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            gridVertexBuffer_,
+            gridVertexMemory_)) {
         return false;
     }
-
-    void* mapped = nullptr;
-    const VkResult result = vkMapMemory(device_, gridVertexMemory_, 0U, bytes, 0U, &mapped);
-    if (result != VK_SUCCESS) {
-        return failVk("vkMapMemory(grid)", result);
-    }
-    std::memcpy(mapped, vertices.data(), static_cast<std::size_t>(bytes));
-    vkUnmapMemory(device_, gridVertexMemory_);
     gridVertexCount_ = static_cast<std::uint32_t>(vertices.size());
     return true;
 }
