@@ -67,6 +67,7 @@ public final class MainActivity extends Activity {
 
     private int transformTool = TOOL_MOVE;
     private int transformOrientation = ORIENTATION_GLOBAL;
+    private int preferredTransformOrientation = ORIENTATION_GLOBAL;
     private boolean gizmoDragging;
 
     private int gesturePointerCount;
@@ -292,9 +293,11 @@ public final class MainActivity extends Activity {
         }
         transformTool = tool;
         if (tool == TOOL_SCALE) {
-            // The project stores strict TRS, so non-uniform Scale is object-local;
-            // World/View scale would imply shear that the document cannot preserve.
+            // Scale is object-local for strict TRS, but this is only the effective orientation.
+            // Preserve the user's Move/Rotate preference and restore it when Scale is left.
             transformOrientation = ORIENTATION_LOCAL;
+        } else {
+            transformOrientation = preferredTransformOrientation;
         }
         refreshToolButtons();
         refreshOrientationButtons();
@@ -319,7 +322,7 @@ public final class MainActivity extends Activity {
             orientation != ORIENTATION_VIEW) {
             return;
         }
-        if (transformTool == TOOL_SCALE && orientation != ORIENTATION_LOCAL) {
+        if (transformTool == TOOL_SCALE) {
             return;
         }
         cancelActiveTransformGesture();
@@ -330,6 +333,7 @@ public final class MainActivity extends Activity {
             return;
         }
         transformOrientation = orientation;
+        preferredTransformOrientation = orientation;
         refreshOrientationButtons();
         updateStatus();
     }
@@ -342,7 +346,7 @@ public final class MainActivity extends Activity {
                 transformOrientation == ORIENTATION_GLOBAL ? 1.0f : 0.58f);
         }
         if (localOrientationButton != null) {
-            localOrientationButton.setEnabled(true);
+            localOrientationButton.setEnabled(!scaleIsLocalOnly);
             localOrientationButton.setAlpha(
                 transformOrientation == ORIENTATION_LOCAL ? 1.0f : 0.58f);
         }

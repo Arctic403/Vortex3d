@@ -37,29 +37,37 @@ public:
         if (transformDrag_.active || !renderer_.setGizmoInteractionFeedback({})) {
             return false;
         }
-        // Authored transforms are strict TRS. Non-uniform World/View scaling of a
-        // rotated object requires shear, so Scale uses the conventional object-local
-        // frame instead of displaying axes the document cannot faithfully store.
+
+        // Scale is evaluated in object-local space because the authored document stores strict
+        // TRS. Keep the user's Move/Rotate orientation preference separate so a temporary Scale
+        // operation does not silently overwrite Global/View/Local for the next tool.
+        const TransformOrientation previousOrientation = transformOrientation_;
+        TransformOrientation nextOrientation = preferredTransformOrientation_;
         if (mode == TransformToolMode::Scale) {
+            nextOrientation = TransformOrientation::Local;
             if (!renderer_.setGizmoOrientation(TransformOrientation::Local)) {
                 return false;
             }
-            transformOrientation_ = TransformOrientation::Local;
-        }
-        if (!renderer_.setGizmoMode(gizmoMode(mode))) {
+        } else if (!renderer_.setGizmoOrientation(nextOrientation)) {
             return false;
         }
+
+        if (!renderer_.setGizmoMode(gizmoMode(mode))) {
+            (void)renderer_.setGizmoOrientation(previousOrientation);
+            return false;
+        }
+
         transformToolMode_ = mode;
+        transformOrientation_ = nextOrientation;
         return true;
     }
     [[nodiscard]] bool setTransformOrientation(const TransformOrientation orientation) noexcept {
-        if (transformDrag_.active ||
-            (transformToolMode_ == TransformToolMode::Scale &&
-             orientation != TransformOrientation::Local) ||
+        if (transformDrag_.active || transformToolMode_ == TransformToolMode::Scale ||
             !renderer_.setGizmoOrientation(orientation)) {
             return false;
         }
         transformOrientation_ = orientation;
+        preferredTransformOrientation_ = orientation;
         return true;
     }
     [[nodiscard]] bool setDisplayDensity(const float density) noexcept {
@@ -120,6 +128,7 @@ private:
     TransformDragState transformDrag_{};
     TransformToolMode transformToolMode_ = TransformToolMode::Move;
     TransformOrientation transformOrientation_ = TransformOrientation::Global;
+    TransformOrientation preferredTransformOrientation_ = TransformOrientation::Global;
     bool initialized_ = false;
 };
 
