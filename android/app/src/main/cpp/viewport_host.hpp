@@ -41,8 +41,8 @@ public:
     [[nodiscard]] bool beginTransformGesture(
         TransformToolMode mode,
         float xPixels,
-        float yPixels) noexcept;
-    [[nodiscard]] bool updateTransformGesture(float xPixels, float yPixels) noexcept;
+        float yPixels);
+    [[nodiscard]] bool updateTransformGesture(float xPixels, float yPixels);
     [[nodiscard]] bool endTransformGesture(bool commit);
     [[nodiscard]] bool undo();
     [[nodiscard]] bool redo();
@@ -68,10 +68,10 @@ private:
 
     [[nodiscard]] bool initializeScene();
     [[nodiscard]] bool appendObjectSnapshot(ObjectId objectId, MeshId meshId);
-    [[nodiscard]] bool syncRendererObjectTransforms() noexcept;
+    [[nodiscard]] bool syncRendererObjectTransforms();
     [[nodiscard]] std::optional<TransformMatrix> previewWorldMatrix(
         ObjectId objectId,
-        const ObjectTransform& transform) const noexcept;
+        const ObjectTransform& transform) const;
 
     Document document_;
     EditorHistory history_;
