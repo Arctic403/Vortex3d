@@ -1,5 +1,7 @@
 #include "viewport_host.hpp"
 
+#include "vortex/core/document_commands.hpp"
+
 #include <algorithm>
 #include <cmath>
 
