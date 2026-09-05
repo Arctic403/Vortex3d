@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 namespace vortex::android {
 namespace {
@@ -147,6 +148,9 @@ bool ViewportHost::beginTransformGesture(
     transformDrag_.worldUnitsPerTranslationUnit = worldUnitsPerTranslationUnit;
     transformDrag_.startX = xPixels;
     transformDrag_.startY = yPixels;
+    transformDrag_.previousX = xPixels;
+    transformDrag_.previousY = yPixels;
+    transformDrag_.accumulatedRotationRadians = 0.0F;
     transformDrag_.screenDirectionX = hit->screenDirectionX;
     transformDrag_.screenDirectionY = hit->screenDirectionY;
     transformDrag_.pixelsPerWorldUnit = hit->pixelsPerWorldUnit;
@@ -169,6 +173,9 @@ bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixe
     }
 
     ObjectTransform preview = transformDrag_.before;
+    float nextAccumulatedRotation = transformDrag_.accumulatedRotationRadians;
+    bool commitRotationStep = false;
+
     switch (transformDrag_.mode) {
         case TransformToolMode::Move: {
             const float worldDistance = projectedPixels / transformDrag_.pixelsPerWorldUnit;
@@ -179,11 +186,48 @@ bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixe
             break;
         }
         case TransformToolMode::Rotate: {
+            float deltaRadians = 0.0F;
+            std::optional<float> angularDelta;
+            const auto interactionWorld = previewWorldMatrix(
+                transformDrag_.objectId,
+                transformDrag_.preview);
+            if (interactionWorld) {
+                angularDelta = renderer_.rotationDragRadians(
+                    *interactionWorld,
+                    transformDrag_.axis,
+                    transformDrag_.previousX,
+                    transformDrag_.previousY,
+                    xPixels,
+                    yPixels);
+            }
+
+            if (angularDelta) {
+                deltaRadians = *angularDelta;
+            } else {
+                // A ring viewed almost exactly edge-on makes its 3D interaction plane
+                // numerically ill-conditioned. Preserve a stable mobile fallback by using
+                // the original local tangent for only that incremental motion sample.
+                const float stepX = xPixels - transformDrag_.previousX;
+                const float stepY = yPixels - transformDrag_.previousY;
+                const float stepProjectedPixels =
+                    stepX * transformDrag_.screenDirectionX +
+                    stepY * transformDrag_.screenDirectionY;
+                deltaRadians = stepProjectedPixels * kRotateRadiansPerPixel;
+            }
+            if (!std::isfinite(deltaRadians)) {
+                return false;
+            }
+
+            nextAccumulatedRotation += deltaRadians;
+            if (!std::isfinite(nextAccumulatedRotation)) {
+                return false;
+            }
             const float beforeAngle = component(preview.rotationRadians, transformDrag_.axis);
             const float angle = std::remainder(
-                beforeAngle + projectedPixels * kRotateRadiansPerPixel,
+                beforeAngle + nextAccumulatedRotation,
                 kTwoPi);
             setComponent(preview.rotationRadians, transformDrag_.axis, angle);
+            commitRotationStep = true;
             break;
         }
         case TransformToolMode::Scale: {
@@ -206,6 +250,11 @@ bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixe
         return false;
     }
 
+    if (commitRotationStep) {
+        transformDrag_.accumulatedRotationRadians = nextAccumulatedRotation;
+        transformDrag_.previousX = xPixels;
+        transformDrag_.previousY = yPixels;
+    }
     transformDrag_.preview = preview;
     return true;
 }
