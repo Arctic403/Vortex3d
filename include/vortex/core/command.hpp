@@ -30,6 +30,12 @@ struct SetObjectMeshDelta final {
     MeshId after;
 };
 
+struct SetObjectTransformDelta final {
+    ObjectId objectId;
+    ObjectTransform before;
+    ObjectTransform after;
+};
+
 struct MakeObjectMeshUniqueDelta final {
     ObjectId objectId;
     MeshId sourceMeshId;
@@ -41,6 +47,7 @@ using DocumentDelta = std::variant<
     RenameObjectDelta,
     SetObjectParentDelta,
     SetObjectMeshDelta,
+    SetObjectTransformDelta,
     MakeObjectMeshUniqueDelta>;
 
 struct DocumentHistoryRecord final {
