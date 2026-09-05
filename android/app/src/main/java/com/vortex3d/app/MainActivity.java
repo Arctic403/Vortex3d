@@ -33,6 +33,7 @@ public final class MainActivity extends Activity {
     private static native boolean nativeOrbitCamera(long handle, float deltaX, float deltaY);
     private static native boolean nativePanCamera(long handle, float deltaX, float deltaY);
     private static native boolean nativeZoomCamera(long handle, float scaleFactor);
+    private static native boolean nativeTapViewport(long handle, float x, float y);
     private static native String nativeRendererInfo(long handle);
 
     private long rendererHandle;
@@ -43,8 +44,12 @@ public final class MainActivity extends Activity {
     private int gesturePointerCount;
     private int twoFingerMode = TWO_FINGER_UNDECIDED;
     private float touchSlop;
+    private float oneFingerDownX;
+    private float oneFingerDownY;
     private float lastTouchX;
     private float lastTouchY;
+    private boolean oneFingerOrbiting;
+    private boolean multiTouchOccurred;
     private float lastCentroidX;
     private float lastCentroidY;
     private float lastSpan;
@@ -172,11 +177,17 @@ public final class MainActivity extends Activity {
             case MotionEvent.ACTION_DOWN:
                 gesturePointerCount = 1;
                 twoFingerMode = TWO_FINGER_UNDECIDED;
-                lastTouchX = event.getX(0);
-                lastTouchY = event.getY(0);
+                oneFingerDownX = event.getX(0);
+                oneFingerDownY = event.getY(0);
+                lastTouchX = oneFingerDownX;
+                lastTouchY = oneFingerDownY;
+                oneFingerOrbiting = false;
+                multiTouchOccurred = false;
                 return true;
 
             case MotionEvent.ACTION_POINTER_DOWN:
+                multiTouchOccurred = true;
+                oneFingerOrbiting = false;
                 if (event.getPointerCount() >= 2) {
                     beginTwoFingerGesture(event);
                 }
@@ -184,6 +195,7 @@ public final class MainActivity extends Activity {
 
             case MotionEvent.ACTION_MOVE:
                 if (event.getPointerCount() >= 2) {
+                    multiTouchOccurred = true;
                     updateTwoFingerGesture(event);
                 } else if (event.getPointerCount() == 1) {
                     updateOneFingerGesture(event);
@@ -191,13 +203,26 @@ public final class MainActivity extends Activity {
                 return true;
 
             case MotionEvent.ACTION_POINTER_UP:
+                // The surviving finger re-anchors on the next MOVE. It cannot become a
+                // selection tap after a multi-touch gesture.
                 gesturePointerCount = 0;
                 twoFingerMode = TWO_FINGER_UNDECIDED;
                 lastSpan = 0.0f;
                 twoFingerStartSpan = 0.0f;
+                oneFingerOrbiting = false;
+                multiTouchOccurred = true;
                 return true;
 
             case MotionEvent.ACTION_UP:
+                if (gesturePointerCount == 1 && !oneFingerOrbiting && !multiTouchOccurred &&
+                    distance(oneFingerDownX, oneFingerDownY, event.getX(0), event.getY(0)) <= touchSlop) {
+                    if (nativeTapViewport(rendererHandle, event.getX(0), event.getY(0))) {
+                        updateStatus();
+                    }
+                }
+                resetGestureState();
+                return true;
+
             case MotionEvent.ACTION_CANCEL:
                 resetGestureState();
                 return true;
@@ -210,12 +235,31 @@ public final class MainActivity extends Activity {
     private void updateOneFingerGesture(MotionEvent event) {
         float x = event.getX(0);
         float y = event.getY(0);
-        if (gesturePointerCount == 1) {
-            nativeOrbitCamera(rendererHandle, x - lastTouchX, y - lastTouchY);
+
+        if (gesturePointerCount != 1) {
+            oneFingerDownX = x;
+            oneFingerDownY = y;
+            lastTouchX = x;
+            lastTouchY = y;
+            oneFingerOrbiting = false;
+            gesturePointerCount = 1;
+            return;
         }
+
+        if (!oneFingerOrbiting) {
+            if (distance(oneFingerDownX, oneFingerDownY, x, y) >= touchSlop) {
+                oneFingerOrbiting = true;
+            }
+            // Discard movement inside the tap slop instead of applying a jump when orbit
+            // first locks. The next MOVE starts camera motion from this anchor.
+            lastTouchX = x;
+            lastTouchY = y;
+            return;
+        }
+
+        nativeOrbitCamera(rendererHandle, x - lastTouchX, y - lastTouchY);
         lastTouchX = x;
         lastTouchY = y;
-        gesturePointerCount = 1;
     }
 
     private void beginTwoFingerGesture(MotionEvent event) {
@@ -271,9 +315,6 @@ public final class MainActivity extends Activity {
                 centroidY);
             float spanTravel = Math.abs(span - twoFingerStartSpan);
 
-            // Symmetric pinch: the fingers must separate/approach while their combined
-            // translation remains small. This rejects the common "two fingers drifting
-            // together" case that should be interpreted as pan.
             float combinedX = move0X + move1X;
             float combinedY = move0Y + move1Y;
             float combinedTravel = magnitude(combinedX, combinedY);
@@ -283,8 +324,6 @@ public final class MainActivity extends Activity {
                 totalFingerTravel >= touchSlop * 2.0f &&
                 combinedTravel <= totalFingerTravel * 0.40f;
 
-            // Deliberate pan: both fingers translate together while spacing remains
-            // nearly constant. The difference vector is small when their motion agrees.
             float differentialX = move0X - move1X;
             float differentialY = move0Y - move1Y;
             float differentialTravel = magnitude(differentialX, differentialY);
@@ -299,8 +338,6 @@ public final class MainActivity extends Activity {
             } else if (coherentPan) {
                 twoFingerMode = TWO_FINGER_PAN;
             } else {
-                // Ambiguous two-finger motion stays undecided instead of leaking pan
-                // and zoom into one another.
                 return;
             }
 
@@ -313,16 +350,12 @@ public final class MainActivity extends Activity {
         if (twoFingerMode == TWO_FINGER_PAN) {
             float spanDelta = Math.abs(span - lastSpan);
             float centroidDelta = distance(lastCentroidX, lastCentroidY, centroidX, centroidY);
-            // Keep pan strict even after lock. If spacing suddenly changes a lot, ignore
-            // the frame rather than sneaking zoom-like motion into the pan.
             if (spanDelta <= Math.max(touchSlop * 0.60f, centroidDelta * 0.45f)) {
                 nativePanCamera(rendererHandle, centroidX - lastCentroidX, centroidY - lastCentroidY);
             }
         } else if (twoFingerMode == TWO_FINGER_ZOOM) {
             float centroidDelta = distance(lastCentroidX, lastCentroidY, centroidX, centroidY);
             float spanDelta = Math.abs(span - lastSpan);
-            // Zoom only while the pinch remains substantially more radial than
-            // translational. This is the per-frame symmetry guard.
             if (lastSpan > 1.0f && span > 1.0f &&
                 spanDelta >= centroidDelta * 1.30f) {
                 nativeZoomCamera(rendererHandle, span / lastSpan);
@@ -347,6 +380,8 @@ public final class MainActivity extends Activity {
         twoFingerMode = TWO_FINGER_UNDECIDED;
         lastSpan = 0.0f;
         twoFingerStartSpan = 0.0f;
+        oneFingerOrbiting = false;
+        multiTouchOccurred = false;
     }
 
     private void startFrameLoop() {
@@ -373,6 +408,6 @@ public final class MainActivity extends Activity {
             ? "Renderer allocation failed"
             : nativeRendererInfo(rendererHandle);
         statusView.setText(
-            "Vortex3D DEV viewport v0.3\nEngine " + engineVersion() + "\n" + rendererInfo);
+            "Vortex3D DEV viewport v0.4\nEngine " + engineVersion() + "\n" + rendererInfo);
     }
 }
