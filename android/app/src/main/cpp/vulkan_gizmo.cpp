@@ -33,6 +33,7 @@ constexpr float kMoveTouchRadiusPixels = 30.0F;
 constexpr float kScaleTouchRadiusPixels = 34.0F;
 constexpr float kRotateTouchRadiusPixels = 28.0F;
 constexpr float kTargetPixelsPerLocalUnit = 92.0F;
+constexpr float kProjectionProbeWorldUnits = 0.10F;
 constexpr float kMinGizmoWorldScale = 0.025F;
 constexpr float kMaxGizmoWorldScale = 12.0F;
 
@@ -402,17 +403,44 @@ vortex::TransformMatrix VulkanViewport::gizmoWorldMatrix(
         const float aspect = static_cast<float>(swapchainExtent_.width) /
                              static_cast<float>(swapchainExtent_.height);
         const CameraPushConstants camera = cameraPushConstants(aspect);
-        const auto& viewProjection = camera.viewProjection;
-        const float clipW =
-            viewProjection[3] * origin.x +
-            viewProjection[7] * origin.y +
-            viewProjection[11] * origin.z +
-            viewProjection[15];
-        const float f = 1.0F / std::tan(camera_.fovYRadians * 0.5F);
-        if (std::isfinite(clipW) && clipW > kProjectionEpsilon && std::isfinite(f) && f > kProjectionEpsilon) {
-            worldScale = (2.0F * clipW * kTargetPixelsPerLocalUnit) /
-                         (static_cast<float>(swapchainExtent_.height) * f);
-            worldScale = std::clamp(worldScale, kMinGizmoWorldScale, kMaxGizmoWorldScale);
+        ScreenPoint originScreen{};
+        if (projectWorldPoint(camera, swapchainExtent_, origin, originScreen)) {
+            float pixelsPerWorldUnit = 0.0F;
+            const std::array<vortex::Vec3, 3> worldAxes{xAxis, yAxis, zAxis};
+            for (const vortex::Vec3 axis : worldAxes) {
+                const vortex::Vec3 probeOffset = scale(axis, kProjectionProbeWorldUnits);
+                const vortex::Vec3 positiveProbe = add(origin, probeOffset);
+                const vortex::Vec3 negativeProbe = add(origin, scale(probeOffset, -1.0F));
+                ScreenPoint positiveScreen{};
+                ScreenPoint negativeScreen{};
+                const bool hasPositive = projectWorldPoint(
+                    camera, swapchainExtent_, positiveProbe, positiveScreen);
+                const bool hasNegative = projectWorldPoint(
+                    camera, swapchainExtent_, negativeProbe, negativeScreen);
+
+                float axisPixelsPerWorldUnit = 0.0F;
+                if (hasPositive && hasNegative) {
+                    axisPixelsPerWorldUnit = pointDistance(positiveScreen, negativeScreen) /
+                                             (2.0F * kProjectionProbeWorldUnits);
+                } else if (hasPositive) {
+                    axisPixelsPerWorldUnit = pointDistance(originScreen, positiveScreen) /
+                                             kProjectionProbeWorldUnits;
+                } else if (hasNegative) {
+                    axisPixelsPerWorldUnit = pointDistance(originScreen, negativeScreen) /
+                                             kProjectionProbeWorldUnits;
+                }
+
+                if (std::isfinite(axisPixelsPerWorldUnit)) {
+                    pixelsPerWorldUnit = std::max(pixelsPerWorldUnit, axisPixelsPerWorldUnit);
+                }
+            }
+
+            if (pixelsPerWorldUnit > kProjectionEpsilon) {
+                worldScale = std::clamp(
+                    kTargetPixelsPerLocalUnit / pixelsPerWorldUnit,
+                    kMinGizmoWorldScale,
+                    kMaxGizmoWorldScale);
+            }
         }
     }
 
