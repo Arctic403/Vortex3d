@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gizmo_contract.hpp"
 #include "vulkan_viewport.hpp"
 
 #include "vortex/engine.hpp"
@@ -11,12 +12,6 @@
 #include <vector>
 
 namespace vortex::android {
-
-enum class TransformToolMode : std::uint8_t {
-    Move = 0U,
-    Rotate = 1U,
-    Scale = 2U,
-};
 
 class ViewportHost final {
 public:
@@ -39,15 +34,7 @@ public:
     [[nodiscard]] bool tap(float xPixels, float yPixels) noexcept;
 
     [[nodiscard]] bool setTransformTool(const TransformToolMode mode) noexcept {
-        switch (mode) {
-            case TransformToolMode::Move:
-                return renderer_.setGizmoMode(GizmoMode::Move);
-            case TransformToolMode::Rotate:
-                return renderer_.setGizmoMode(GizmoMode::Rotate);
-            case TransformToolMode::Scale:
-                return renderer_.setGizmoMode(GizmoMode::Scale);
-        }
-        return false;
+        return renderer_.setGizmoMode(gizmoMode(mode));
     }
 
     [[nodiscard]] bool beginTransformGesture(
