@@ -296,6 +296,14 @@ CameraPushConstants VulkanViewport::cameraPushConstants(const float aspect) cons
     return push;
 }
 
+CameraPushConstants VulkanViewport::objectPushConstants(
+    const float aspect,
+    const vortex::TransformMatrix& worldMatrix) const noexcept {
+    CameraPushConstants push = cameraPushConstants(aspect);
+    push.viewProjection = multiply(push.viewProjection, worldMatrix.values);
+    return push;
+}
+
 std::optional<vortex::FaceId> VulkanViewport::pickFace(
     const float xPixels,
     const float yPixels) const noexcept {
