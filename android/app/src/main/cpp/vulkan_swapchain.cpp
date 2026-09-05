@@ -325,17 +325,33 @@ bool VulkanViewport::recordCommandBuffers() {
         }
 
         if (selectionVisible_ && selectionVertexBuffer_ != VK_NULL_HANDLE && selectionVertexCount_ != 0U) {
-            const CameraPushConstants selectionPush = objectPushConstants(aspect, selectionWorldMatrix_);
-            vkCmdPushConstants(
-                commandBuffers_[index],
-                pipelineLayout_,
-                VK_SHADER_STAGE_VERTEX_BIT,
-                0U,
-                sizeof(CameraPushConstants),
-                &selectionPush);
             vkCmdBindPipeline(commandBuffers_[index], VK_PIPELINE_BIND_POINT_GRAPHICS, gridPipeline_);
             vkCmdBindVertexBuffers(commandBuffers_[index], 0U, 1U, &selectionVertexBuffer_, &vertexOffset);
-            vkCmdDraw(commandBuffers_[index], selectionVertexCount_, 1U, 0U, 0U);
+
+            if (selectionOutlineVertexCount_ != 0U) {
+                const CameraPushConstants selectionPush = objectPushConstants(aspect, selectionWorldMatrix_);
+                vkCmdPushConstants(
+                    commandBuffers_[index],
+                    pipelineLayout_,
+                    VK_SHADER_STAGE_VERTEX_BIT,
+                    0U,
+                    sizeof(CameraPushConstants),
+                    &selectionPush);
+                vkCmdDraw(commandBuffers_[index], selectionOutlineVertexCount_, 1U, 0U, 0U);
+            }
+
+            if (gizmoVertexCount_ != 0U) {
+                const vortex::TransformMatrix gizmoWorld = gizmoWorldMatrix(selectionWorldMatrix_);
+                const CameraPushConstants gizmoPush = objectPushConstants(aspect, gizmoWorld);
+                vkCmdPushConstants(
+                    commandBuffers_[index],
+                    pipelineLayout_,
+                    VK_SHADER_STAGE_VERTEX_BIT,
+                    0U,
+                    sizeof(CameraPushConstants),
+                    &gizmoPush);
+                vkCmdDraw(commandBuffers_[index], gizmoVertexCount_, 1U, gizmoFirstVertex_, 0U);
+            }
         }
 
         vkCmdEndRenderPass(commandBuffers_[index]);

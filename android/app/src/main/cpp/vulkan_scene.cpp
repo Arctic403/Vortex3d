@@ -133,25 +133,13 @@ void addLine(
 
     constexpr std::array<float, 3> selectedColor{1.0F, 0.55F, 0.08F};
     output.clear();
-    output.reserve(edges.size() * 2U + 12U);
+    output.reserve(edges.size() * 2U);
     for (const auto& [key, info] : edges) {
         (void)key;
         if (info.occurrences == 1U || info.crossesFaces) {
             addLine(output, info.a, info.b, selectedColor);
         }
     }
-
-    // The transform gizmo remains object-local for Phase 6. All Move/Rotate/Scale previews
-    // update only this derived world matrix; authored state stays untouched until commit.
-    constexpr std::array<float, 3> origin{0.0F, 0.0F, 0.0F};
-    constexpr float marker = 0.10F;
-    constexpr float axisLength = 1.35F;
-    addLine(output, {-marker, 0.0F, 0.0F}, {marker, 0.0F, 0.0F}, {1.0F, 0.85F, 0.18F});
-    addLine(output, {0.0F, -marker, 0.0F}, {0.0F, marker, 0.0F}, {1.0F, 0.85F, 0.18F});
-    addLine(output, {0.0F, 0.0F, -marker}, {0.0F, 0.0F, marker}, {1.0F, 0.85F, 0.18F});
-    addLine(output, origin, {axisLength, 0.0F, 0.0F}, {0.95F, 0.16F, 0.14F});
-    addLine(output, origin, {0.0F, axisLength, 0.0F}, {0.18F, 0.92F, 0.28F});
-    addLine(output, origin, {0.0F, 0.0F, axisLength}, {0.18F, 0.42F, 1.0F});
     return !output.empty();
 }
 
@@ -280,7 +268,9 @@ bool VulkanViewport::setViewportObjects(const std::vector<ViewportObjectSnapshot
         if (!buildSelectionOverlay(object, overlay.vertices)) {
             return fail("Phase 6 failed to build an object selection overlay");
         }
-        selectionOverlayCapacity_ = std::max(selectionOverlayCapacity_, overlay.vertices.size());
+        selectionOverlayCapacity_ = std::max(
+            selectionOverlayCapacity_,
+            overlay.vertices.size() + kGizmoVertexCapacity);
         selectionOverlays_.push_back(std::move(overlay));
     }
 
@@ -289,9 +279,13 @@ bool VulkanViewport::setViewportObjects(const std::vector<ViewportObjectSnapshot
         return fail("Phase 6 render list did not produce complete derived scene state");
     }
 
-    // Allocate enough host-visible overlay storage for whichever object becomes active.
+    // Allocate enough host-visible overlay storage for the selected outline plus the
+    // screen-scaled universal transform gizmo.
     selectionOverlayVertices_.assign(selectionOverlayCapacity_, ViewportVertex{});
     selectionVertexCount_ = 0U;
+    selectionOutlineVertexCount_ = 0U;
+    gizmoFirstVertex_ = 0U;
+    gizmoVertexCount_ = 0U;
     selectionVisible_ = false;
     selectedObject_ = {};
     selectionWorldMatrix_ = vortex::identityTransformMatrix();
@@ -395,6 +389,9 @@ bool VulkanViewport::refreshSelectionOverlay() {
 
     if (!selectedObject_) {
         selectionVertexCount_ = 0U;
+        selectionOutlineVertexCount_ = 0U;
+        gizmoFirstVertex_ = 0U;
+        gizmoVertexCount_ = 0U;
         selectionVisible_ = false;
         selectionWorldMatrix_ = vortex::identityTransformMatrix();
         selectionOverlayDirty_ = false;
@@ -406,22 +403,40 @@ bool VulkanViewport::refreshSelectionOverlay() {
         selectionOverlays_.end(),
         [this](const SelectionOverlay& overlay) { return overlay.objectId == selectedObject_; });
     if (iterator == selectionOverlays_.end() || iterator->vertices.empty() ||
-        iterator->vertices.size() > selectionOverlayCapacity_ ||
         selectionVertexMemory_ == VK_NULL_HANDLE) {
         return false;
     }
 
-    const VkDeviceSize bytes = static_cast<VkDeviceSize>(iterator->vertices.size() * sizeof(ViewportVertex));
+    const std::vector<ViewportVertex> gizmoVertices = buildGizmoVertices();
+    const std::size_t totalVertexCount = iterator->vertices.size() + gizmoVertices.size();
+    if (gizmoVertices.empty() || totalVertexCount > selectionOverlayCapacity_ ||
+        totalVertexCount > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+        return false;
+    }
+
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(totalVertexCount * sizeof(ViewportVertex));
     void* mapped = nullptr;
     const VkResult result = vkMapMemory(device_, selectionVertexMemory_, 0U, bytes, 0U, &mapped);
     if (result != VK_SUCCESS) {
         return failVk("vkMapMemory(active selection overlay)", result);
     }
-    std::memcpy(mapped, iterator->vertices.data(), static_cast<std::size_t>(bytes));
+
+    auto* destination = static_cast<ViewportVertex*>(mapped);
+    std::memcpy(
+        destination,
+        iterator->vertices.data(),
+        iterator->vertices.size() * sizeof(ViewportVertex));
+    std::memcpy(
+        destination + iterator->vertices.size(),
+        gizmoVertices.data(),
+        gizmoVertices.size() * sizeof(ViewportVertex));
     vkUnmapMemory(device_, selectionVertexMemory_);
 
     selectionWorldMatrix_ = iterator->worldMatrix;
-    selectionVertexCount_ = static_cast<std::uint32_t>(iterator->vertices.size());
+    selectionOutlineVertexCount_ = static_cast<std::uint32_t>(iterator->vertices.size());
+    gizmoFirstVertex_ = selectionOutlineVertexCount_;
+    gizmoVertexCount_ = static_cast<std::uint32_t>(gizmoVertices.size());
+    selectionVertexCount_ = static_cast<std::uint32_t>(totalVertexCount);
     selectionVisible_ = true;
     selectionOverlayDirty_ = false;
     return true;

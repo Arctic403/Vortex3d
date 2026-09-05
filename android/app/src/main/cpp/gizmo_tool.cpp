@@ -27,6 +27,18 @@ constexpr float kTwoPi = 6.2831853071795864769F;
     return {1.0F, 0.0F, 0.0F};
 }
 
+[[nodiscard]] GizmoMode gizmoMode(const TransformToolMode mode) noexcept {
+    switch (mode) {
+        case TransformToolMode::Move:
+            return GizmoMode::Move;
+        case TransformToolMode::Rotate:
+            return GizmoMode::Rotate;
+        case TransformToolMode::Scale:
+            return GizmoMode::Scale;
+    }
+    return GizmoMode::Move;
+}
+
 [[nodiscard]] float length3(const Vec3 value) noexcept {
     return std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
 }
@@ -102,7 +114,7 @@ bool ViewportHost::beginTransformGesture(
         return false;
     }
 
-    const auto hit = renderer_.hitTestGizmo(objectId, xPixels, yPixels);
+    const auto hit = renderer_.hitTestGizmo(objectId, gizmoMode(mode), xPixels, yPixels);
     if (!hit || hit->pixelsPerWorldUnit <= kMathEpsilon) {
         return false;
     }

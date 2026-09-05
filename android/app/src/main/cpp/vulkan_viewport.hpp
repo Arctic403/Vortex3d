@@ -57,7 +57,13 @@ enum class GizmoAxis : std::uint8_t {
     Z = 2U,
 };
 
-// Screen-space metadata captured when a touch hits one of the visible XYZ gizmo axes.
+enum class GizmoMode : std::uint8_t {
+    Move = 0U,
+    Rotate = 1U,
+    Scale = 2U,
+};
+
+// Screen-space metadata captured when a touch hits the active gizmo control.
 // pixelsPerWorldUnit is measured at the selected object's depth and gives the editor host
 // a stable drag scale without giving Vulkan ownership of authored transforms.
 struct GizmoHit final {
@@ -83,6 +89,7 @@ public:
         const vortex::TransformMatrix& worldMatrix) noexcept;
     [[nodiscard]] std::optional<GizmoHit> hitTestGizmo(
         vortex::ObjectId objectId,
+        GizmoMode mode,
         float xPixels,
         float yPixels) const noexcept;
 
@@ -100,10 +107,15 @@ public:
     [[nodiscard]] std::string info() const;
 
 private:
+    static constexpr std::size_t kGizmoVertexCapacity = 512U;
+
     // Legacy single-snapshot helper remains private while Phase 6 uses per-object draw items.
     [[nodiscard]] bool setViewportMesh(const vortex::ViewportMesh& mesh);
     [[nodiscard]] std::optional<vortex::FaceId> pickFace(float xPixels, float yPixels) const noexcept;
     [[nodiscard]] bool setSelectionVisible(bool visible) noexcept;
+    [[nodiscard]] std::vector<ViewportVertex> buildGizmoVertices() const;
+    [[nodiscard]] vortex::TransformMatrix gizmoWorldMatrix(
+        const vortex::TransformMatrix& objectWorldMatrix) const noexcept;
 
     struct PickTriangle final {
         PickTriangle() = default;
@@ -244,6 +256,9 @@ private:
     VkBuffer selectionVertexBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory selectionVertexMemory_ = VK_NULL_HANDLE;
     std::uint32_t selectionVertexCount_ = 0U;
+    std::uint32_t selectionOutlineVertexCount_ = 0U;
+    std::uint32_t gizmoFirstVertex_ = 0U;
+    std::uint32_t gizmoVertexCount_ = 0U;
     bool selectionVisible_ = false;
 
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
