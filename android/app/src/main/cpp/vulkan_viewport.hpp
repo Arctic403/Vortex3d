@@ -114,23 +114,13 @@ private:
     // selected object is active. The largest single solid gizmo mode fits comfortably below it.
     static constexpr std::size_t kGizmoVertexCapacity = 8192U;
 
-    // Legacy single-snapshot helper remains private while Phase 6 uses per-object draw items.
-    [[nodiscard]] bool setViewportMesh(const vortex::ViewportMesh& mesh);
     [[nodiscard]] std::optional<vortex::FaceId> pickFace(float xPixels, float yPixels) const noexcept;
-    [[nodiscard]] bool setSelectionVisible(bool visible) noexcept;
     [[nodiscard]] std::vector<ViewportVertex> buildGizmoVertices() const;
     [[nodiscard]] vortex::TransformMatrix gizmoWorldMatrix(
         const vortex::TransformMatrix& objectWorldMatrix) const noexcept;
 
     struct PickTriangle final {
         PickTriangle() = default;
-        PickTriangle(
-            const std::array<float, 3>& worldA,
-            const std::array<float, 3>& worldB,
-            const std::array<float, 3>& worldC,
-            const vortex::FaceId face) noexcept
-            : localA(worldA), localB(worldB), localC(worldC),
-              a(worldA), b(worldB), c(worldC), sourceFace(face) {}
         PickTriangle(
             const std::array<float, 3>& sourceA,
             const std::array<float, 3>& sourceB,
