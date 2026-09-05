@@ -11,7 +11,9 @@ import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 public final class MainActivity extends Activity {
@@ -22,6 +24,10 @@ public final class MainActivity extends Activity {
     private static final int TWO_FINGER_UNDECIDED = 0;
     private static final int TWO_FINGER_PAN = 1;
     private static final int TWO_FINGER_ZOOM = 2;
+
+    private static final int TOOL_MOVE = 0;
+    private static final int TOOL_ROTATE = 1;
+    private static final int TOOL_SCALE = 2;
 
     private static native String engineVersion();
     private static native long nativeCreateRenderer();
@@ -34,12 +40,23 @@ public final class MainActivity extends Activity {
     private static native boolean nativePanCamera(long handle, float deltaX, float deltaY);
     private static native boolean nativeZoomCamera(long handle, float scaleFactor);
     private static native boolean nativeTapViewport(long handle, float x, float y);
+    private static native boolean nativeBeginTransformGesture(long handle, int mode, float x, float y);
+    private static native boolean nativeUpdateTransformGesture(long handle, float x, float y);
+    private static native boolean nativeEndTransformGesture(long handle, boolean commit);
+    private static native boolean nativeUndo(long handle);
+    private static native boolean nativeRedo(long handle);
     private static native String nativeRendererInfo(long handle);
 
     private long rendererHandle;
     private boolean surfaceReady;
     private boolean frameLoopRunning;
     private TextView statusView;
+    private Button moveButton;
+    private Button rotateButton;
+    private Button scaleButton;
+
+    private int transformTool = TOOL_MOVE;
+    private boolean gizmoDragging;
 
     private int gesturePointerCount;
     private int twoFingerMode = TWO_FINGER_UNDECIDED;
@@ -103,7 +120,41 @@ public final class MainActivity extends Activity {
             ViewGroup.LayoutParams.WRAP_CONTENT);
         statusLayout.gravity = Gravity.TOP | Gravity.START;
         root.addView(statusView, statusLayout);
+
+        LinearLayout toolBar = new LinearLayout(this);
+        toolBar.setOrientation(LinearLayout.HORIZONTAL);
+        toolBar.setGravity(Gravity.CENTER);
+        toolBar.setPadding(8, 4, 8, 8);
+        toolBar.setBackgroundColor(0x66000000);
+
+        moveButton = addToolButton(toolBar, "Move", () -> setTransformTool(TOOL_MOVE));
+        rotateButton = addToolButton(toolBar, "Rotate", () -> setTransformTool(TOOL_ROTATE));
+        scaleButton = addToolButton(toolBar, "Scale", () -> setTransformTool(TOOL_SCALE));
+        addToolButton(toolBar, "Undo", () -> {
+            cancelActiveTransformGesture();
+            resetGestureState();
+            if (rendererHandle != 0L) {
+                nativeUndo(rendererHandle);
+            }
+            updateStatus();
+        });
+        addToolButton(toolBar, "Redo", () -> {
+            cancelActiveTransformGesture();
+            resetGestureState();
+            if (rendererHandle != 0L) {
+                nativeRedo(rendererHandle);
+            }
+            updateStatus();
+        });
+
+        FrameLayout.LayoutParams toolsLayout = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT);
+        toolsLayout.gravity = Gravity.BOTTOM;
+        root.addView(toolBar, toolsLayout);
+
         setContentView(root);
+        refreshToolButtons();
 
         viewport.getHolder().addCallback(new SurfaceHolder.Callback() {
             @Override
@@ -129,6 +180,7 @@ public final class MainActivity extends Activity {
             @Override
             public void surfaceDestroyed(SurfaceHolder holder) {
                 stopFrameLoop();
+                cancelActiveTransformGesture();
                 resetGestureState();
                 if (rendererHandle != 0L) {
                     nativeSurfaceDestroyed(rendererHandle);
@@ -152,6 +204,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onPause() {
         stopFrameLoop();
+        cancelActiveTransformGesture();
         resetGestureState();
         super.onPause();
     }
@@ -159,6 +212,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         stopFrameLoop();
+        cancelActiveTransformGesture();
         resetGestureState();
         if (rendererHandle != 0L) {
             nativeDestroyRenderer(rendererHandle);
@@ -167,8 +221,52 @@ public final class MainActivity extends Activity {
         super.onDestroy();
     }
 
+    private Button addToolButton(LinearLayout parent, String label, Runnable action) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setTextSize(12.0f);
+        button.setAllCaps(false);
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setMinHeight(0);
+        button.setMinimumHeight(0);
+        button.setPadding(6, 2, 6, 2);
+        button.setOnClickListener(view -> action.run());
+        parent.addView(
+            button,
+            new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1.0f));
+        return button;
+    }
+
+    private void setTransformTool(int tool) {
+        if (tool != TOOL_MOVE && tool != TOOL_ROTATE && tool != TOOL_SCALE) {
+            return;
+        }
+        cancelActiveTransformGesture();
+        resetGestureState();
+        transformTool = tool;
+        refreshToolButtons();
+        updateStatus();
+    }
+
+    private void refreshToolButtons() {
+        if (moveButton != null) {
+            moveButton.setAlpha(transformTool == TOOL_MOVE ? 1.0f : 0.58f);
+        }
+        if (rotateButton != null) {
+            rotateButton.setAlpha(transformTool == TOOL_ROTATE ? 1.0f : 0.58f);
+        }
+        if (scaleButton != null) {
+            scaleButton.setAlpha(transformTool == TOOL_SCALE ? 1.0f : 0.58f);
+        }
+    }
+
     private boolean handleViewportTouch(MotionEvent event) {
         if (rendererHandle == 0L || !surfaceReady) {
+            cancelActiveTransformGesture();
             resetGestureState();
             return true;
         }
@@ -183,9 +281,19 @@ public final class MainActivity extends Activity {
                 lastTouchY = oneFingerDownY;
                 oneFingerOrbiting = false;
                 multiTouchOccurred = false;
+                gizmoDragging = nativeBeginTransformGesture(
+                    rendererHandle,
+                    transformTool,
+                    oneFingerDownX,
+                    oneFingerDownY);
                 return true;
 
             case MotionEvent.ACTION_POINTER_DOWN:
+                if (gizmoDragging) {
+                    nativeEndTransformGesture(rendererHandle, false);
+                    gizmoDragging = false;
+                    updateStatus();
+                }
                 multiTouchOccurred = true;
                 oneFingerOrbiting = false;
                 if (event.getPointerCount() >= 2) {
@@ -194,7 +302,15 @@ public final class MainActivity extends Activity {
                 return true;
 
             case MotionEvent.ACTION_MOVE:
-                if (event.getPointerCount() >= 2) {
+                if (gizmoDragging) {
+                    if (event.getPointerCount() == 1 &&
+                        !nativeUpdateTransformGesture(rendererHandle, event.getX(0), event.getY(0))) {
+                        nativeEndTransformGesture(rendererHandle, false);
+                        gizmoDragging = false;
+                        multiTouchOccurred = true;
+                        updateStatus();
+                    }
+                } else if (event.getPointerCount() >= 2) {
                     multiTouchOccurred = true;
                     updateTwoFingerGesture(event);
                 } else if (event.getPointerCount() == 1) {
@@ -214,6 +330,13 @@ public final class MainActivity extends Activity {
                 return true;
 
             case MotionEvent.ACTION_UP:
+                if (gizmoDragging) {
+                    nativeEndTransformGesture(rendererHandle, true);
+                    gizmoDragging = false;
+                    updateStatus();
+                    resetGestureState();
+                    return true;
+                }
                 if (gesturePointerCount == 1 && !oneFingerOrbiting && !multiTouchOccurred &&
                     distance(oneFingerDownX, oneFingerDownY, event.getX(0), event.getY(0)) <= touchSlop) {
                     if (nativeTapViewport(rendererHandle, event.getX(0), event.getY(0))) {
@@ -224,7 +347,9 @@ public final class MainActivity extends Activity {
                 return true;
 
             case MotionEvent.ACTION_CANCEL:
+                cancelActiveTransformGesture();
                 resetGestureState();
+                updateStatus();
                 return true;
 
             default:
@@ -367,6 +492,13 @@ public final class MainActivity extends Activity {
         lastSpan = span;
     }
 
+    private void cancelActiveTransformGesture() {
+        if (gizmoDragging && rendererHandle != 0L) {
+            nativeEndTransformGesture(rendererHandle, false);
+        }
+        gizmoDragging = false;
+    }
+
     private static float distance(float x0, float y0, float x1, float y1) {
         return magnitude(x1 - x0, y1 - y0);
     }
@@ -382,6 +514,7 @@ public final class MainActivity extends Activity {
         twoFingerStartSpan = 0.0f;
         oneFingerOrbiting = false;
         multiTouchOccurred = false;
+        gizmoDragging = false;
     }
 
     private void startFrameLoop() {
@@ -400,6 +533,18 @@ public final class MainActivity extends Activity {
         Choreographer.getInstance().removeFrameCallback(frameCallback);
     }
 
+    private String transformToolName() {
+        switch (transformTool) {
+            case TOOL_ROTATE:
+                return "Rotate";
+            case TOOL_SCALE:
+                return "Scale";
+            case TOOL_MOVE:
+            default:
+                return "Move";
+        }
+    }
+
     private void updateStatus() {
         if (statusView == null) {
             return;
@@ -408,6 +553,7 @@ public final class MainActivity extends Activity {
             ? "Renderer allocation failed"
             : nativeRendererInfo(rendererHandle);
         statusView.setText(
-            "Vortex3D DEV viewport v0.4\nEngine " + engineVersion() + "\n" + rendererInfo);
+            "Vortex3D DEV viewport v0.6\nEngine " + engineVersion() +
+            "\nTool " + transformToolName() + " | " + rendererInfo);
     }
 }
