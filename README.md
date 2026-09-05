@@ -64,6 +64,9 @@ Current engine capabilities include:
 - byte-budgeted deterministic LRU evaluation cache.
 - final derived Corner normals with flat/smooth policy, angle-weighted smooth fans, and sharp/manifold boundaries.
 - editor context, operators/tools, dependency graph, procedural geometry graph, project codec, and extension registries.
+- persistent object translation/rotation/scale with parent-composed world matrices.
+- chronological object-transform undo/redo through the unified `EditorHistory`.
+- project schema v2 transform persistence with explicit schema-v1 identity migration.
 - GCC + Clang warnings-as-errors builds.
 - ASan + UBSan.
 - clang-tidy with actionable bugprone/performance/portability checks.
@@ -72,7 +75,7 @@ Current engine capabilities include:
 
 ## Current Android viewport
 
-`android/app` contains the live Vortex-owned Vulkan viewport. Through Phase 5 it now provides:
+`android/app` contains the live Vortex-owned Vulkan viewport. Through Phase 6 it provides:
 
 - Vulkan instance/device/surface/swapchain lifecycle,
 - persistent native `Document + EditorHistory + EditorContext` viewport session,
@@ -86,11 +89,16 @@ Current engine capabilities include:
 - multiple persistent visible objects,
 - nearest-hit CPU ray/triangle object picking,
 - stable `ObjectId + source FaceId` mapping back to editor state,
-- active-object outline and XYZ gizmo/origin foundation,
+- engine-derived object world matrices shared by drawing, picking, selection outlines, and gizmos,
+- interactive axis-constrained Move / Rotate / Scale gizmo tools,
+- transient transform previews that do not mutate authored state on every touch move,
+- exactly one `SetObjectTransformCommand` undo step per completed transform drag,
+- cancel-safe transform gestures across multitouch, tool changes, lifecycle interruption, and `ACTION_CANCEL`,
+- native Undo / Redo controls for committed object transforms,
 - split ARMv7/ARM64 debug APKs plus a universal APK,
 - ABI packaging verification in CI.
 
-Phase 5 is complete and verified on the 32-bit Android target. The next major phase is engine-owned object transforms: persistent translation/rotation/scale, undo/redo and project persistence first, followed by derived renderer transforms and interactive gizmo Move/Rotate/Scale.
+Phase 6 is implemented. Phase 6A established authored transform state and persistence, Phase 6B connected engine-derived world matrices to the renderer, and Phase 6C adds interactive Move / Rotate / Scale with command-based commit and undo/redo. Final Android behavior remains subject to the normal on-device verification gate before the next feature phase is treated as device-verified.
 
 ## Repository layout
 
@@ -147,6 +155,7 @@ GitHub Actions provides benchmark smoke coverage and retains benchmark output as
 - [Roadmap](docs/ROADMAP.md)
 - [Current Status](docs/STATUS.md)
 - [Phase 5 Selection](docs/PHASE5_SELECTION.md)
+- [Phase 6 Transforms](docs/PHASE6_TRANSFORMS.md)
 - [Pre-Phase 6 Readiness Audit](docs/PRE_PHASE6_AUDIT.md)
 - [Foundation Rules](docs/FOUNDATION_RULES.md)
 - [Ownership](docs/OWNERSHIP.md)
