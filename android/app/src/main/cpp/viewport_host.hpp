@@ -7,6 +7,7 @@
 #include <android/native_window.h>
 
 #include <string>
+#include <vector>
 
 namespace vortex::android {
 
@@ -34,12 +35,18 @@ public:
 
 private:
     [[nodiscard]] bool initializeScene();
+    [[nodiscard]] bool appendObjectSnapshot(
+        ObjectId objectId,
+        MeshId meshId,
+        const std::array<float, 3>& origin);
 
     Document document_;
     EditorHistory history_;
     EditorContext editor_;
     ObjectId cubeObject_;
-    ViewportMesh viewportMesh_;
+    ObjectId testCubeObject_;
+    FaceId lastPickedFace_;
+    std::vector<ViewportObjectSnapshot> viewportObjects_;
     VulkanViewport renderer_;
     bool initialized_ = false;
 };
