@@ -1,6 +1,6 @@
 # Phase 6 — Object Transforms and Gizmo Interaction
 
-Phase 6 turns the Phase 5 gizmo foundation into real object manipulation while keeping authored truth in the portable engine.
+Phase 6 turns the Phase 5 selection/gizmo foundation into real object manipulation while keeping authored truth in the portable engine.
 
 ## Phase 6A — authored transform contract
 
@@ -28,45 +28,19 @@ world = parentWorld * local
 
 `Document::objectWorldMatrix()` resolves the complete parent chain and refuses malformed/missing ancestry rather than inventing a world transform.
 
-## Undo/redo
+## Undo/redo and project persistence
 
-`SetObjectTransformCommand` records a compact `SetObjectTransformDelta { before, after }`. It uses the existing `EditorHistory` chronological timeline, so object transforms interleave correctly with mesh edits and other document commands. There is no viewport-owned transform history.
+`SetObjectTransformCommand` records a compact `SetObjectTransformDelta { before, after }`. It uses the existing `EditorHistory` chronological timeline, so object transforms interleave correctly with mesh edits and other document commands. There is no viewport-owned authored transform history.
 
-A no-op transform command produces no history record. Undo/redo always re-enters the normal `Document::setObjectTransform()` mutation path, preserving revision/change-journal behavior.
+A no-op transform command produces no history record. Undo/redo re-enters the normal `Document::setObjectTransform()` mutation path, preserving revision/change-journal behavior.
 
-## Project schema v2
+Project schema v2 stores translation, rotation and scale on every serialized object. The reader explicitly supports schema v1 and v2. A schema-v1 object receives the identity transform; non-finite schema-v2 transform data is rejected even with a valid checksum.
 
-Project schema v2 adds three tightly packed `Vec3` values to each serialized object:
-
-```text
-translation
-rotationRadians
-scale
-```
-
-The reader explicitly supports schema v1 and v2. A schema-v1 object receives the identity transform. A schema-v2 file containing non-finite transform data is rejected even if its checksum is otherwise valid.
-
-The existing file magic remains unchanged; the explicit schema-version field is the compatibility boundary.
-
-## Phase 6A validation gate
-
-The portable test gate covers:
-
-- identity defaults;
-- no-op transform revision behavior;
-- non-finite rejection;
-- parent/child world-matrix composition;
-- transform command apply/undo/redo;
-- chronological undo ordering across transform, mesh, and rename commands;
-- schema-v2 transform round trip;
-- hostile non-finite schema-v2 data;
-- schema-v1 migration to identity transforms.
+Portable validation covers identity defaults, no-op revisions, non-finite rejection, parent/child world composition, command apply/undo/redo, chronological mixed-history ordering, v2 round trips, hostile transform data and v1 migration.
 
 ## Phase 6B — transform-aware renderer boundary
 
-The Android bootstrap scene no longer bakes the second object's placement into authored mesh vertices. Both meshes are centered in local space. The second object's world placement comes from persistent `ObjectBlock::transform`, and `ViewportHost` resolves the object world matrix through `Document::objectWorldMatrix()` before creating a renderer snapshot.
-
-Each visible object now crosses the renderer boundary as:
+The Android bootstrap scene no longer bakes object placement into authored mesh vertices. Meshes remain centered in object-local space. `ViewportHost` resolves persistent object placement through `Document::objectWorldMatrix()` and sends the renderer:
 
 ```text
 ObjectId
@@ -74,24 +48,84 @@ ViewportMesh in object-local space
 engine-derived world TransformMatrix
 ```
 
-The current Vulkan backend still batches local vertex/index storage for compactness, but it keeps a draw range per object. Command recording pushes `cameraViewProjection * objectWorld` for each draw, so one shared buffer can render independently transformed objects without changing authored topology.
+The Vulkan backend keeps per-object draw ranges over shared local vertex/index storage. Command recording pushes `cameraViewProjection * objectWorld` for every object draw.
 
-CPU picking uses the same world matrix to build derived world-space pick triangles from the exact local `ViewportMesh`. The selected outline and XYZ gizmo foundation remain local geometry and are rendered with the selected object's same world matrix. This keeps rendered geometry, picking, and selection feedback on one transform source of truth.
+CPU picking, the active-object outline and the XYZ gizmo use the same derived world transform. Renderer-local synthetic face IDs exist only to disambiguate batched picking and are mapped back to stable engine `ObjectId + FaceId` before editor state changes.
 
-Renderer-local synthetic face IDs remain only an internal batching/picking disambiguation mechanism. Picks are mapped back to stable engine `ObjectId + FaceId` before they reach `EditorContext`.
+This means authored topology never needs to be rewritten merely because an object moves, rotates or scales.
 
-The Phase 6B Android gate is:
+## Phase 6C — interactive Move / Rotate / Scale
 
-- both bootstrap meshes remain local-origin geometry;
-- the second cube still appears at its engine-authored translated world location;
-- tapping either transformed object selects the correct stable object;
-- only that object's outline/gizmo is transformed and shown;
-- tapping empty background deselects;
-- orbit/pan/pinch and surface recreation remain unchanged;
-- ARMv7 and ARM64 native/APK CI stays green.
+The XYZ gizmo is now touch-interactive. A touch beginning close to one of the selected object's projected axes locks that axis before the normal one-finger orbit recognizer starts.
 
-## Next slice — Phase 6C Move gizmo
+The interaction flow is:
 
-After the Phase 6B renderer boundary is verified on ARMv7, the Move gizmo becomes interactive. Axis hit testing and drag preview are tool/viewport state, not authored state. A successful gesture commits through `SetObjectTransformCommand`; cancel restores the original transform without creating history.
+```text
+ACTION_DOWN on gizmo axis
+        |
+        v
+screen-space axis hit + drag scale
+        |
+        v
+transient ObjectTransform preview
+        |
+        v
+engine-derived preview world matrix
+        |
+        v
+render + CPU picking + outline + gizmo update
+        |
+ACTION_UP
+        |
+        v
+one SetObjectTransformCommand
+        |
+        v
+EditorHistory
+```
 
-Rotate and Scale follow only after Move interaction and undo/redo are stable.
+Move is constrained to the chosen object's local X/Y/Z axis. Rotate changes the corresponding local Euler component. Scale changes the corresponding local scale component and clamps the magnitude away from a singular zero scale.
+
+Critically, `ACTION_MOVE` does **not** write the preview into `Document`. The drag owns transient tool state only. A successful `ACTION_UP` commits exactly one `SetObjectTransformCommand`; cancellation restores the original renderer-derived world transform and adds no history record.
+
+Cancellation occurs on:
+
+- `ACTION_CANCEL`;
+- a second finger entering the gesture;
+- tool changes;
+- Activity pause/destroy;
+- surface destruction;
+- Undo/Redo while a preview is active.
+
+The existing camera contract remains intact when the gesture does not start on a gizmo axis:
+
+- one finger: orbit after touch slop;
+- two coherent fingers: pan;
+- symmetric pinch: zoom;
+- short one-finger tap: object selection.
+
+The Android toolbar exposes Move, Rotate, Scale, Undo and Redo. JNI calls remain on the Android UI thread.
+
+## Phase 6 exit gate
+
+Automated acceptance requires:
+
+- portable transform/history/project tests green;
+- warnings-as-errors GCC and Clang builds green;
+- sanitizer and clang-tidy jobs green;
+- ARMv7 and ARM64 NDK builds green;
+- split and universal APK packaging green.
+
+On-device acceptance for the 32-bit target is:
+
+- select either cube and drag X, Y and Z in Move mode;
+- switch to Rotate and rotate on each usable projected axis;
+- switch to Scale and scale on each usable projected axis;
+- the mesh, pick target, outline and gizmo remain aligned during previews;
+- completed drags create one Undo step each;
+- Undo and Redo restore the complete transform accurately;
+- adding a second finger during a gizmo drag cancels the preview and enters camera multitouch cleanly;
+- background/surface recreation leaves authored state and selection behavior stable;
+- no Vulkan errors occur.
+
+Phase 6 is considered implementation-complete when this code and CI gate are merged. It is marked device-verified only after the Android acceptance pass is performed on the target phone.
