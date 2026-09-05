@@ -1,6 +1,7 @@
 #include "vortex/core/transform.hpp"
 
 #include <cmath>
+#include <cstddef>
 
 namespace vortex {
 namespace {
