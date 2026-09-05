@@ -86,8 +86,8 @@ void VulkanViewport::detach() noexcept {
     destroySurface();
 }
 
-bool VulkanViewport::rebuildCameraCommandBuffers() {
-    if (!cameraDirty_) {
+bool VulkanViewport::rebuildCommandBuffers() {
+    if (!commandBuffersDirty_) {
         return true;
     }
     if (device_ == VK_NULL_HANDLE || commandPool_ == VK_NULL_HANDLE || framebuffers_.empty()) {
@@ -103,7 +103,7 @@ bool VulkanViewport::rebuildCameraCommandBuffers() {
     if (!recordCommandBuffers()) {
         return false;
     }
-    cameraDirty_ = false;
+    commandBuffersDirty_ = false;
     return true;
 }
 
@@ -117,9 +117,9 @@ bool VulkanViewport::render() {
         return failVk("vkWaitForFences", result);
     }
 
-    // Camera input only marks state dirty. Re-record after the previous frame fence signals,
-    // keeping gesture JNI calls lightweight and avoiding command-buffer mutation while in flight.
-    if (cameraDirty_ && !rebuildCameraCommandBuffers()) {
+    // Input only mutates cheap native state. Re-record after the previous frame fence
+    // signals so camera and selection visibility can safely change command-buffer content.
+    if (commandBuffersDirty_ && !rebuildCommandBuffers()) {
         return false;
     }
 
@@ -189,7 +189,7 @@ std::string VulkanViewport::info() const {
     }
     if (graphicsPipeline_ != VK_NULL_HANDLE && gridPipeline_ != VK_NULL_HANDLE &&
         depthView_ != VK_NULL_HANDLE && indexCount_ != 0U && gridVertexCount_ != 0U) {
-        stream << " | Stage4 touch camera";
+        stream << " | Stage5 selection";
     }
     return stream.str();
 }
@@ -234,7 +234,7 @@ void VulkanViewport::shutdown() noexcept {
     graphicsQueueFamily_ = UINT32_MAX;
     presentQueueFamily_ = UINT32_MAX;
     physicalProperties_ = {};
-    cameraDirty_ = false;
+    commandBuffersDirty_ = false;
     if (instance_ != VK_NULL_HANDLE) {
         vkDestroyInstance(instance_, nullptr);
         instance_ = VK_NULL_HANDLE;
