@@ -4,9 +4,9 @@ Last updated: 2026-09-04
 
 ## Current engineering focus
 
-The hardened portable engine foundation is in place and the current product work is the native Android Vulkan viewport/editor path. The project has moved beyond the original JNI host proof: evaluated engine geometry is now rendered through a Vortex-owned Vulkan backend with depth, grid/axes, camera navigation, and dual-ABI Android packaging.
+The portable C++ engine foundation and the first editor-aware Android viewport are in place. Phase 5 is complete: the Android Vulkan viewport now runs from a persistent native `Document + EditorHistory + EditorContext` session, renders multiple evaluated objects, ray-picks the nearest object, maps hits back to stable engine identity, and shows active-object selection/gizmo feedback.
 
-The next product phase is selection and editor interaction. Before that phase, the repository is being cleaned and hardened so the viewport can connect to persistent editor state without carrying temporary bootstrap shortcuts forward.
+The next major phase is engine-owned object transforms and interactive gizmo manipulation.
 
 ## Foundation state
 
@@ -17,7 +17,7 @@ The portable C++20 foundation remains the authored source of truth:
 - `EditableMesh` owns authored polygon topology and attributes.
 - Commands, transactions, `EditorHistory`, and mesh history provide bounded undo/redo.
 - `MeshEvaluator` produces validated rebuildable evaluated geometry.
-- `RenderExtractor` converts evaluated geometry into renderer-facing triangle snapshots while preserving source IDs for future picking.
+- `RenderExtractor` converts evaluated geometry into renderer-facing triangle snapshots while preserving source IDs.
 - `EditorContext` owns active object, mode, selection domain, and stable topology selection outside persistent Document state.
 - Project serialization, validation, dependency/procedural graph infrastructure, registries, and benchmark coverage remain available above the hardened core.
 
@@ -47,8 +47,6 @@ EditableMesh
 -> Vulkan vertex/index buffers
 ```
 
-The bootstrap cube proves evaluated engine geometry reaches the Vulkan renderer on Android.
-
 ### Stage 3 — camera + grid
 
 Complete.
@@ -72,22 +70,73 @@ Complete and merged.
 
 Stage 4 is verified on the 32-bit ARM Samsung target and remains compatible with ARM64 builds.
 
-## Pre-Phase-5 audit results
+### Phase 5 — selection foundation
 
-The audit found no foundation rewrite requirement. The important cleanup/hardening actions are:
+Complete and merged.
 
-- remove the accidentally committed nested `Vortex3d-main/` source-tree copy,
-- add repository-policy protection so that nested export cannot return,
-- refresh Android/renderer status documentation,
-- preserve the rule that Phase 5 selection must use persistent engine/editor state and stable source IDs rather than renderer-owned selection state.
+- persistent native viewport/editor session,
+- tap-candidate vs orbit arbitration,
+- multiple persistent visible engine objects,
+- evaluated/extracted render snapshots per object,
+- nearest-hit CPU ray/triangle picking,
+- stable `ObjectId + source FaceId` resolution,
+- engine-side active object through `EditorContext`,
+- tap-empty deselection,
+- active-object outline and XYZ gizmo/origin foundation,
+- renderer-local synthetic IDs kept out of editor state,
+- active selection-buffer writes deferred until the previous frame fence signals.
 
-The current bootstrap cube is still created from a temporary native `Document` during GPU resource creation. That was correct for renderer proof stages, but Phase 5 must replace it with a persistent viewport/editor session before selection becomes authoritative.
+Phase 5A and 5B were both verified on the 32-bit Android target. ARMv7 and ARM64 CI remained green.
 
-Likewise, current one-finger input treats movement as orbit immediately. Phase 5 will add tap-candidate vs drag arbitration so a short tap can become selection while movement beyond touch slop remains orbit.
+## Pre-Phase-6 audit
+
+The post-Phase-5 audit found no foundation rewrite requirement. The selection/editor ownership boundary is correct and ready to support object transforms.
+
+Small Stage 5B hardening gaps were found and patched before Phase 6:
+
+- viewport snapshots now verify the persistent object really references the mesh being extracted;
+- extracted source document/mesh identity is checked before entering renderer state;
+- editor selection is rolled back if the renderer rejects a corresponding active-object overlay change;
+- multi-object render batches reject mixed-document snapshots, missing mesh identity, non-finite origins, and 32-bit index-capacity overflow.
+
+See `docs/PRE_PHASE6_AUDIT.md` for the detailed transform, undo, project-format, and renderer entry contracts.
+
+## Phase 6 entry contract
+
+Phase 6 begins in the portable engine, not in Vulkan:
+
+```text
+ObjectBlock authored local transform
+    translation / rotation / scale
+        |
+        v
+Document mutation API + validation
+        |
+        v
+Document command delta
+        |
+        v
+Unified EditorHistory undo / redo
+        |
+        v
+Project codec persistence
+        |
+        v
+Derived world/model transform
+        |
+        v
+Renderer draw item / picking / gizmo
+```
+
+Because objects already support parenting, object transform state must have explicit local-to-parent semantics and world transforms must compose through the parent chain.
+
+The current project schema does not store transforms. Phase 6 must treat adding them as an explicit schema change and add compatibility coverage so existing v1 files load with identity transforms rather than being silently misread.
+
+The current Stage 5B renderer batches static geometry into one draw. Phase 6 should preserve mesh-local evaluated geometry and introduce per-object draw ranges/model transforms rather than rebaking unrelated vertices whenever one object moves.
 
 ## CI gate
 
-Core CI currently covers:
+Core CI covers:
 
 - repository policy,
 - portable-core boundary checks,
@@ -100,50 +149,18 @@ Core CI currently covers:
 - split/universal debug APK build and ABI packaging verification,
 - Release benchmark smoke.
 
-Both required Android ABIs are first-class build targets. A viewport/editor patch is not considered ready when it only works on ARM64.
+Both Android ABIs remain first-class build targets.
 
 ## Known non-blocking renderer debt
 
-These are tracked but do not block Phase 5 selection work:
+These remain tracked but do not block the first Phase 6 engine slice:
 
-- camera changes currently rebuild recorded swapchain command buffers rather than using a per-frame camera buffer/descriptors,
-- static mesh/grid data currently uses host-visible coherent Vulkan memory rather than a staging upload into device-local buffers,
+- camera/selection changes currently rebuild recorded swapchain command buffers rather than using per-frame camera/object buffers,
+- static mesh/grid data currently uses host-visible coherent Vulkan memory rather than staging uploads into device-local memory,
 - Android renderer source is warnings-as-errors compiled but is not yet included in the root host clang-tidy source list,
-- some shader/build helper names still carry early-stage naming even though the renderer has advanced beyond Stage 1.
+- some shader/build helper names still carry early-stage naming even though the renderer has advanced well beyond Stage 1.
 
-These should be improved when the dynamic scene/resource path is introduced rather than by complicating the current tiny bootstrap renderer prematurely.
-
-## Phase 5 entry contract
-
-Phase 5 should begin with this ownership path:
-
-```text
-Persistent native viewport/editor session
-    Document
-    EditorHistory
-    EditorContext
-        |
-        v
-MeshEvaluator
-        |
-        v
-RenderExtractor with stable source IDs
-        |
-        v
-Vulkan GPU caches / overlays
-```
-
-Then add:
-
-```text
-touch tap candidate
--> CPU ray/picking query
--> stable engine Object/Face ID
--> EditorContext selection
--> renderer highlight/overlay
-```
-
-No Java-side or Vulkan-array-index selection authority should be introduced.
+The transform renderer refactor is the right point to improve the dynamic scene path without moving authored ownership into Vulkan.
 
 ## First meaningful product milestone
 

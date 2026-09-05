@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -48,6 +50,10 @@ void addLine(
     const std::array<float, 3>& color) {
     output.push_back(ViewportVertex{a, color});
     output.push_back(ViewportVertex{b, color});
+}
+
+[[nodiscard]] bool finiteOrigin(const std::array<float, 3>& origin) noexcept {
+    return std::isfinite(origin[0]) && std::isfinite(origin[1]) && std::isfinite(origin[2]);
 }
 
 [[nodiscard]] bool buildSelectionOverlay(
@@ -122,15 +128,31 @@ bool VulkanViewport::setViewportObjects(const std::vector<ViewportObjectSnapshot
         return fail("Stage 5B render list contains no visible objects");
     }
 
+    const vortex::RuntimeDocumentId sourceDocument = objects.front().mesh.sourceDocumentRuntimeId;
+    if (!sourceDocument) {
+        return fail("Stage 5B render list is missing source document identity");
+    }
+
+    constexpr std::size_t maxVertexCount =
+        static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max());
+    constexpr std::size_t maxTriangleCount = maxVertexCount / 3U;
     std::size_t totalVertices = 0U;
     std::size_t totalTriangles = 0U;
     for (const ViewportObjectSnapshot& object : objects) {
+        if (!object.mesh.sourceMeshId || object.mesh.sourceDocumentRuntimeId != sourceDocument ||
+            !finiteOrigin(object.origin)) {
+            return fail("Stage 5B render list contains inconsistent source identity or origin");
+        }
+        if (object.mesh.vertices.size() > maxVertexCount - totalVertices ||
+            object.mesh.triangles.size() > maxTriangleCount - totalTriangles) {
+            return fail("Stage 5B render list exceeds 32-bit Vulkan index capacity");
+        }
         totalVertices += object.mesh.vertices.size();
         totalTriangles += object.mesh.triangles.size();
     }
 
     vortex::ViewportMesh combined;
-    combined.sourceDocumentRuntimeId = objects.front().mesh.sourceDocumentRuntimeId;
+    combined.sourceDocumentRuntimeId = sourceDocument;
     combined.vertices.reserve(totalVertices);
     combined.triangles.reserve(totalTriangles);
 

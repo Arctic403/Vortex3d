@@ -72,20 +72,25 @@ Current engine capabilities include:
 
 ## Current Android viewport
 
-`android/app` now contains the live Vortex-owned Vulkan viewport rather than a text-only host proof. Current renderer stages provide:
+`android/app` contains the live Vortex-owned Vulkan viewport. Through Phase 5 it now provides:
 
 - Vulkan instance/device/surface/swapchain lifecycle,
-- evaluated engine cube upload through `RenderExtractor`,
+- persistent native `Document + EditorHistory + EditorContext` viewport session,
+- evaluated engine geometry through `MeshEvaluator -> RenderExtractor`,
 - indexed drawing and depth buffering,
 - XZ grid plus XYZ axes,
 - native camera matrices,
-- one-finger orbit,
+- one-finger orbit with tap-vs-drag arbitration,
 - coherent two-finger pan,
 - symmetric filtered pinch zoom,
+- multiple persistent visible objects,
+- nearest-hit CPU ray/triangle object picking,
+- stable `ObjectId + source FaceId` mapping back to editor state,
+- active-object outline and XYZ gizmo/origin foundation,
 - split ARMv7/ARM64 debug APKs plus a universal APK,
 - ABI packaging verification in CI.
 
-The bootstrap cube is still temporary renderer-demo plumbing. The next editor-facing step is to introduce a persistent native viewport/editor session so picking and selection resolve to stable engine IDs through `EditorContext` rather than renderer-owned state.
+Phase 5 is complete and verified on the 32-bit Android target. The next major phase is engine-owned object transforms: persistent translation/rotation/scale, undo/redo and project persistence first, followed by derived renderer transforms and interactive gizmo Move/Rotate/Scale.
 
 ## Repository layout
 
@@ -141,6 +146,8 @@ GitHub Actions provides benchmark smoke coverage and retains benchmark output as
 - [v0.2 Deep Hardening Audit](docs/V02_HARDENING_AUDIT.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Current Status](docs/STATUS.md)
+- [Phase 5 Selection](docs/PHASE5_SELECTION.md)
+- [Pre-Phase 6 Readiness Audit](docs/PRE_PHASE6_AUDIT.md)
 - [Foundation Rules](docs/FOUNDATION_RULES.md)
 - [Ownership](docs/OWNERSHIP.md)
 - [Commands and Undo](docs/COMMANDS_UNDO.md)
