@@ -325,7 +325,6 @@ bool VulkanViewport::recordCommandBuffers() {
         }
 
         if (selectionVisible_ && selectionVertexBuffer_ != VK_NULL_HANDLE && selectionVertexCount_ != 0U) {
-            vkCmdBindPipeline(commandBuffers_[index], VK_PIPELINE_BIND_POINT_GRAPHICS, gridPipeline_);
             vkCmdBindVertexBuffers(commandBuffers_[index], 0U, 1U, &selectionVertexBuffer_, &vertexOffset);
 
             if (selectionOutlineVertexCount_ != 0U) {
@@ -337,6 +336,7 @@ bool VulkanViewport::recordCommandBuffers() {
                     0U,
                     sizeof(CameraPushConstants),
                     &selectionPush);
+                vkCmdBindPipeline(commandBuffers_[index], VK_PIPELINE_BIND_POINT_GRAPHICS, gridPipeline_);
                 vkCmdDraw(commandBuffers_[index], selectionOutlineVertexCount_, 1U, 0U, 0U);
             }
 
@@ -350,6 +350,9 @@ bool VulkanViewport::recordCommandBuffers() {
                     0U,
                     sizeof(CameraPushConstants),
                     &gizmoPush);
+                // The gizmo is authored as actual triangle geometry (solid shafts, cones,
+                // cubes and torus rings), avoiding optional Vulkan wide-line support.
+                vkCmdBindPipeline(commandBuffers_[index], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline_);
                 vkCmdDraw(commandBuffers_[index], gizmoVertexCount_, 1U, gizmoFirstVertex_, 0U);
             }
         }
