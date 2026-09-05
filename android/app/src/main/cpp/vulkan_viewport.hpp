@@ -36,6 +36,19 @@ struct CameraPushConstants final {
 };
 static_assert(sizeof(CameraPushConstants) == sizeof(float) * 16U);
 
+// One visible editor object and its derived evaluated render snapshot. Object identity is
+// preserved across the renderer boundary, while authored topology remains engine-owned.
+struct ViewportObjectSnapshot final {
+    vortex::ObjectId objectId;
+    vortex::ViewportMesh mesh;
+    std::array<float, 3> origin{};
+};
+
+struct ViewportPick final {
+    vortex::ObjectId objectId;
+    vortex::FaceId sourceFace;
+};
+
 class VulkanViewport final {
 public:
     VulkanViewport() = default;
@@ -44,11 +57,10 @@ public:
     VulkanViewport(const VulkanViewport&) = delete;
     VulkanViewport& operator=(const VulkanViewport&) = delete;
 
-    // The renderer consumes a derived evaluated snapshot. It never owns authored topology.
-    // Stage 5A supplies the snapshot before the Vulkan device/surface is attached.
-    [[nodiscard]] bool setViewportMesh(const vortex::ViewportMesh& mesh);
-    [[nodiscard]] std::optional<vortex::FaceId> pickFace(float xPixels, float yPixels) const noexcept;
-    [[nodiscard]] bool setSelectionVisible(bool visible) noexcept;
+    // Stage 5B supplies the full visible render list before Vulkan device creation.
+    [[nodiscard]] bool setViewportObjects(const std::vector<ViewportObjectSnapshot>& objects);
+    [[nodiscard]] std::optional<ViewportPick> pickObject(float xPixels, float yPixels) const noexcept;
+    [[nodiscard]] bool setSelectedObject(vortex::ObjectId objectId) noexcept;
 
     // Takes ownership of the ANativeWindow reference returned by ANativeWindow_fromSurface().
     [[nodiscard]] bool attach(ANativeWindow* window);
@@ -64,10 +76,19 @@ public:
     [[nodiscard]] std::string info() const;
 
 private:
+    struct RenderObjectRange final {
+        vortex::ObjectId objectId;
+        std::uint32_t firstIndex = 0U;
+        std::uint32_t indexCount = 0U;
+        std::uint32_t selectionFirstVertex = 0U;
+        std::uint32_t selectionVertexCount = 0U;
+    };
+
     struct PickTriangle final {
         std::array<float, 3> a{};
         std::array<float, 3> b{};
         std::array<float, 3> c{};
+        vortex::ObjectId objectId;
         vortex::FaceId sourceFace;
     };
 
@@ -132,6 +153,7 @@ private:
     // CPU-side data below is rebuildable render/pick state derived from RenderExtractor.
     std::vector<ViewportVertex> sceneVertices_;
     std::vector<std::uint32_t> sceneIndices_;
+    std::vector<RenderObjectRange> renderObjects_;
     std::vector<ViewportVertex> selectionOverlayVertices_;
     std::vector<PickTriangle> pickTriangles_;
 
@@ -148,7 +170,7 @@ private:
     VkBuffer selectionVertexBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory selectionVertexMemory_ = VK_NULL_HANDLE;
     std::uint32_t selectionVertexCount_ = 0U;
-    bool selectionVisible_ = false;
+    vortex::ObjectId selectedObject_;
 
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
