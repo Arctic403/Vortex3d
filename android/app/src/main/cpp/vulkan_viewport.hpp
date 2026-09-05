@@ -180,6 +180,7 @@ private:
     [[nodiscard]] bool createGeometryResources();
     [[nodiscard]] bool createGridResources();
     [[nodiscard]] bool createGraphicsPipeline();
+    [[nodiscard]] bool createGizmoPipeline();
     [[nodiscard]] bool recordCommandBuffers();
     [[nodiscard]] bool rebuildCommandBuffers();
     [[nodiscard]] bool refreshSelectionOverlay();
@@ -266,6 +267,7 @@ private:
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
     VkPipeline gridPipeline_ = VK_NULL_HANDLE;
+    VkPipeline gizmoPipeline_ = VK_NULL_HANDLE;
 
     ViewportCamera camera_{};
     bool commandBuffersDirty_ = false;
