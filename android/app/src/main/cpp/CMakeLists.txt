@@ -53,6 +53,7 @@ add_custom_target(vortex_stage1_shaders DEPENDS "${VORTEX_STAGE1_HEADER}")
 
 add_library(vortex_android SHARED
     native_bridge.cpp
+    viewport_host.cpp
     vulkan_camera.cpp
     vulkan_device.cpp
     vulkan_geometry.cpp
