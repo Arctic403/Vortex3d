@@ -1,7 +1,0 @@
-# Default review ownership for the native engine foundation.
-* @Arctic403
-
-# CI and policy changes are security/repository-boundary changes.
-/.github/ @Arctic403
-/scripts/ @Arctic403
-/CMakeLists.txt @Arctic403

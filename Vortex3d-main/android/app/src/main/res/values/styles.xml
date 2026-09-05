@@ -1,6 +1,0 @@
-<resources>
-    <style name="Theme.Vortex3D" parent="android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:windowLightStatusBar">true</item>
-    </style>
-</resources>

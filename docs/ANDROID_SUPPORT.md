@@ -19,30 +19,32 @@ The CI build uses the latest NDK installed by the GitHub-hosted runner rather th
 
 The current compile baseline uses API level 26. Changing that baseline is a product/platform decision, not a reason to weaken the portable engine boundary.
 
+CI also builds split ARMv7/ARM64 debug APKs plus a universal APK and verifies that `libvortex_android.so` is packaged under the expected ABI directories.
+
 ## Android architecture
 
 ```text
-Java/Kotlin / Android host
+Java Android host
   - Activity/lifecycle
-  - Storage Access Framework
-  - IME/keyboard
-  - clipboard/share intents
-  - haptics
-  - permissions/system UI
-  - device capability reporting
+  - SurfaceView ownership
+  - touch gesture recognition
+  - future Storage Access Framework / IME / clipboard / haptics
         |
-        | JNI / narrow native boundary
+        | narrow JNI boundary
         v
-C++ Vortex engine
+C++ Vortex engine/editor session
   - document
+  - editor context
   - mesh kernel
   - commands/undo
   - evaluator
   - serialization
-  - import/export
         |
         v
-Vulkan renderer backend
+RenderExtractor
+        |
+        v
+Vulkan viewport backend
 ```
 
 The Android layer hosts the engine. It does not become the engine.
@@ -66,12 +68,29 @@ The Android layer hosts the engine. It does not become the engine.
 
 The portable core does not include Android SDK/NDK platform APIs merely because it is compiled by the NDK. Android owns lifecycle, surfaces, storage/URI integration, clipboard, IME, haptics, and device capability queries behind a narrow platform layer.
 
-The engine sees portable services/data rather than Android `Uri`, Activity, Surface, or Java/Kotlin objects.
+The engine sees portable services/data rather than Android `Uri`, Activity, Surface, or Java objects.
 
 ## Lifecycle requirements
 
-The eventual Android host must survive surface recreation, rotation/resizing, background/foreground, activity recreation, process recovery, interrupted save/autosave, and low-memory signals. Project correctness must not depend on a Vulkan surface remaining alive.
+The Android host must survive surface recreation, rotation/resizing, background/foreground, activity recreation, process recovery, interrupted save/autosave, and low-memory signals. Project correctness must not depend on a Vulkan surface remaining alive.
+
+The current renderer already separates device/session lifetime from swapchain/surface lifetime and safely waits for Vulkan work before tearing down swapchain resources.
 
 ## Current host implementation
 
-`android/app` is live in v0.2. The launcher Activity loads `libvortex_android`, calls a narrow JNI engine-version handshake, and links `Vortex3D::engine`. The UI is intentionally only a host proof; lifecycle/storage/input/Vulkan ownership will grow here rather than inside portable engine targets.
+`android/app` is now a live Vulkan viewport rather than a text-only shell. `MainActivity.java` owns the `SurfaceView`, `SurfaceHolder.Callback`, `Choreographer` frame loop, and touch gesture recognition. JNI calls remain on that UI-thread path unless a future threading design explicitly changes ownership.
+
+The native viewport currently provides:
+
+- Vulkan instance/device/surface/swapchain,
+- ARMv7 + ARM64 builds,
+- depth buffering,
+- evaluated engine mesh upload,
+- grid and XYZ axes,
+- camera matrix push constants,
+- one-finger orbit,
+- coherent two-finger pan,
+- symmetric filtered pinch zoom,
+- surface resize/recreation handling.
+
+The next editor-facing step is a persistent native editor/session path and stable-ID picking/selection. Selection belongs to `EditorContext`; renderer arrays remain derived data only.
