@@ -1,5 +1,6 @@
 #pragma once
 
+#include "vortex/core/transform.hpp"
 #include "vortex/viewport/render_extract.hpp"
 
 #include <android/native_window.h>
@@ -37,12 +38,12 @@ struct CameraPushConstants final {
 };
 static_assert(sizeof(CameraPushConstants) == sizeof(float) * 16U);
 
-// One visible editor object and its evaluated/extracted render snapshot. Object identity
-// crosses the renderer boundary, while authored topology stays owned by the engine.
+// One visible editor object and its evaluated/extracted local-space render snapshot.
+// The world matrix is derived from persistent engine Object state; Vulkan never authors it.
 struct ViewportObjectSnapshot final {
     vortex::ObjectId objectId;
     vortex::ViewportMesh mesh;
-    std::array<float, 3> origin{};
+    vortex::TransformMatrix worldMatrix;
 };
 
 struct ViewportPick final {
@@ -58,8 +59,6 @@ public:
     VulkanViewport(const VulkanViewport&) = delete;
     VulkanViewport& operator=(const VulkanViewport&) = delete;
 
-    // Scene-ready Stage 5B boundary. The renderer receives one extracted snapshot for each
-    // visible object and returns both stable object and source-face identity from picking.
     [[nodiscard]] bool setViewportObjects(const std::vector<ViewportObjectSnapshot>& objects);
     [[nodiscard]] std::optional<ViewportPick> pickObject(float xPixels, float yPixels) const noexcept;
     [[nodiscard]] bool setSelectedObject(vortex::ObjectId objectId) noexcept;
@@ -78,8 +77,7 @@ public:
     [[nodiscard]] std::string info() const;
 
 private:
-    // Stage 5A single-snapshot helpers remain implementation details. Stage 5B composes a
-    // render batch with synthetic renderer-local IDs, then maps picks back to stable IDs.
+    // Legacy single-snapshot helper remains private while Phase 6B uses per-object draw items.
     [[nodiscard]] bool setViewportMesh(const vortex::ViewportMesh& mesh);
     [[nodiscard]] std::optional<vortex::FaceId> pickFace(float xPixels, float yPixels) const noexcept;
     [[nodiscard]] bool setSelectionVisible(bool visible) noexcept;
@@ -96,8 +94,16 @@ private:
         ViewportPick stablePick;
     };
 
+    struct SceneDrawRange final {
+        vortex::ObjectId objectId;
+        std::uint32_t firstIndex = 0U;
+        std::uint32_t indexCount = 0U;
+        vortex::TransformMatrix worldMatrix;
+    };
+
     struct SelectionOverlay final {
         vortex::ObjectId objectId;
+        vortex::TransformMatrix worldMatrix;
         std::vector<ViewportVertex> vertices;
     };
 
@@ -117,6 +123,9 @@ private:
     [[nodiscard]] bool rebuildCommandBuffers();
     [[nodiscard]] bool refreshSelectionOverlay();
     [[nodiscard]] CameraPushConstants cameraPushConstants(float aspect) const noexcept;
+    [[nodiscard]] CameraPushConstants objectPushConstants(
+        float aspect,
+        const vortex::TransformMatrix& worldMatrix) const noexcept;
 
     [[nodiscard]] bool createBuffer(
         VkDeviceSize size,
@@ -166,11 +175,13 @@ private:
     std::vector<ViewportVertex> selectionOverlayVertices_;
     std::vector<PickTriangle> pickTriangles_;
 
-    // Stage 5B metadata never replaces stable engine identity with renderer ownership.
+    // Renderer metadata is derived only. Stable engine identity remains attached to every item.
     std::vector<PickMapEntry> pickMap_;
+    std::vector<SceneDrawRange> sceneDrawRanges_;
     std::vector<SelectionOverlay> selectionOverlays_;
     std::size_t selectionOverlayCapacity_ = 0U;
     vortex::ObjectId selectedObject_;
+    vortex::TransformMatrix selectionWorldMatrix_{};
     bool selectionOverlayDirty_ = false;
 
     VkBuffer vertexBuffer_ = VK_NULL_HANDLE;

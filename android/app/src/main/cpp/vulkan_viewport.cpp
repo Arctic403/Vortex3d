@@ -196,7 +196,7 @@ std::string VulkanViewport::info() const {
     }
     if (graphicsPipeline_ != VK_NULL_HANDLE && gridPipeline_ != VK_NULL_HANDLE &&
         depthView_ != VK_NULL_HANDLE && indexCount_ != 0U && gridVertexCount_ != 0U) {
-        stream << " | Stage5B multi-object selection";
+        stream << " | Phase6B object transforms";
     }
     return stream.str();
 }
@@ -244,6 +244,7 @@ void VulkanViewport::shutdown() noexcept {
     commandBuffersDirty_ = false;
     selectionOverlayDirty_ = false;
     selectedObject_ = {};
+    selectionWorldMatrix_ = vortex::identityTransformMatrix();
     selectionVisible_ = false;
     if (instance_ != VK_NULL_HANDLE) {
         vkDestroyInstance(instance_, nullptr);

@@ -4,7 +4,7 @@ Phase 6 turns the Phase 5 gizmo foundation into real object manipulation while k
 
 ## Phase 6A — authored transform contract
 
-`ObjectBlock` now owns a local-to-parent `ObjectTransform`:
+`ObjectBlock` owns a local-to-parent `ObjectTransform`:
 
 ```text
 translation      = (0, 0, 0)
@@ -62,8 +62,36 @@ The portable test gate covers:
 - hostile non-finite schema-v2 data;
 - schema-v1 migration to identity transforms.
 
-## Next slice — Phase 6B
+## Phase 6B — transform-aware renderer boundary
 
-After 6A is green, the Android viewport will stop baking object placement into mesh vertices. Each visible object will carry its engine-derived world matrix and draw range. Rendering, CPU picking, the selection outline, and the gizmo origin must all consume the same derived matrix.
+The Android bootstrap scene no longer bakes the second object's placement into authored mesh vertices. Both meshes are centered in local space. The second object's world placement comes from persistent `ObjectBlock::transform`, and `ViewportHost` resolves the object world matrix through `Document::objectWorldMatrix()` before creating a renderer snapshot.
 
-Once that renderer boundary is verified on ARMv7, the Move gizmo will become interactive. Drag previews may remain transient tool state, but commit/cancel will resolve to `SetObjectTransformCommand`. Rotate and Scale follow only after Move is stable.
+Each visible object now crosses the renderer boundary as:
+
+```text
+ObjectId
+ViewportMesh in object-local space
+engine-derived world TransformMatrix
+```
+
+The current Vulkan backend still batches local vertex/index storage for compactness, but it keeps a draw range per object. Command recording pushes `cameraViewProjection * objectWorld` for each draw, so one shared buffer can render independently transformed objects without changing authored topology.
+
+CPU picking uses the same world matrix to build derived world-space pick triangles from the exact local `ViewportMesh`. The selected outline and XYZ gizmo foundation remain local geometry and are rendered with the selected object's same world matrix. This keeps rendered geometry, picking, and selection feedback on one transform source of truth.
+
+Renderer-local synthetic face IDs remain only an internal batching/picking disambiguation mechanism. Picks are mapped back to stable engine `ObjectId + FaceId` before they reach `EditorContext`.
+
+The Phase 6B Android gate is:
+
+- both bootstrap meshes remain local-origin geometry;
+- the second cube still appears at its engine-authored translated world location;
+- tapping either transformed object selects the correct stable object;
+- only that object's outline/gizmo is transformed and shown;
+- tapping empty background deselects;
+- orbit/pan/pinch and surface recreation remain unchanged;
+- ARMv7 and ARM64 native/APK CI stays green.
+
+## Next slice — Phase 6C Move gizmo
+
+After the Phase 6B renderer boundary is verified on ARMv7, the Move gizmo becomes interactive. Axis hit testing and drag preview are tool/viewport state, not authored state. A successful gesture commits through `SetObjectTransformCommand`; cancel restores the original transform without creating history.
+
+Rotate and Scale follow only after Move interaction and undo/redo are stable.

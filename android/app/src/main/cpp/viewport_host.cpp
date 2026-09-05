@@ -1,24 +1,20 @@
 #include "viewport_host.hpp"
 
-#include <array>
 #include <string>
 #include <utility>
 
 namespace vortex::android {
 namespace {
 
-[[nodiscard]] bool buildCube(
-    EditableMesh& authored,
-    const Vec3 center,
-    const float halfExtent) {
-    const auto v0 = authored.addVertex({center.x - halfExtent, center.y - halfExtent, center.z - halfExtent});
-    const auto v1 = authored.addVertex({center.x + halfExtent, center.y - halfExtent, center.z - halfExtent});
-    const auto v2 = authored.addVertex({center.x + halfExtent, center.y + halfExtent, center.z - halfExtent});
-    const auto v3 = authored.addVertex({center.x - halfExtent, center.y + halfExtent, center.z - halfExtent});
-    const auto v4 = authored.addVertex({center.x - halfExtent, center.y - halfExtent, center.z + halfExtent});
-    const auto v5 = authored.addVertex({center.x + halfExtent, center.y - halfExtent, center.z + halfExtent});
-    const auto v6 = authored.addVertex({center.x + halfExtent, center.y + halfExtent, center.z + halfExtent});
-    const auto v7 = authored.addVertex({center.x - halfExtent, center.y + halfExtent, center.z + halfExtent});
+[[nodiscard]] bool buildCube(EditableMesh& authored, const float halfExtent) {
+    const auto v0 = authored.addVertex({-halfExtent, -halfExtent, -halfExtent});
+    const auto v1 = authored.addVertex({ halfExtent, -halfExtent, -halfExtent});
+    const auto v2 = authored.addVertex({ halfExtent,  halfExtent, -halfExtent});
+    const auto v3 = authored.addVertex({-halfExtent,  halfExtent, -halfExtent});
+    const auto v4 = authored.addVertex({-halfExtent, -halfExtent,  halfExtent});
+    const auto v5 = authored.addVertex({ halfExtent, -halfExtent,  halfExtent});
+    const auto v6 = authored.addVertex({ halfExtent,  halfExtent,  halfExtent});
+    const auto v7 = authored.addVertex({-halfExtent,  halfExtent,  halfExtent});
     if (!v0 || !v1 || !v2 || !v3 || !v4 || !v5 || !v6 || !v7) {
         return false;
     }
@@ -39,13 +35,15 @@ ViewportHost::ViewportHost()
     initialized_ = initializeScene();
 }
 
-bool ViewportHost::appendObjectSnapshot(
-    const ObjectId objectId,
-    const MeshId meshId,
-    const std::array<float, 3>& origin) {
+bool ViewportHost::appendObjectSnapshot(const ObjectId objectId, const MeshId meshId) {
     const ObjectBlock* object = document_.object(objectId);
     const MeshBlock* block = document_.mesh(meshId);
     if (!objectId || !meshId || object == nullptr || block == nullptr || object->meshId != meshId) {
+        return false;
+    }
+
+    const auto worldMatrix = document_.objectWorldMatrix(objectId);
+    if (!worldMatrix) {
         return false;
     }
 
@@ -63,14 +61,14 @@ bool ViewportHost::appendObjectSnapshot(
     viewportObjects_.push_back(ViewportObjectSnapshot{
         objectId,
         std::move(*extracted.mesh),
-        origin,
+        *worldMatrix,
     });
     return true;
 }
 
 bool ViewportHost::initializeScene() {
     EditableMesh cubeMesh;
-    if (!buildCube(cubeMesh, {0.0F, 0.0F, 0.0F}, 1.0F)) {
+    if (!buildCube(cubeMesh, 1.0F)) {
         return false;
     }
     const MeshId cubeMeshId = document_.createMesh("Cube Mesh", std::move(cubeMesh));
@@ -79,27 +77,30 @@ bool ViewportHost::initializeScene() {
         return false;
     }
 
-    // Stage 5B intentionally uses a second authored mesh instead of pretending ObjectBlock
-    // already owns transforms. Phase 6 will move placement into real engine transform state.
-    constexpr Vec3 testCenter{1.55F, 0.30F, 0.0F};
+    // Phase 6B proves object placement is authored on ObjectBlock rather than baked into
+    // topology. Both test meshes are centered at local origin; only engine transform state
+    // places the second cube in world space.
     constexpr float testHalfExtent = 0.45F;
     EditableMesh testMesh;
-    if (!buildCube(testMesh, testCenter, testHalfExtent)) {
+    if (!buildCube(testMesh, testHalfExtent)) {
         return false;
     }
     const MeshId testMeshId = document_.createMesh("Test Cube Mesh", std::move(testMesh));
     testCubeObject_ = document_.createObject("Test Cube", testMeshId);
-    if (!testMeshId || !testCubeObject_ || !document_.validate()) {
+    if (!testMeshId || !testCubeObject_) {
+        return false;
+    }
+
+    ObjectTransform testTransform;
+    testTransform.translation = {1.55F, 0.30F, 0.0F};
+    if (!document_.setObjectTransform(testCubeObject_, testTransform) || !document_.validate()) {
         return false;
     }
 
     viewportObjects_.clear();
     viewportObjects_.reserve(2U);
-    if (!appendObjectSnapshot(cubeObject_, cubeMeshId, {0.0F, 0.0F, 0.0F}) ||
-        !appendObjectSnapshot(
-            testCubeObject_,
-            testMeshId,
-            {testCenter.x, testCenter.y, testCenter.z})) {
+    if (!appendObjectSnapshot(cubeObject_, cubeMeshId) ||
+        !appendObjectSnapshot(testCubeObject_, testMeshId)) {
         return false;
     }
 
