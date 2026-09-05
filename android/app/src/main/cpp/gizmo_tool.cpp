@@ -11,7 +11,6 @@ namespace {
 
 constexpr float kMathEpsilon = 1.0e-6F;
 constexpr float kMaxScaleMagnitude = 20.0F;
-constexpr float kTwoPi = 6.2831853071795864769F;
 
 [[nodiscard]] Vec3 axisVector(const GizmoAxis axis) noexcept {
     switch (axis) {
@@ -210,11 +209,34 @@ bool ViewportHost::updateTransformGesture(const float xPixels, const float yPixe
             if (!std::isfinite(nextAccumulatedRotation)) {
                 return false;
             }
-            const float beforeAngle = component(preview.rotationRadians, transformDrag_.axis);
-            const float angle = std::remainder(
-                beforeAngle + nextAccumulatedRotation,
-                kTwoPi);
-            setComponent(preview.rotationRadians, transformDrag_.axis, angle);
+
+            // The ring solver returns a signed delta around the selected *local* gizmo axis.
+            // Compose that delta with the touch-down orientation as a quaternion instead of
+            // editing one Euler component. Euler angles remain only the current document-format
+            // boundary, so mixed-axis rotations preserve the same orientation the gizmo shows.
+            if (std::abs(nextAccumulatedRotation) <= kMathEpsilon) {
+                preview.rotationRadians = transformDrag_.before.rotationRadians;
+            } else {
+                const auto startOrientation = quaternionFromEulerRadians(
+                    transformDrag_.before.rotationRadians);
+                const auto localDelta = quaternionFromAxisAngle(
+                    axisVector(transformDrag_.axis),
+                    nextAccumulatedRotation);
+                if (!startOrientation || !localDelta) {
+                    return false;
+                }
+                const auto composed = multiplyQuaternions(*startOrientation, *localDelta);
+                if (!composed) {
+                    return false;
+                }
+                const auto euler = eulerRadiansFromQuaternionNearest(
+                    *composed,
+                    transformDrag_.before.rotationRadians);
+                if (!euler) {
+                    return false;
+                }
+                preview.rotationRadians = *euler;
+            }
             commitRotationStep = true;
             break;
         }

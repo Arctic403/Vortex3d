@@ -20,6 +20,19 @@ namespace {
     return near(a.x, b.x) && near(a.y, b.y) && near(a.z, b.z);
 }
 
+[[nodiscard]] bool nearRotation(
+    const vortex::TransformMatrix& a,
+    const vortex::TransformMatrix& b,
+    const float epsilon = 2.0e-5F) {
+    constexpr std::size_t indices[] = {0U, 1U, 2U, 4U, 5U, 6U, 8U, 9U, 10U};
+    for (const std::size_t index : indices) {
+        if (!near(a.values[index], b.values[index], epsilon)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -64,6 +77,53 @@ int main() {
     const vortex::Vec3 childOrigin = vortex::transformPoint(*childWorld, {});
     assert(nearVec3(childOrigin, {2.0F, 2.0F, 0.0F}));
     assert(document.validate());
+
+    // Local gizmo rotation must compose an axis-angle delta with the existing orientation,
+    // not mutate one Euler component. This specifically covers the former blue/Z-ring failure
+    // after the object had already been rotated around X and Y.
+    const vortex::Vec3 mixedEuler{0.63F, -0.47F, 0.81F};
+    const auto startQuaternion = vortex::quaternionFromEulerRadians(mixedEuler);
+    assert(startQuaternion.has_value());
+
+    struct LocalRotationCase final {
+        vortex::Vec3 axis;
+        vortex::Vec3 deltaEuler;
+    };
+    constexpr LocalRotationCase localRotationCases[] = {
+        {{1.0F, 0.0F, 0.0F}, {0.38F, 0.0F, 0.0F}},
+        {{0.0F, 1.0F, 0.0F}, {0.0F, -0.42F, 0.0F}},
+        {{0.0F, 0.0F, 1.0F}, {0.0F, 0.0F, 0.51F}},
+    };
+
+    vortex::ObjectTransform startRotationTransform;
+    startRotationTransform.rotationRadians = mixedEuler;
+    const vortex::TransformMatrix startRotationMatrix =
+        vortex::objectTransformMatrix(startRotationTransform);
+
+    for (const LocalRotationCase& testCase : localRotationCases) {
+        const float deltaAngle =
+            testCase.deltaEuler.x + testCase.deltaEuler.y + testCase.deltaEuler.z;
+        const auto deltaQuaternion =
+            vortex::quaternionFromAxisAngle(testCase.axis, deltaAngle);
+        assert(deltaQuaternion.has_value());
+        const auto composedQuaternion =
+            vortex::multiplyQuaternions(*startQuaternion, *deltaQuaternion);
+        assert(composedQuaternion.has_value());
+        const auto composedEuler = vortex::eulerRadiansFromQuaternionNearest(
+            *composedQuaternion, mixedEuler);
+        assert(composedEuler.has_value());
+
+        vortex::ObjectTransform deltaTransform;
+        deltaTransform.rotationRadians = testCase.deltaEuler;
+        const vortex::TransformMatrix expected = vortex::multiplyTransformMatrices(
+            startRotationMatrix,
+            vortex::objectTransformMatrix(deltaTransform));
+
+        vortex::ObjectTransform composedTransform;
+        composedTransform.rotationRadians = *composedEuler;
+        const vortex::TransformMatrix actual = vortex::objectTransformMatrix(composedTransform);
+        assert(nearRotation(actual, expected));
+    }
 
     // Reset to identity so the unified-history sequence has an unambiguous baseline.
     assert(document.setObjectTransform(parent, identity));

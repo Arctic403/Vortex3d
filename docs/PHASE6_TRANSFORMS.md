@@ -26,6 +26,12 @@ Parenting composes as:
 world = parentWorld * local
 ```
 
+Rotate-gizmo interaction is orientation-based rather than Euler-component-based. The touch-down
+orientation is converted to a normalized quaternion, the signed local-axis gizmo delta is composed
+as `qStart * qDelta`, and the result is converted to the nearest equivalent `Rz * Ry * Rx` Euler
+triple only at the current schema-v2 `ObjectTransform` storage boundary. This keeps mixed-axis
+gizmo rotation aligned with the visible local rings without changing the project format.
+
 `Document::objectWorldMatrix()` resolves the complete parent chain and refuses malformed/missing ancestry rather than inventing a world transform.
 
 ## Undo/redo and project persistence
