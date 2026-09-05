@@ -59,10 +59,24 @@ def check_codeowners(errors: list[str]) -> None:
             errors.append(f"CODEOWNERS missing required ownership rule: {token}")
 
 
+def check_repository_layout(errors: list[str]) -> None:
+    # GitHub source archives extract as <repo>-<ref>; copying one back into the
+    # repository can accidentally create a complete nested clone. That happened once
+    # as Vortex3d-main/, so reject the repository-shaped export directory explicitly.
+    nested_export_name = f"{ROOT.name}-main".casefold()
+    for child in ROOT.iterdir():
+        if child.is_dir() and child.name.casefold() == nested_export_name:
+            errors.append(
+                f"nested repository export must not be committed: {child.name}/; "
+                "keep only the canonical top-level source tree"
+            )
+
+
 def main() -> int:
     errors: list[str] = []
     check_workflow_policy(errors)
     check_codeowners(errors)
+    check_repository_layout(errors)
 
     for path, rel in iter_repository_files():
         if path.is_symlink():
