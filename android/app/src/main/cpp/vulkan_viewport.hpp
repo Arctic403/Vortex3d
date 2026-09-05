@@ -84,6 +84,7 @@ public:
     [[nodiscard]] bool setViewportObjects(const std::vector<ViewportObjectSnapshot>& objects);
     [[nodiscard]] std::optional<ViewportPick> pickObject(float xPixels, float yPixels) const noexcept;
     [[nodiscard]] bool setSelectedObject(vortex::ObjectId objectId) noexcept;
+    [[nodiscard]] bool setGizmoMode(GizmoMode mode) noexcept;
     [[nodiscard]] bool updateObjectWorldMatrix(
         vortex::ObjectId objectId,
         const vortex::TransformMatrix& worldMatrix) noexcept;
@@ -108,7 +109,7 @@ public:
 
 private:
     // Fixed host-visible capacity keeps selection/gizmo refreshes allocation-free while a
-    // selected object is active. Current solid Move/Rotate/Scale mesh is comfortably below it.
+    // selected object is active. The largest single solid gizmo mode fits comfortably below it.
     static constexpr std::size_t kGizmoVertexCapacity = 8192U;
 
     // Legacy single-snapshot helper remains private while Phase 6 uses per-object draw items.
@@ -244,6 +245,7 @@ private:
     std::size_t selectionOverlayCapacity_ = 0U;
     vortex::ObjectId selectedObject_;
     vortex::TransformMatrix selectionWorldMatrix_{};
+    GizmoMode gizmoMode_ = GizmoMode::Move;
     bool selectionOverlayDirty_ = false;
 
     VkBuffer vertexBuffer_ = VK_NULL_HANDLE;
